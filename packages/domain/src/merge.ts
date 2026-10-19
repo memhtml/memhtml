@@ -21,7 +21,7 @@
 /** Cosine similarity above which two bodies are the same content. Strict. */
 export const NEAR_DUPLICATE_THRESHOLD = 0.92
 
-/** Merge decisions applied per sleep cycle, so a flood cannot fan the phase out unboundedly. */
+/** Merge decisions applied per curation pass, so a flood cannot fan a pass out unboundedly. */
 export const MAX_MERGE_PAIRS = 100
 
 /**

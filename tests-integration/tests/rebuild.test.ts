@@ -131,7 +131,7 @@ describe("verification item 6 — rm index.db, rebuild, state import reproduces 
       body: ["The revert alone leaves in-flight connections pinned to the old target group."],
       workspace: "checkout-api",
       tags: ["deploy", "oncall"],
-      entities: ["service:checkout-api", "person:sanju"],
+      entities: ["service:checkout-api", "person:sasha"],
       sessionId: "cccccccc-3333-4333-8333-cccccccccccc"
     })
 

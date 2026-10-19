@@ -43,7 +43,7 @@ export const FAKE_DIM = EMBED_DIM
 /**
  * The deterministic embedder, built as a hash-seeded bag of words, L2-normalized.
  *
- * The same construction `@memhtml/index` and `@memhtml/sleep` use in their own harnesses. Two texts sharing
+ * The same construction `@memhtml/index` and `tests-integration` use in their own harnesses. Two texts sharing
  * vocabulary have a genuinely high cosine and two disjoint texts a low one, which makes a
  * negation-flipped control a real adversary here instead of a random vector the arm trivially
  * separates. A random fake would make the gate meaningless in the easy direction and a constant fake
@@ -221,9 +221,8 @@ export const buildStack = (
   }).pipe(
     /**
      * Every log line this stack emits names the throwaway it describes. The migrations and the
-     * `indexer.rebuild` above run against the `:memory:` fixture database, and `memhtml sleep merge`
-     * runs this stack as its gate, so those lines land in the operator's sleep log beside the store's
-     * own index lines. Unannotated, "indexer.rebuild: 304 files" reads as the store's index being
+     * `indexer.rebuild` above run against the `:memory:` fixture database, and a merge gate runs this
+     * stack, so those lines land in the operator's log beside the store's own index lines. Unannotated, "indexer.rebuild: 304 files" reads as the store's index being
      * rebuilt (issue #145). The annotation is the smallest change that makes the two unmistakable.
      */
     Effect.annotateLogs(EVAL_LOG_ANNOTATIONS)

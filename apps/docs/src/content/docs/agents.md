@@ -29,6 +29,8 @@ The git tree is the system of record and the index is disposable. `.memhtml/inde
 
 One memory holds one fact. A memory is a single claim. Writing a five-paragraph summary as one memory defeats retrieval, because the arm that should rank one of those claims scores the whole blob instead. Split the summary into claims and let `memhtml link` carry the relationships between them. See [the memory file format](/internals/the-memory-file-format/).
 
+A run session changes which door writes. When `MEMHTML_SESSION` is set in your environment, `memhtml write`, `apply`, `correct`, and `task add` refuse with `ERR_SESSION_BOUND` under the store's default policy, and the refusal's `suggestions` carry the command to run instead. Write with `memhtml session put`, which takes the same JSONL lines `apply` does, or with a `memhtml session exec` heredoc, and leave the commit to your runtime. A record the store's write bar refuses comes back with the reason, so fix the line and run the call again. See [write through a session](/learn/operations/write-through-a-session/).
+
 Read the flags instead of guessing them. Every flag the binary accepts is in the manifest, and an unknown flag returns a usage error with a suggestion attached rather than a silent default. A guess costs a round trip, where the manifest answers the same question in one call. See [global flags](/reference/global-flags/).
 
 ## 3. Which surface you are on

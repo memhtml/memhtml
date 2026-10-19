@@ -18,15 +18,14 @@
  * real QuickJS sandbox, and a real MCP session carrying `tools/call` and `resources/read` traffic over
  * stdio.
  *
- * With `--live` it additionally drives the two edges that reach the network, which is the only way to
- * prove them from an install: Bedrock embeddings, the sleep phases that call a model, and the
- * consolidator distilling a transcript through the model. Those three are the whole of what the default mode
- * cannot see, so `--live` is the difference between "every command answers" and "every command works".
+ * With `--live` it additionally drives the edge that reaches the network, which is the only way to
+ * prove it from an install: Bedrock embeddings. That is the whole of what the default mode cannot see,
+ * so `--live` is the difference between "every command answers" and "every command works".
  * It needs `AWS_BEARER_TOKEN_BEDROCK` (or SigV4 keys, or an LLM proxy on `MEMHTML_LLM_BASE_URL`) and
  * it spends real tokens.
  */
 import { execFile, spawn } from "node:child_process"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -138,22 +137,6 @@ const looksLikeEnvelope = (text) => {
   } catch {
     return false
   }
-}
-
-/**
- * A command's envelope AND what it logged, for a check whose failure mode is a run that SUCCEEDED.
- *
- * `envelope` is the right shape for the other checks: the envelope is the contract, stderr is a log,
- * and a broken command throws with its stderr attached. It is the wrong shape for a phase that reports
- * `ok` with zero counts and puts the cause in a log line — the process exits 0, so nothing throws, and
- * `execFile` resolves with a `stderr` that is then dropped. A sleep run whose consolidator was
- * unreachable is exactly that: `candidates: 0` on stdout, and
- * `sleep.trace-consolidation degraded: <tag>: <reason>` — naming the child's own last words — on the
- * stream the caller discarded.
- */
-const envelopeWithLog = async (bin, args, env) => {
-  const { stdout, stderr } = await exec(bin, args, { env, maxBuffer: 32 * 1024 * 1024 })
-  return { data: JSON.parse(stdout).data, stderr }
 }
 
 /** How much of a child's stderr a check's detail carries: enough for a stack, not for a log. */
@@ -300,14 +283,6 @@ const main = async () => {
       }
     })
 
-    await check("the sleep cycle runs every phase", async () => {
-      const slept = await envelope(bin, ["sleep", "run", "--dry-run"], env)
-      const phases = (slept.data?.phases ?? []).length
-      // The count is SLEEP_PHASES.length, restated here because this script drives the installed
-      // tarball and cannot import the workspace. A new phase moves both, or this check catches it.
-      return { ok: phases === 17, detail: `phases=${String(phases)}` }
-    })
-
     for (const [label, target, args] of [
       ["memhtml-mcp", mcpBin, []],
       ["memhtml serve mcp", bin, ["serve", "mcp"]]
@@ -319,9 +294,8 @@ const main = async () => {
     }
 
     await checkEveryCommand({ bin, work, env, vipPath })
-    const sleep = await checkSleepLifecycle({ bin, work, env })
     await checkEveryMcpTool({ mcpBin, env })
-    await checkEveryResource({ mcpBin, env, sleep })
+    await checkEveryResource({ mcpBin, env })
     if (LIVE) await checkLiveBedrock({ bin, work, env })
   } finally {
     await rm(work, { recursive: true, force: true })
@@ -421,14 +395,23 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
     `${JSON.stringify({ op: "write", title: "Applied through the batch door", body: "Batch writes share one commit.", type: "semantic", workspace: "checkout-api" })}\n`
   )
 
+  const sessionOpsFile = join(work, "session-ops.jsonl")
+  await writeFile(
+    sessionOpsFile,
+    `${JSON.stringify({ op: "write", title: "Landed through a v2 session", body: "A session's overlay lands as one commit through its own index file.", type: "semantic", workspace: "checkout-api" })}\n`
+  )
+
+  const curatorOpsFile = join(work, "curator-ops.jsonl")
+  await writeFile(
+    curatorOpsFile,
+    `${JSON.stringify({ op: "write", title: "Landed through the curation door", body: "A curator session commits to its own branch and curate merge fast-forwards main to it.", type: "semantic", workspace: "checkout-api" })}\n`
+  )
+
   const execFile_ = join(work, "census.mjs")
   await writeFile(
     execFile_,
     'import { corpus } from "/workspace/lib/corpus.mjs"\nconsole.log(corpus().size)\n'
   )
-
-  const sleepRun = await envelope(bin, ["sleep", "run", "--dry-run"], env)
-  const runId = sleepRun.data?.runId
 
   /**
    * `[command, argv, env, assert]`. A command with no entry here must appear in COVERED_ELSEWHERE below.
@@ -481,13 +464,23 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
     // One of `--session-id` / `--path` is required, which is an either-or no `required` flag can
     // express, so neither is marked and a bare call is a usage error.
     ["trace links", ["trace", "links", "--session-id", "s1"], traced],
-    ["sleep run", ["sleep", "run", "--dry-run"]],
-    ["sleep status", ["sleep", "status"]],
-    ["sleep plan", ["sleep", "plan"]],
-    ["sleep review", ["sleep", "review", runId]],
     ["status", ["status"]],
     ["publish", ["publish"]],
     ["doctor", ["doctor"]],
+    // The corpus carries no policy file, so every store key answers as the library default.
+    [
+      "config",
+      ["config"],
+      undefined,
+      (answer) => ({
+        ok:
+          answer.type === "config.report" &&
+          answer.data?.file?.present === false &&
+          answer.data?.store?.v1Doors?.value === "closed-in-session" &&
+          answer.data?.store?.["writeBar.requireAnchor"]?.value === false,
+        detail: JSON.stringify(answer.data?.store ?? answer.code ?? null).slice(0, 200)
+      })
+    ],
     [
       "eval discriminate",
       ["eval", "discriminate", "--mode", "fake", "--probes", "4", "--size", "12"]
@@ -598,6 +591,129 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
         }
       }
     ],
+    /*
+     * The v2 proof of concept, in the order one session's life takes: start it on main, append a put
+     * from JSONL, run a script over head plus overlay, read it back, commit it (HEAD is main here, so
+     * the shared index and working tree must follow: `worktreeSynced` is asserted, because a commit
+     * that moved the ref without the index would be undone by the `archive` row below), and rebase
+     * it. The head commands run after the commit so the snapshot they write and read is of a tree that
+     * holds a session's commit.
+     */
+    ["session start", ["session", "start", "--id", "smoke"]],
+    ["session put", ["session", "put", "--id", "smoke", "--file", sessionOpsFile]],
+    [
+      "session exec",
+      ["session", "exec", "--id", "smoke", "--lang", "js", "--file", execFile_],
+      env,
+      // `session exec` answers a report whatever the script did, so the row asserts the script ran.
+      (answer) => ({
+        ok: answer.data?.exitCode === 0 && answer.data?.lang === "js",
+        detail: `exit ${String(answer.data?.exitCode)}, lang ${String(answer.data?.lang)}, stdout ${String(answer.data?.stdout).trim()}`
+      })
+    ],
+    ["session status", ["session", "status", "--id", "smoke"]],
+    [
+      "session commit",
+      ["session", "commit", "--id", "smoke", "--message", "smoke session"],
+      env,
+      (answer) => ({
+        ok: answer.data?.kind === "committed" && answer.data?.worktreeSynced === true,
+        detail: `${String(answer.data?.kind)}, worktreeSynced ${String(answer.data?.worktreeSynced)}`
+      })
+    ],
+    ["session rebase", ["session", "rebase", "--id", "smoke"]],
+    /*
+     * `session prune` as a dry run, so no later row loses state: with a zero cutoff the committed
+     * `smoke` session's log (zero ops now) is what a real run would remove, and nothing is unlanded.
+     */
+    [
+      "session prune",
+      ["session", "prune", "--older-than", "0s", "--dry-run"],
+      env,
+      (answer) => ({
+        ok:
+          answer.type === "session.pruned" &&
+          answer.data?.dryRun === true &&
+          answer.data?.logs?.count >= 1 &&
+          Array.isArray(answer.data?.unlanded) &&
+          answer.data.unlanded.length === 0,
+        detail: `${String(answer.data?.logs?.count)} log(s), ${String(answer.data?.indexes?.count)} index file(s) would go`
+      })
+    ],
+    /*
+     * The curation door: a second session on the unborn `curate/smoke`, created by its commit (HEAD
+     * is main, so nothing follows: `worktreeSynced` is asserted false), then `curate merge` lands it
+     * on main with the checkout following. `--skip-gate` because the gate's own row above already
+     * runs the eval at a size this harness can afford, and here the subject is the landing. The
+     * refusals (a missing ref, a non-descendant) are the integration tier's; `envelope` throws on a
+     * non-zero exit, so a refusing row could not pass this table.
+     */
+    ["session start (curator)", ["session", "start", "--id", "curator", "--ref", "curate/smoke"]],
+    ["session put (curator)", ["session", "put", "--id", "curator", "--file", curatorOpsFile]],
+    [
+      "session commit (curator)",
+      ["session", "commit", "--id", "curator", "--message", "smoke curation"],
+      env,
+      (answer) => ({
+        ok: answer.data?.kind === "committed" && answer.data?.worktreeSynced === false,
+        detail: `${String(answer.data?.kind)} on ${String(answer.data?.ref)}`
+      })
+    ],
+    [
+      "curate merge",
+      ["curate", "merge", "curate/smoke", "--skip-gate"],
+      env,
+      (answer) => ({
+        ok:
+          answer.data?.moved === true &&
+          answer.data?.worktreeSynced === true &&
+          answer.data?.gate?.ran === false,
+        detail: `${String(answer.data?.from).slice(0, 7)} -> ${String(answer.data?.to).slice(0, 7)}, worktreeSynced ${String(answer.data?.worktreeSynced)}`
+      })
+    ],
+    /*
+     * The curator itself, on a branch of its own so the merge row above stays about the door and this
+     * row about the loop. `--model fake` is the scripted, credential-free curator; over a corpus with
+     * no duplicate frame-key pair it finishes with zero ops, so the assertion is on the loop having
+     * run to `finish` rather than on a commit.
+     */
+    [
+      "curate run",
+      ["curate", "run", "--model", "fake", "--ref", "curate/smoke-run"],
+      env,
+      (answer) => ({
+        ok:
+          answer.data?.stoppedBy === "finish" &&
+          Array.isArray(answer.data?.toolCalls) &&
+          answer.data.toolCalls.includes("exec"),
+        detail: `${String(answer.data?.outcome)}, stoppedBy ${String(answer.data?.stoppedBy)} after ${String(answer.data?.steps)} step(s)`
+      })
+    ],
+    /*
+     * The collapse, as a dry run: the planner cuts this small corpus (no cluster of two or more is
+     * expected), prints the plan, and writes nothing. The assertion is on the planner having run and
+     * the payload carrying the plan; the folds themselves are the integration tier's.
+     */
+    [
+      "curate collapse",
+      ["curate", "collapse", "--model", "fake", "--ref", "curate/smoke-collapse", "--dry-run"],
+      env,
+      (answer) => ({
+        ok:
+          answer.data?.dryRun === true &&
+          typeof answer.data?.totals?.active === "number" &&
+          Array.isArray(answer.data?.plan?.clusters),
+        detail: `active ${String(answer.data?.totals?.active)}, clusters ${String(answer.data?.plan?.clusters?.length)}, planMs ${String(answer.data?.planMs)}`
+      })
+    ],
+    ["head status", ["head", "status"]],
+    ["head search", ["head", "search", "VIP revert"]],
+    [
+      "head snapshot",
+      ["head", "snapshot", "--write"],
+      env,
+      (answer) => ({ ok: answer.data?.rows > 0, detail: `rows ${String(answer.data?.rows)}` })
+    ],
     // Last: it `git mv`s a memory into archive/, which every command above would rather read.
     ["archive", ["archive", pathA, "--reason", "superseded by the corrected memory"]]
   ]
@@ -606,17 +722,18 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
    * Commands covered by a check of their own rather than by the table, each naming which one.
    *
    * Not excuses. `serve mcp` is a long-running server, so its check is a handshake rather than an
-   * envelope, and the sleep lifecycle needs a corpus whose `main` has not advanced — every write above
-   * moves `main`, which makes `sleep merge` refuse with `main-advanced`, a correct answer that proves
-   * the refusal rather than the merge. `hook` is the one command whose stdout is NOT an envelope: it
-   * writes the host's own hook protocol, so the table's shared "it answered with a `type`" assertion
-   * would fail on the command working correctly. All four are invoked, just elsewhere.
+   * envelope, and `head serve` is one too: its envelope arrives only when a signal stops it. `hook`
+   * is the one command whose stdout is NOT an envelope: it writes the host's own hook protocol, so
+   * the table's shared "it answered with a `type`" assertion would fail on the command working
+   * correctly. `head embed` has nothing to embed with under this run's `MEMHTML_EMBED=off`, so its
+   * answer here is a refusal at exit 1, which the table reads as a crash; its success path is the
+   * live tier's. All four are invoked, just elsewhere.
    */
   const COVERED_ELSEWHERE = {
     "serve mcp": "`memhtml serve mcp answers the MCP handshake`",
-    "sleep resume": "`checkSleepLifecycle`",
-    "sleep merge": "`checkSleepLifecycle`",
-    hook: "`hook writes the host's protocol on stdout and never an envelope`"
+    "head serve": "`head serve answers head search over its socket and removes it on SIGTERM`",
+    hook: "`hook writes the host's protocol on stdout and never an envelope`",
+    "head embed": "`head embed refuses with ERR_MODEL_UNAVAILABLE when the embedder is off`"
   }
 
   const invoked = new Set([...INVOCATIONS.map(([name]) => name), ...Object.keys(COVERED_ELSEWHERE)])
@@ -639,6 +756,18 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
     })
   }
 
+  await check(
+    "head embed refuses with ERR_MODEL_UNAVAILABLE when the embedder is off",
+    async () => {
+      const ran = await runRaw(bin, ["head", "embed"], env)
+      const answer = looksLikeEnvelope(ran.stdout) ? JSON.parse(ran.stdout) : {}
+      return {
+        ok: ran.exitCode === 1 && answer.code === "ERR_MODEL_UNAVAILABLE",
+        detail: `exit ${String(ran.exitCode)}, ${String(answer.code ?? ran.stdout.slice(0, 200))}`
+      }
+    }
+  )
+
   /**
    * `memhtml hook`, driven the way an installed hook is: a host's payload on stdin, and stdout read as
    * the HOST'S protocol rather than as an envelope.
@@ -650,6 +779,65 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
    * stdout that is NOT an envelope: `{"apiVersion":"1",…}` in a model's context window would satisfy
    * every other check here and be wrong in the only way that matters.
    */
+  /**
+   * `memhtml head serve`, the other long-running server: started from the installed binary, asked
+   * through a second invocation of it (`head search` must answer with `head.source: "server"`, which
+   * only the socket can produce), then stopped with SIGTERM, whose envelope is `head.served` and
+   * after which the socket file is gone.
+   */
+  await check(
+    "head serve answers head search over its socket and removes it on SIGTERM",
+    async () => {
+      const socket = join(corpus, ".memhtml", "head.sock")
+      const server = spawn(bin, ["head", "serve"], { env, stdio: ["ignore", "pipe", "pipe"] })
+      let out = ""
+      let err = ""
+      server.stdout.setEncoding("utf8")
+      server.stderr.setEncoding("utf8")
+      server.stdout.on("data", (chunk) => {
+        out += chunk
+      })
+      const closed = new Promise((done) => server.once("close", (code) => done(code)))
+      const listening = await new Promise((done) => {
+        const timer = setTimeout(() => done(false), 60_000)
+        server.stderr.on("data", (chunk) => {
+          err += chunk
+          if (err.includes("head serve: listening on")) {
+            clearTimeout(timer)
+            done(true)
+          }
+        })
+        void closed.then(() => {
+          clearTimeout(timer)
+          done(false)
+        })
+      })
+      if (!listening) {
+        server.kill("SIGKILL")
+        return { ok: false, detail: `never listened: ${tail(err)}` }
+      }
+      const answer = await envelope(bin, ["head", "search", "VIP revert"], env).catch(() => null)
+      server.kill("SIGTERM")
+      const code = await closed
+      const served = (() => {
+        try {
+          return JSON.parse(out)
+        } catch {
+          return null
+        }
+      })()
+      const gone = await access(socket).then(
+        () => false,
+        () => true
+      )
+      const source = answer?.data?.head?.source
+      return {
+        ok: source === "server" && code === 0 && served?.type === "head.served" && gone,
+        detail: `search source ${String(source)}, exit ${String(code)}, ${String(served?.type)}, socket ${gone ? "removed" : "LEFT BEHIND"}`
+      }
+    }
+  )
+
   await check("hook writes the host's protocol on stdout and never an envelope", async () => {
     const ran = await runRaw(
       bin,
@@ -670,79 +858,6 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
 }
 
 /**
- * The sleep cycle end to end, on a corpus of its own: run, resume, review, then a merge that lands.
- *
- * A separate corpus because `sleep merge` fast-forwards `main` to the run's branch and refuses with
- * `main-advanced` when `main` has moved since the branch point — which every write in the table above
- * does. Sharing one corpus therefore proves the refusal and never the merge, and the merge is the half
- * that mutates the system of record.
- *
- * The gate is the reason this is worth reaching. `sleep merge` re-runs the discrimination gate before
- * landing anything (`apps/cli/src/run.ts`, where the composition is deliberately visible), so the gate
- * generates its own ~300-file fixture corpus with its own database — which is why the merge's log names
- * a file count and a sha belonging to neither the corpus nor this repo. It passes in fake mode, so this
- * asserts `merged: true` and that `main` actually moved.
- *
- * Returns the corpus and the run id, which is the ONE place a committed sleep report exists: the report
- * phase writes `.memhtml/sleep/<run-id>.html` on the run's branch and skips the write entirely on a dry
- * run, so `memhtml://sleep/{run-id}` is readable only where a real run has been fast-forwarded onto
- * `main`. `checkEveryResource` reads it from here.
- */
-const checkSleepLifecycle = async ({ bin, work, env }) => {
-  const corpus = join(work, "sleep-corpus")
-  const sleepEnv = { ...env, MEMHTML_ROOT: corpus }
-
-  await envelope(bin, ["init"], sleepEnv)
-  await envelope(
-    bin,
-    [
-      "write",
-      "--title",
-      "The only memory this corpus holds",
-      "--claim",
-      "One fact.",
-      "--type",
-      "semantic",
-      "--workspace",
-      "checkout-api"
-    ],
-    sleepEnv
-  )
-  await envelope(bin, ["sleep", "run"], sleepEnv)
-  const runId = (await envelope(bin, ["sleep", "status"], sleepEnv)).data.runId
-  const beforeMerge = (await exec("git", ["-C", corpus, "rev-parse", "main"])).stdout.trim()
-
-  await check("sleep resume answers from the installed binary", async () => {
-    const resumed = await envelope(bin, ["sleep", "resume", runId], sleepEnv)
-    return {
-      ok: resumed.type === "sleep.report",
-      detail: `phases=${String((resumed.data?.phases ?? []).length)}`
-    }
-  })
-
-  await check("sleep merge lands the run on main", async () => {
-    const merged = await envelope(bin, ["sleep", "merge", runId], sleepEnv)
-    const after = (await exec("git", ["-C", corpus, "rev-parse", "main"])).stdout.trim()
-    // Three halves: the envelope says it merged, git agrees that main moved, and the index followed
-    // (issue #145), so the night's memories are searchable when the command returns.
-    return {
-      ok:
-        merged.type === "sleep.merge" &&
-        merged.data?.merged === true &&
-        after !== beforeMerge &&
-        merged.data?.indexUpdated === true &&
-        merged.data?.indexHeadSha === after,
-      detail:
-        merged.data?.merged === true
-          ? `main moved to ${after.slice(0, 8)}, indexUpdated=${String(merged.data?.indexUpdated)}`
-          : `refusal=${String(merged.data?.refusal)}`
-    }
-  })
-
-  return { corpus, runId }
-}
-
-/**
  * Every resource template the server advertises, READ over stdio against the installed artifact.
  *
  * `resources/read` is a second RPC family with a ROUTER of its own, and no tool check reaches it: a
@@ -753,12 +868,9 @@ const checkSleepLifecycle = async ({ bin, work, env }) => {
  * So the templates are enumerated from `resources/templates/list`, the discipline the command and tool
  * censuses use, and the census below asserts the published set and the READ set are the same set — a new
  * template fails it rather than going unread.
- *
- * Against the SLEEP corpus, because it is the only one holding a committed sleep report (see
- * {@link checkSleepLifecycle}), and it also holds memories, so one session covers both templates.
  */
-const checkEveryResource = async ({ mcpBin, env, sleep }) => {
-  const session = await mcpSession(mcpBin, { ...env, MEMHTML_ROOT: sleep.corpus })
+const checkEveryResource = async ({ mcpBin, env }) => {
+  const session = await mcpSession(mcpBin, env)
   try {
     const listed = await session.request("resources/templates/list", {})
     const templates = (listed.result?.resourceTemplates ?? []).map((entry) => entry.uriTemplate)
@@ -796,14 +908,13 @@ const checkEveryResource = async ({ mcpBin, env, sleep }) => {
     /**
      * `[hole, value, expected]` per published template. A template with no entry fails the census.
      *
-     * Every value carries a `/` — a memory path is `projects/<workspace>/<slug>.html` and a run id is
-     * `sleep/<date>` — and that is the point rather than a coincidence: a named route parameter stops at
-     * the next `/`, so a single-segment URI resolves under a route no real path can reach and proves
-     * nothing. The check below refuses a single-segment value before any read is believed.
+     * Every value carries a `/` — a memory path is `projects/<workspace>/<slug>.html` — and that is the
+     * point rather than a coincidence: a named route parameter stops at the next `/`, so a
+     * single-segment URI resolves under a route no real path can reach and proves nothing. The check
+     * below refuses a single-segment value before any read is believed.
      */
     const READS = {
       "memhtml://file/{path}": ["{path}", memoryPath, "Written to be read back through a resource"],
-      "memhtml://sleep/{run-id}": ["{run-id}", sleep.runId, sleep.runId],
       /**
        * Two holes, filled as ONE substitution, because the census substitutes once per template. The
        * value still carries separators — a commit sha, a slash, then a multi-segment path — so the
@@ -843,7 +954,7 @@ const checkEveryResource = async ({ mcpBin, env, sleep }) => {
         detail:
           bad.length > 0
             ? `SINGLE SEGMENT OR EMPTY HOLE: ${bad.join(", ")}`
-            : `${memoryPath}, ${sleep.runId}, ${writeCommit.slice(0, 8)}`
+            : `${memoryPath}, ${writeCommit.slice(0, 8)}`
       }
     })
 
@@ -1014,107 +1125,17 @@ const checkEveryMcpTool = async ({ mcpBin, env }) => {
 }
 
 /**
- * A transcript the consolidation phase will actually pick up.
- *
- * Two gates decide that, and both are policy rather than accident: `TRACE_MIN_BYTES` is 8 KB, because a
- * memory distilled from a ten-line file could only restate one of those lines; and `file_mtime` must
- * predate `TRACE_QUIET_MILLIS` (one hour), because a transcript being written is a session still in
- * progress. A freshly copied fixture fails both, which is why the default mode's consolidation phase
- * reports `batch: 0` and never reaches the agent — correct behavior that looks like coverage.
- *
- * So this writes a multi-turn session over 8 KB with two facts worth keeping, and backdates it.
- */
-const writeQualifyingTranscript = async (traceRoot) => {
-  const sessionId = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
-  const dir = join(traceRoot, "projects", "-tmp-checkout-api")
-  await exec("mkdir", ["-p", dir])
-  const common = {
-    sessionId,
-    cwd: "/tmp/checkout-api",
-    gitBranch: "main",
-    entrypoint: "cli",
-    version: "2.1.219",
-    isSidechain: false,
-    userType: "external"
-  }
-  const turns = [
-    [
-      "user",
-      "The checkout-api deploy rolled back again. Connections kept landing on the old target group after we reverted."
-    ],
-    [
-      "assistant",
-      "The revert alone does not drain the VIP. In-flight connections stay pinned to the old target group until the VIP is drained, so reverting while the VIP still points at the old group keeps serving stale pods."
-    ],
-    ["user", "So what is the right order of operations?"],
-    [
-      "assistant",
-      "Drain the VIP first, wait for connections to bleed off, then revert the deploy. Reversing that order is what produced the rollback: the deploy reverted while the VIP still routed to the old target group."
-    ],
-    ["user", "We also saw the health check pass while real requests were failing."],
-    [
-      "assistant",
-      "The health check probes the pod directly rather than through the VIP, so it reports healthy while the VIP still routes to drained pods. A check that bypasses the VIP cannot observe VIP-level routing failures."
-    ],
-    ["user", "Anything else worth recording about this incident?"],
-    [
-      "assistant",
-      "Two durable facts: draining the VIP must precede a revert, because the revert does not move connections; and a health check that bypasses the VIP cannot detect VIP-level routing failures, so a green check during an outage is expected."
-    ],
-    ["user", "Good. Note it against checkout-api."],
-    [
-      "assistant",
-      "Recorded against checkout-api: the drain-before-revert ordering, and the health-check blind spot. Both are procedural rather than incidental, so they should outlive the incident."
-    ]
-  ]
-  const lines = [JSON.stringify({ type: "mode", mode: "default", sessionId })]
-  let at = Date.parse("2026-08-14T10:00:00.000Z")
-  turns.forEach(([role, text], index) => {
-    // Padded past the 8 KB floor with the turn's own words rather than filler, so what the model reads
-    // is still a coherent session.
-    const body = `${text} ${text.repeat(role === "assistant" ? 4 : 2)}`
-    at += 6_000
-    lines.push(
-      JSON.stringify({
-        ...common,
-        type: role,
-        uuid: `u${String(index + 1)}`,
-        parentUuid: index === 0 ? null : `u${String(index)}`,
-        promptId: `p${String(Math.ceil((index + 1) / 2))}`,
-        timestamp: new Date(at).toISOString(),
-        message:
-          role === "user"
-            ? { role: "user", content: body }
-            : {
-                role: "assistant",
-                id: `msg${String(index + 1)}`,
-                model: "claude-opus-5",
-                content: [{ type: "text", text: body }]
-              }
-      })
-    )
-  })
-  const file = join(dir, `${sessionId}.jsonl`)
-  await writeFile(file, `${lines.join("\n")}\n`)
-  // Three days back: comfortably outside the one-hour quiet window.
-  await exec("touch", ["-d", "3 days ago", file])
-  return file
-}
-
-/**
- * The two edges that reach the network, driven for real against the installed artifact.
+ * The edge that reaches the network, driven for real against the installed artifact.
  *
  * Everything else this file checks is exercised with the embedder and the model switched off, which is
- * what keeps the gate credential-free — and it means the vector arm of retrieval, the sleep phases that
- * call a model, and the consolidator's whole reason to exist have never run from an install. These
- * three checks are that gap, and nothing else covers it: the eval tier fakes the embedder and the
- * integration tier sets both to `off`.
+ * what keeps the gate credential-free — and it means the vector arm of retrieval has never run from an
+ * install. This check is that gap, and nothing else covers it: the eval tier fakes the embedder and
+ * the integration tier sets both to `off`.
  */
 const checkLiveBedrock = async ({ bin, work, env }) => {
   const corpus = join(work, "live-corpus")
-  const traceRoot = join(work, "live-traces")
   // The credential is whatever the ambient environment holds; EMBED and LLM are simply not disabled.
-  const live = { ...env, MEMHTML_ROOT: corpus, MEMHTML_TRACE_ROOT: traceRoot }
+  const live = { ...env, MEMHTML_ROOT: corpus }
   delete live.MEMHTML_EMBED
   delete live.MEMHTML_LLM
 
@@ -1158,27 +1179,15 @@ const checkLiveBedrock = async ({ bin, work, env }) => {
     }
   })
 
-  await writeQualifyingTranscript(traceRoot)
-  await envelope(bin, ["trace", "index"], live)
-
-  await check("the sleep cycle calls the model and distills a transcript", async () => {
-    const { data: slept, stderr } = await envelopeWithLog(bin, ["sleep", "run"], live)
-    const phase = (slept.phases ?? []).find((entry) => entry.phase === "trace-consolidation")
-    const counts = phase?.counts ?? {}
-    /**
-     * `batch` proves the transcript qualified, `candidates` proves the model ran and answered.
-     *
-     * Two channels ride along, because every way this check fails reports `candidates=0` and the counts
-     * alone cannot say which: the phase's own `detail` separates "the agent found nothing" from "the
-     * agent could not be asked", and the run's log tail carries the REASON behind the second — the
-     * typed tag is in the envelope, but the sentence naming what the spawned server said is only ever
-     * on stderr.
-     */
-    const ok = slept.llmCalls >= 1 && counts.batch >= 1 && counts.candidates >= 1
-    const why = phase?.detail === undefined ? "" : ` — ${String(phase.detail)}`
+  await check("head embed fills the vector cache and head search runs the vector arm", async () => {
+    const embedded = (await envelope(bin, ["head", "embed"], live)).data
+    const searched = (await envelope(bin, ["head", "search", "VIP revert"], live)).data
     return {
-      ok,
-      detail: `llmCalls=${String(slept.llmCalls)} batch=${String(counts.batch)} candidates=${String(counts.candidates)} written=${String(counts.written)}${why}${ok ? "" : `\n     ${tail(stderr)}`}`
+      ok:
+        embedded.embedded >= 1 &&
+        searched.vector?.used === true &&
+        searched.hits.some((hit) => hit.arms.includes("vector")),
+      detail: `${String(embedded.embedded)} embedded, ${String(embedded.bytes)} bytes, vector ${JSON.stringify(searched.vector)}`
     }
   })
 }

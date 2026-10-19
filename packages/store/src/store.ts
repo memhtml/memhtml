@@ -31,6 +31,7 @@ import {
 } from "@memhtml/html"
 import { Context, Effect, Semaphore } from "effect"
 
+import { withCheckoutLock } from "./checkout-lock.js"
 import type { GitFailure, GitShape } from "./git.js"
 import { attemptIo, readFileOrNull } from "./layout.js"
 import { commitSubject, provenanceTrailers } from "./plumbing.js"
@@ -39,7 +40,7 @@ import { commitSubject, provenanceTrailers } from "./plumbing.js"
  * The memory store. Every operation that changes the corpus is expressed as one git commit.
  *
  * One commit per operation is the whole contract. It makes `git log` a readable history of
- * what the agent learned, makes `diff base..HEAD` a reviewable sleep run, and makes rollback
+ * what the agent learned, makes `diff base..HEAD` a reviewable curation run, and makes rollback
  * mean something. It also means the store owns staging rather than its caller. A caller that
  * staged its own files could bundle two unrelated writes into one commit and destroy that.
  */
@@ -225,6 +226,16 @@ export type StoreError =
 export interface StoreShape {
   readonly root: string
   readonly git: GitShape
+  /**
+   * Run `effect` as this store's one writer: the in-process permit every write below takes, then the
+   * repository's checkout lock (`withCheckoutLock`), which a session commit and every other process's
+   * store take too. For a caller that stages and commits through {@link git} itself (a task status
+   * change), so its `git add` and `git commit` cannot interleave with another writer of the shared
+   * index. Not reentrant on the permit: `effect` must not call a write method of this store.
+   */
+  readonly exclusive: <A, E, R>(
+    effect: Effect.Effect<A, E, R>
+  ) => Effect.Effect<A, E | StorageFailure, R>
   readonly writeMemory: (input: WriteInput) => Effect.Effect<WriteResult, StoreError>
   /**
    * N writes, ONE commit. The batch primitive `memhtml apply` and `memory_write_batch` are doors over.
@@ -295,7 +306,7 @@ export interface StoreShape {
   ) => Effect.Effect<{ readonly commitSha: string | null }, StoreError>
   /** Paths with uncommitted changes. Empty means a clean tree. */
   readonly dirtyPaths: () => Effect.Effect<ReadonlyArray<string>, StoreError>
-  /** Fail with `DirtyTree` unless the working tree is clean. What sleep's preflight calls. */
+  /** Fail with `DirtyTree` unless the working tree is clean. What a curation pass calls before it starts. */
   readonly requireCleanTree: () => Effect.Effect<void, StoreError>
   /**
    * Merge `commitish` into the current branch, surfacing a content conflict as a typed
@@ -512,9 +523,9 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
    *
    * The worktree pass is second and covers every path the operation touched, because a file that was
    * written but never staged is invisible to git and would otherwise survive as an untracked file,
-   * which is not a byte-identical tree. Its absence is what wedges every later sleep run:
-   * `requireCleanTree` is sleep's preflight, so one uncompensated failure blocks curation until a
-   * human intervenes.
+   * which is not a byte-identical tree. Its absence leaves the tree dirty, so every later
+   * session commit that touches the path answers `worktree-dirty`, and one uncompensated failure
+   * blocks that path until a human intervenes.
    */
   const restore = (touched: ReadonlyMap<string, string | null>): Effect.Effect<void, StoreError> =>
     Effect.gen(function* () {
@@ -1085,7 +1096,7 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
       /**
        * A failure between the `git mv` and the commit would otherwise leave the worst state this
        * package can produce: the target archived and staged, the corrected file half-written, and
-       * `requireCleanTree` refusing every sleep run from then on. The journal holds the target's
+       * a session commit on either path answering `worktree-dirty`. The journal holds the target's
        * original bytes, so the compensation puts the memory back where it was.
        */
       const journal = makeJournal()
@@ -1323,8 +1334,8 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
       const html = yield* readRaw(src)
       const linked = addLink(html, rel, hrefFor(dst))
       // `addLink` is idempotent on the `(rel, href)` pair, so a re-run writes nothing and
-      // commits nothing. That is what makes the sleep conflict phase's repeated promotion of
-      // one corroborated edge cost one commit in total rather than one per night.
+      // commits nothing. That is what makes a caller's repeated link of one edge cost one
+      // commit in total rather than one per call.
       if (linked === html) return { commitSha: null }
 
       // A link is a head-plane edit to a file that already exists, so the compensation rewrites the
@@ -1393,25 +1404,33 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
    * Read paths are deliberately outside the lock: git and the filesystem both admit any number of
    * concurrent readers, and serializing reads behind a commit would make a search wait on a write.
    *
-   * In-process only. Two PROCESSES sharing a root (a CLI invocation beside a running MCP server)
-   * still contend, and git's own index lock is what refuses the loser there — which is why a git
-   * failure has to be compensated rather than merely reported.
+   * The permit is in-process only. Two PROCESSES sharing a root (a CLI invocation beside a running
+   * MCP server), and a v2 session commit in any process, are excluded by the checkout lock taken
+   * inside it (`checkout-lock.ts`): a cross-process lock held from the first stage to the commit,
+   * which a session commit holds around its checkout update and ref swap. Without it a session's
+   * file, staged into the shared index for the instant before its ref moves, was swept into the next
+   * v1 commit, and the session's rollback then staged its deletion. The permit comes first, so the
+   * writers of one process queue on it rather than polling the lock.
    */
   const oneWriterAtATime = Semaphore.makeUnsafe(1)
+  const exclusive = <A, E, R>(
+    effect: Effect.Effect<A, E, R>
+  ): Effect.Effect<A, E | StorageFailure, R> =>
+    oneWriterAtATime.withPermit(withCheckoutLock(git.root, effect))
 
   return {
     root: git.root,
     git,
-    writeMemory: (input) => oneWriterAtATime.withPermit(writeMemory(input)),
-    writeMemories: (inputs, options) => oneWriterAtATime.withPermit(writeMemories(inputs, options)),
+    exclusive,
+    writeMemory: (input) => exclusive(writeMemory(input)),
+    writeMemories: (inputs, options) => exclusive(writeMemories(inputs, options)),
     readMemory,
-    correctMemory: (target, input) => oneWriterAtATime.withPermit(correctMemory(target, input)),
-    archiveMemory: (path, reason) => oneWriterAtATime.withPermit(archiveMemory(path, reason)),
-    supersedeMemories: (pairs) => oneWriterAtATime.withPermit(supersedeMemories(pairs)),
-    linkMemories: (srcPath, rel, dstPath) =>
-      oneWriterAtATime.withPermit(linkMemories(srcPath, rel, dstPath)),
+    correctMemory: (target, input) => exclusive(correctMemory(target, input)),
+    archiveMemory: (path, reason) => exclusive(archiveMemory(path, reason)),
+    supersedeMemories: (pairs) => exclusive(supersedeMemories(pairs)),
+    linkMemories: (srcPath, rel, dstPath) => exclusive(linkMemories(srcPath, rel, dstPath)),
     dirtyPaths,
     requireCleanTree,
-    mergeBranch: (commitish) => oneWriterAtATime.withPermit(mergeBranch(commitish))
+    mergeBranch: (commitish) => exclusive(mergeBranch(commitish))
   }
 }

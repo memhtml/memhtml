@@ -471,8 +471,9 @@ describe("0009 over a populated 0008 database", () => {
 /**
  * 0010 adds `trace_consolidations`: pure `CREATE TABLE`, no ALTER, no recreate-and-copy. The tests
  * that matter are therefore not about the DDL surviving — they are about the table's CATEGORY. It is
- * run state like `sleep_runs`, not an index projection like `files`, and the difference is only
- * observable across a rebuild.
+ * run state like `sleep_runs` (a table the schema keeps because migrations are append-only, though
+ * nothing writes it now), not an index projection like `files`, and the difference is only observable
+ * across a rebuild.
  */
 describe("0010 over a populated 0009 database", () => {
   const AT = "2026-08-08T00:00:00Z"
@@ -556,9 +557,9 @@ describe("0010 over a populated 0009 database", () => {
      * absent from it is untouched. `sleep_runs` and `sleep_phases` are checked alongside so the
      * assertion reads as "this is the same category as those", which is the actual claim.
      *
-     * (Verified by mutation: adding `"trace_consolidations"` to `MEMORY_TABLES` fails this case AND
-     * the watermark-survives-a-rebuild case in the sleep suite — which is what a reviewer would want,
-     * since the list is the kind of thing a future migration author appends to reflexively.)
+     * (Verified by mutation: adding `"trace_consolidations"` to `MEMORY_TABLES` fails this case, which
+     * is what a reviewer would want, since the list is the kind of thing a future migration author
+     * appends to reflexively.)
      */
     const names: ReadonlyArray<string> = MEMORY_TABLES
     for (const runState of ["trace_consolidations", "sleep_runs", "sleep_phases"]) {
@@ -1114,7 +1115,7 @@ describe("S0002 over a populated S0001 state plane", () => {
           db.run(
             `INSERT INTO state.entity_corroboration
                (entity_type, alias_name, canonical_name, detections, updated_at)
-             VALUES ('person', 'laith', 'laith al-saadoon', 0, ?)`,
+             VALUES ('person', 'laura', 'laura de-sabelin', 0, ?)`,
             [AT]
           )
         )
@@ -1122,7 +1123,7 @@ describe("S0002 over a populated S0001 state plane", () => {
           db.run(
             `INSERT INTO state.entity_corroboration
                (entity_type, alias_name, canonical_name, promoted, updated_at)
-             VALUES ('person', 'sanju', 'sanju kumar', 2, ?)`,
+             VALUES ('person', 'sasha', 'sasha kelly', 2, ?)`,
             [AT]
           )
         )
@@ -1261,9 +1262,9 @@ describe("the edge indexes serve the memory-graph walk", () => {
 
   it("leaves the authored-only anti-join's plan unchanged, which is what makes the swap free", async () => {
     /**
-     * The partial pair's only plausible readers were the `derived = 0` anti-joins in `@memhtml/sleep`,
+     * The partial pair's only plausible readers were the `derived = 0` anti-joins in the v1 sleep package,
      * and the plan says they never used it: with two columns to bind, the planner prefers
-     * `edges_derived (derived, rel)`. Asserted here rather than in the sleep package because the claim
+     * `edges_derived (derived, rel)`. Asserted here because the claim
      * is about THIS migration's cost, and it is what justifies replacing the pair instead of keeping
      * both.
      */

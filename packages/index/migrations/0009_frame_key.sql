@@ -29,7 +29,7 @@
 --
 --   * `archived = 0`: an evicted memory is not a live claim, so it cannot contradict one.
 --   * `memory_type <> 'task'`: the same carve-out `files_content_hash_active` carries. Two open
---     tasks phrased alike are two real work items ("the owner of the deploy runbook is Priya" as a
+--     tasks phrased alike are two real work items ("the owner of the deploy runbook is Paula" as a
 --     to-do, twice), not a contradiction to report.
 --   * `frame_key IS NOT NULL`: most gists have no frame shape (the guards fail closed), so this
 --     keeps the index the size of the KEYED rows rather than of the corpus.

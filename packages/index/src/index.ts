@@ -137,6 +137,16 @@ export {
   type SearchScope
 } from "./scope.js"
 export {
+  type AccessRow,
+  accessRows,
+  parseSidecar,
+  renderSidecar,
+  round4,
+  SIDECAR_PRECISION,
+  type SidecarEntry,
+  toSidecarEntry
+} from "./sidecar.js"
+export {
   type FrameMatch,
   IndexRecorder,
   type IndexRecorderShape,

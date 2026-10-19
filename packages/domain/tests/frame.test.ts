@@ -1,11 +1,12 @@
+import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
 
-import { frameKeyOf } from "../src/frame.js"
+import { frameKeyOf, frameOf, frameValueOf } from "../src/frame.js"
 
 /**
  * `frameKeyOf` as a PORT, which makes this file a fidelity oracle rather than a behavior spec.
  *
- * The first block is `memhtml-evals/src/adapter/consolidate.test.ts` VERBATIM — the same eight cases,
+ * The first block is `external-evals/src/adapter/consolidate.test.ts` VERBATIM — the same eight cases,
  * the same expected strings. That is deliberate and it is the point: the eval measured this rule
  * against all 8 MAB Conflict_Resolution rows, and if the port and the reference ever disagree, the
  * eval's number stops describing what memhtml ships. A divergence here must be resolved by fixing
@@ -47,7 +48,7 @@ describe("frameKeyOf — port fidelity against the eval reference", () => {
   })
 
   it("returns null for prose with no linking token", () => {
-    expect(frameKeyOf("Priya adopted a dog named Waffles")).toBeNull()
+    expect(frameKeyOf("Paula adopted a dog named Waffles")).toBeNull()
   })
 
   it("distinguishes different subjects sharing a frame shape", () => {
@@ -95,7 +96,7 @@ describe("frameKeyOf — the guards at their thresholds", () => {
   it("keys on the LAST linking token even when several are present", () => {
     // Greediness, stated directly rather than inferred from the MAB pair: four linking tokens, and
     // the key runs through the last one.
-    expect(frameKeyOf("The owner of the record in the table is Priya")).toBe(
+    expect(frameKeyOf("The owner of the record in the table is Paula")).toBe(
       "the owner of the record in the table is"
     )
   })
@@ -157,6 +158,61 @@ describe("frameKeyOf — the guards at their thresholds", () => {
       // Three orders of magnitude below a quadratic blow-up at this size, so a loaded machine
       // cannot drift a pass into a fail.
       expect(perCallMs, `frameKeyOf took ${perCallMs.toFixed(1)}ms on ${name}`).toBeLessThan(250)
+
+      // `frameOf` runs the same collapse and the same `FRAME` match (CodeQL flags its call site
+      // separately), so the same bound holds for it.
+      expect(frameOf(gist)?.key ?? null, `${name} frameOf key`).toBe(expected)
+      const startedOf = process.hrtime.bigint()
+      for (let i = 0; i < 5; i++) frameOf(gist)
+      const perCallOfMs = Number(process.hrtime.bigint() - startedOf) / 5e6
+      expect(perCallOfMs, `frameOf took ${perCallOfMs.toFixed(1)}ms on ${name}`).toBeLessThan(250)
     }
+  })
+})
+
+describe("frameValueOf — the slot's value, paired with the key", () => {
+  it("answers the normalized tail after the frame", () => {
+    expect(frameValueOf("The capital of India is New Delhi.")).toBe("new delhi")
+    expect(frameValueOf("THE  Capital of India is   New   Delhi")).toBe("new delhi")
+    expect(frameOf("The capital of India is Grosseto.")).toEqual({
+      key: "the capital of india is",
+      value: "grosseto"
+    })
+  })
+
+  it("keeps two different values apart, which is what makes a contradiction visible", () => {
+    expect(frameValueOf("The capital of India is New Delhi.")).not.toBe(
+      frameValueOf("The capital of India is New Delhi city.")
+    )
+  })
+
+  it("is null exactly when frameKeyOf is null, over the reference cases and random prose", () => {
+    /**
+     * The two accessors read one regex match through the same two guards, so a gist with a key has
+     * a value and one without has neither. (Verified by mutation: `MAX_VALUE_TOKENS + 1` in
+     * `frameOf`'s guard alone fails this on the seven-token clause.)
+     */
+    const cases = [
+      "The capital of India is New Delhi.",
+      "Water is wet.",
+      "The problem with the design is that it never handles the empty case at all.",
+      "Priya adopted a dog named Waffles",
+      "The deploy runbook owner is a b c d e f",
+      "The deploy runbook owner is a b c d e f g",
+      "Capital is Paris.",
+      "",
+      "   \n  "
+    ]
+    for (const gist of cases) {
+      expect(frameValueOf(gist) === null, gist).toBe(frameKeyOf(gist) === null)
+      expect(frameOf(gist)?.key ?? null, gist).toBe(frameKeyOf(gist))
+    }
+    fc.assert(
+      fc.property(fc.string({ maxLength: 120 }), (gist) => {
+        const frame = frameOf(gist)
+        expect(frame?.key ?? null).toBe(frameKeyOf(gist))
+        expect(frameValueOf(gist) === null).toBe(frameKeyOf(gist) === null)
+      })
+    )
   })
 })

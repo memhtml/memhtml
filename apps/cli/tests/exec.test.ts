@@ -396,7 +396,7 @@ describe("the corpus is read-only, and the mount proves it (CODE-2)", () => {
    *
    * Both a top-level path and one inside a subdirectory, because the overlay routes them differently.
    *
-   * (Mutation: dropping `readOnly: true` from `mountReadOnlyRoots` in `apps/consolidator/src/mount.ts`
+   * (Mutation: dropping `readOnly: true` from `mountReadOnlyRoots` in `apps/cli/src/mount.ts`
    * makes both writes SUCCEED and this test fail. Observed: `expected 'wrote' to match /EROFS/`.)
    */
   it("REFUSES a write from inside the script with EROFS", async () => {
@@ -528,9 +528,8 @@ describe("the sandbox has no network client, and that is this runtime's choice",
    *
    * just-bash registers its network commands only when a `network` or `fetch` option is passed to
    * `new Bash()` (`just-bash@3.2.0` `dist/Bash.d.ts:80`), and `apps/cli/src/exec.ts` passes neither.
-   * So egress is decided by the CONSTRUCTOR, not by a default — the consolidator's sandbox does reach
-   * the network because eve passes `dangerouslyAllowFullInternetAccess`, and `memhtml exec` does not
-   * because this runtime omits the option.
+   * So egress is decided by the CONSTRUCTOR, not by a default: a runtime that passes the option gets
+   * the network, and `memhtml exec` does not because this runtime omits it.
    *
    * `typeof fetch` is asserted to be `"function"` on purpose: it IS one, so a capability check on the
    * global reads as passing while enforcing nothing. The refusal is on the call.
@@ -737,7 +736,7 @@ describe("usage errors are exit 2, decided before anything is mounted", () => {
    * `validate`'s return becomes exit 2 while a failure raised in `dispatch` becomes exit 1, so this
    * check cannot live in the arm: a mutually-exclusive-parameter refusal raised after dispatch is
    * masked as a runtime error
-   * (`.erpaval/solutions/api-patterns/xor-params-and-mcp-error-masking.md`).
+   * (`.lessons/solutions/api-patterns/xor-params-and-mcp-error-masking.md`).
    *
    * (Mutation: moving the `execFlags` call out of `validate` and into the exec arm as a raised failure
    * turns every case here into exit 1. Observed: `expected 1 to be 2`.)

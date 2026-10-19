@@ -4,9 +4,9 @@ import { dirname, join } from "node:path"
 import { promisify } from "node:util"
 
 import { renderTemplate } from "@memhtml/html"
-import { detectedTaskPath, detectionKey } from "@memhtml/sleep"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
+import { detectedTaskPath, detectionKey } from "../src/detected-tasks.js"
 import { EXIT_RUNTIME, EXIT_USAGE } from "../src/envelope.js"
 import { AUTHORABLE_RELS } from "../src/operations.js"
 import { run } from "../src/run.js"
@@ -106,7 +106,7 @@ describe("the authorable rel vocabulary", () => {
   it("admits the task rels and withholds the system-minted ones", () => {
     /**
      * The asymmetry is the design decision, not an oversight: a `blocks` edge between two tasks is a
-     * real authored assertion, while a `person` edge is written by sleep's person-links phase against
+     * real authored assertion, while a `person` edge is written by a curator against
      * the hand-edited identity surface and `from_session` is derived from provenance the caller
      * already supplied. Authoring either by hand puts a guess where a derivation belongs.
      */
@@ -365,7 +365,7 @@ describe("the task lifecycle, end to end", () => {
  * they are two different reading sessions. The filter is what lets a human review the machine's queue
  * without sorting the two by hand.
  *
- * The detected tasks here are written through `@memhtml/sleep`'s OWN `renderTemplate` inputs and its own
+ * The detected tasks here are written through the detector's OWN `renderTemplate` inputs and its own
  * `detectedTaskPath`, not through hand-written HTML at a hand-written path. That is the load-bearing
  * choice in this suite: the filter matches on the PATH SHAPE, so a fixture that spelled the path itself
  * would pass against a filter and a minter that had drifted apart. Borrowing the minter's own path
@@ -376,7 +376,7 @@ const runProcess = promisify(execFile)
 /**
  * Stage and commit whatever a fixture just wrote, as one commit.
  *
- * The sleep cycle writes a detected task and COMMITS it on the sleep branch, so a committed file is the
+ * A detector writes a detected task and COMMITS it on its own branch, so a committed file is the
  * production state rather than a test convenience — and it is load-bearing for the archive arm, because
  * `task status done` routes through `store.archiveMemory`, whose `git mv` refuses an untracked path.
  */
@@ -387,7 +387,7 @@ const commitAll = async (cli: Cli, subject: string): Promise<void> => {
 
 describe("task list --detected", () => {
   let cli: Cli
-  /** The detected task's path, as `@memhtml/sleep` itself would name it. */
+  /** The detected task's path, as `src/detected-tasks.ts` names it. */
   let detectedPath: string
   let humanPath: string
 
@@ -406,7 +406,7 @@ describe("task list --detected", () => {
      * A detected task, at the path `mintDetectedTask` would give it, with the head it would write.
      *
      * Written to disk and picked up by `index update` rather than committed by a command, because
-     * nothing in the CLI mints one — the sleep cycle does, on its own branch, and `index update` reads
+     * nothing in the CLI mints one — a detector does, on its own branch, and `index update` reads
      * the dirty working tree as well as HEAD. What this fixture has to be faithful about is the PATH and
      * the `memhtml-author`, since those are the two things the filter and the author separation rest on.
      */
@@ -518,7 +518,7 @@ describe("task list --detected", () => {
     const doing = await cli.json<TaskList>(["task", "list", "--detected", "--status", "doing"])
     expect(doing.tasks).toEqual([])
 
-    // `done` archives, exactly as `closeDetectedTask` does through sleep's own staging discipline.
+    // `done` archives, exactly as a detector's own machine close does.
     const closed = await cli.json<TaskUpdated>([
       "task",
       "status",

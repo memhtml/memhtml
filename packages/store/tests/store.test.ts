@@ -114,14 +114,14 @@ describe("writeMemory", () => {
     expect(result.path).toBe("projects/checkout-api/a-fact.html")
   })
 
-  it("routes a person-entity semantic memory to the people directory", async () => {
+  it("files a person-entity semantic memory by its other fields, never under resources/people", async () => {
     const repo = await fixture()
     const result = await run(
       repo.store.writeMemory(
-        writeInput({ title: "Sanju reviews infra", entities: ["person:sanju"] })
+        writeInput({ title: "Sasha reviews infra", entities: ["person:sasha"] })
       )
     )
-    expect(result.path).toBe("resources/people/sanju-reviews-infra.html")
+    expect(result.path).toBe("areas/inbox/sasha-reviews-infra.html")
   })
 
   it("honors an explicit valid path verbatim", async () => {

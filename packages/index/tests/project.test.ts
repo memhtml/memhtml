@@ -141,11 +141,11 @@ describe("disclosureTextFor", () => {
 describe("entityRowsFor", () => {
   it("splits a type:name reference at the first colon", () => {
     const doc = parse(
-      memoryHtml({ title: "T", claim: "C.", entities: ["service:checkout-api", "person:sanju"] })
+      memoryHtml({ title: "T", claim: "C.", entities: ["service:checkout-api", "person:sasha"] })
     )
     expect(entityRowsFor(doc)).toEqual([
       { entityType: "service", entityName: "checkout-api" },
-      { entityType: "person", entityName: "sanju" }
+      { entityType: "person", entityName: "sasha" }
     ])
   })
 
@@ -250,7 +250,7 @@ describe("authoredEdgesFor", () => {
         claim: "C.",
         links: [
           { rel: "memhtml-part-of", href: "/areas/arcs/x.html" },
-          { rel: "memhtml-about-person", href: "/resources/people/sanju.html" }
+          { rel: "memhtml-about-person", href: "/resources/people/sasha.html" }
         ]
       })
     )
@@ -492,7 +492,7 @@ describe("frame_key at projection", () => {
     // The guards fail closed, and NULL is the common case. `files_frame_key_active` skips these rows
     // entirely, which is what keeps the index the size of the keyed corpus.
     expect(keyFor("Water is wet.")).toBeNull()
-    expect(keyFor("Priya adopted a dog named Waffles.")).toBeNull()
+    expect(keyFor("Paula adopted a dog named Waffles.")).toBeNull()
   })
 
   it("keys the GIST, not the body — a linking token in supporting prose must not decide the slot", () => {
@@ -510,7 +510,7 @@ describe("frame_key at projection", () => {
       memoryHtml({
         title: "T",
         claim: "Reversibility wins.",
-        body: "The owner of the deploy runbook is Priya."
+        body: "The owner of the deploy runbook is Paula."
       })
     )
     const insert = projection.writes.find((write) => write.sql.includes("INSERT INTO files"))

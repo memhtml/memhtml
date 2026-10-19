@@ -12,13 +12,16 @@
   "dependencies": {
     "@memhtml/cli": "workspace:*",
     "@memhtml/contracts": "workspace:*",
+    "@memhtml/curator": "workspace:*",
     "@memhtml/domain": "workspace:*",
     "@memhtml/eval": "workspace:*",
+    "@memhtml/head": "workspace:*",
     "@memhtml/html": "workspace:*",
     "@memhtml/index": "workspace:*",
     "@memhtml/llm": "workspace:*",
     "@memhtml/mcp": "workspace:*",
-    "@memhtml/sleep": "workspace:*",
+    "@memhtml/session": "workspace:*",
+    "@memhtml/snapshot": "workspace:*",
     "@memhtml/store": "workspace:*",
     "@memhtml/traces": "workspace:*",
     "effect": "catalog:"
@@ -26,9 +29,9 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
     "@effect/vitest": "catalog:",
-    "@types/node": "26.6.4",
+    "@types/node": "26.6.5",
     "jsonc-parser": "3.3.1",
     "typescript": "7.0.2",
-    "vitest": "5.0.3"
+    "vitest": "5.0.4"
   }
 }

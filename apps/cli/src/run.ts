@@ -1,18 +1,24 @@
-import {
-  DiscriminationFailed,
-  discriminationGate,
-  type EvalMode,
-  runDiscrimination
-} from "@memhtml/eval"
+import { DEFAULT_V1_DOORS, type V1DoorMode } from "@memhtml/contracts"
+import { CURATOR_MODEL_VAR, DEFAULT_CURATOR_MODEL_ID, modelSpecOf } from "@memhtml/curator"
+import { DiscriminationFailed, type EvalMode, runDiscrimination } from "@memhtml/eval"
 import { isValidDatetime } from "@memhtml/html"
 import { parseFacetFilters } from "@memhtml/index"
 import { HOOK_EVENTS, HOSTS, isHookEvent, isHostId, renderHookOutput } from "@memhtml/integrations"
+import { EmbeddingsLive, PROXY_BASE_URL_VAR } from "@memhtml/llm"
+import { isSessionId } from "@memhtml/session"
 import { initRepo } from "@memhtml/store"
 import { layerTelemetry } from "@memhtml/telemetry"
-import { ConfigProvider, Effect, type Layer, Logger } from "effect"
+import { ConfigProvider, Effect, Layer, Logger } from "effect"
 import { renderAgentsDoc, runAgentsDoc } from "./agents-doc.js"
-import { Git, Indexer, layerApp, Sleep } from "./api-layer.js"
-import { applyPayload, applyText, decodeApply, readStdin } from "./apply.js"
+import { Embedder, type EmbedderShape, Git, Indexer, layerApp, layerEmbedder } from "./api-layer.js"
+import {
+  applyPayload,
+  applyText,
+  decodeApply,
+  decodeSessionPut,
+  readStdin,
+  type SessionPutOp
+} from "./apply.js"
 import {
   buildManifest,
   COMMAND_NAMES,
@@ -21,8 +27,18 @@ import {
   type FlagSpec,
   GLOBAL_FLAGS
 } from "./commands.js"
-import { MemhtmlRoot, REFUSE_ENV_ROOT_VAR, refusesEnvRoot } from "./config.js"
+import {
+  MemhtmlRoot,
+  REFUSE_ENV_ROOT_VAR,
+  refusesEnvRoot,
+  SESSION_VAR,
+  sessionFromEnv
+} from "./config.js"
+import { configReport } from "./config-report.js"
+import { curateCollapse, readPlanFile, readRulingsFile } from "./curate-collapse.js"
+import { curateRefProblem, curateRun } from "./curate-run.js"
 import { doctor } from "./doctor.js"
+import { closedDoorRefusal, RECORD_CREATING_V1_COMMANDS, sessionDoorRefusal } from "./doors.js"
 import {
   API_VERSION,
   EXIT_OK,
@@ -37,6 +53,27 @@ import {
 } from "./envelope.js"
 import { failureFor } from "./errors.js"
 import { DEFAULT_TIMEOUT_MS, execCommand, MAX_TIMEOUT_MS, readScript } from "./exec.js"
+import { DEFAULT_EXEC_LANG, EXEC_LANGS, type ExecLang } from "./exec-lang.js"
+import {
+  EXEC_POOL_SIZE_MAX,
+  EXEC_POOL_SIZE_VAR,
+  EXEC_WORKER_HEAP_VAR,
+  parsePoolSetting,
+  WORKER_HEAP_MB_MAX,
+  WORKER_HEAP_MB_MIN
+} from "./exec-pool.js"
+import {
+  COMMIT_DEADLINE_DEFAULT_MS,
+  COMMIT_DEADLINE_VAR,
+  EMBED_DEADLINE_VAR,
+  EMBED_WARM_IDLE_VAR,
+  EXEC_BODY_MAX_BYTES,
+  execBodyBytes,
+  execBodyTooLarge,
+  execRequestOf
+} from "./head-protocol.js"
+import { serveHead } from "./head-server.js"
+import { parseDeadlineMs } from "./head-vectors.js"
 import { helpData, renderCommandHelp } from "./help.js"
 import {
   HOOK_BUDGET_DEFAULT,
@@ -61,7 +98,9 @@ import * as ops from "./operations.js"
 import { publish } from "./publish.js"
 import { serveMcp } from "./serve.js"
 import { stateExport, stateImport } from "./state.js"
-import { indexReport, sleepPhases, sleepRunReport, traceSessionsFlag } from "./views.js"
+import { guardV1Door, loadStorePolicy, v1DoorState } from "./store-config.js"
+import { parseOlderThan, qualifyRef, runV2, sessionPrune } from "./v2.js"
+import { indexReport } from "./views.js"
 
 export interface Parsed {
   readonly command: string
@@ -289,34 +328,11 @@ export interface RunResult {
  * What a handler returns: a response type, its payload, and optionally the exit code that payload
  * implies. The envelope is added once, below, and an absent third element is {@link EXIT_OK}.
  *
- * The third element exists for the two commands whose own failures are DATA. `@memhtml/sleep` types
- * `run` and `resume` with error channel `never` on purpose — a phase that failed is a normal terminal
- * state with a report row — so the report is a success envelope and the process still has to say the
- * curation did not happen. Everywhere else a returned payload is success, so the element is absent
- * rather than restated on every other arm.
+ * The third element exists for a command whose own failures are DATA: a report that is a success
+ * envelope while the process still has to say the work did not happen. Everywhere else a returned
+ * payload is success, so the element is absent rather than restated on every other arm.
  */
 type Handled = readonly [Success<unknown>["type"], unknown, number?]
-
-/**
- * Exit 1 when a sleep run has a failed phase.
- *
- * **A partially-failed run and a fully-aborted run exit the same**, and that is a decision rather
- * than an omission. A caller reading the exit code is asking one question — did the curation this
- * invocation was for happen — and both answers are no. The difference between them is already stated
- * in the payload, precisely: an abort is every selected phase `failed` with `headSha === baseSha` and
- * no commits, while a partial run names the phases that landed. A second exit code would be a
- * second, weaker copy of that, and a caller would have to learn it to recover a fact the envelope
- * already carries.
- *
- * Exit 1 rather than 2: the call was well-formed, so this is a runtime failure an operator fixes by
- * changing the repo or the environment ({@link EXIT_USAGE} is reserved for fixing the call).
- *
- * `sleep status` and `sleep review` are deliberately not routed through here. They REPORT a run they
- * did not perform, and a read that exited non-zero because the thing it describes failed would make
- * "tell me what happened" indistinguishable from "I could not tell you".
- */
-const sleepExit = (report: { readonly failedPhases: ReadonlyArray<string> }): number =>
-  report.failedPhases.length > 0 ? EXIT_RUNTIME : EXIT_OK
 
 /**
  * Dispatch one parsed invocation against the provided services.
@@ -347,6 +363,7 @@ const dispatch = (
 
     case "write":
       return Effect.gen(function* () {
+        yield* guardV1Door("write")
         const result = yield* ops.writeMemory({
           title: str(parsed, "title") ?? "",
           // `claim` is "" exactly when `--article-html` supplied the article instead, which
@@ -376,16 +393,12 @@ const dispatch = (
      */
     case "apply":
       return Effect.gen(function* () {
+        yield* guardV1Door("apply")
         const result = yield* ops.batchWrite({
           ops: applyOps,
           continueOnError: bool(parsed, "continue-on-error", false),
           detectConflicts: bool(parsed, "detect-conflicts", false),
           detectNearDuplicates: bool(parsed, "detect-near-duplicates", false),
-          // `validate` has already refused any value outside the flag's closed vocabulary, so the
-          // narrowing here cannot silently drop a caller's ask.
-          ...(str(parsed, "consolidate") === "last-wins"
-            ? { consolidate: "last-wins" as const }
-            : {}),
           ...provenanceOf(parsed)
         })
         return ["batch.applied", applyPayload(result)] as const
@@ -434,6 +447,7 @@ const dispatch = (
 
     case "correct":
       return Effect.gen(function* () {
+        yield* guardV1Door("correct")
         const result = yield* ops.correctMemory({
           targetPath: parsed.positional[0] ?? "",
           title: str(parsed, "title") ?? "",
@@ -522,6 +536,7 @@ const dispatch = (
 
     case "task add":
       return Effect.gen(function* () {
+        yield* guardV1Door("task add")
         const title = str(parsed, "title") ?? ""
         const result = yield* ops.writeMemory({
           title,
@@ -634,80 +649,6 @@ const dispatch = (
         return ["trace.links", result] as const
       })
 
-    case "sleep run":
-      return Effect.gen(function* () {
-        const sleep = yield* Sleep
-        const phases = yield* sleepPhases(str(parsed, "phases"))
-        const maxLlmCalls = int(parsed, "max-llm-calls")
-        const traceSessions = yield* traceSessionsFlag(int(parsed, "trace-sessions"))
-        const report = yield* sleep.run({
-          date: str(parsed, "date") ?? (yield* today),
-          ...(phases === undefined ? {} : { phases }),
-          dryRun: bool(parsed, "dry-run", false),
-          deep: bool(parsed, "deep", false),
-          ...(maxLlmCalls === undefined ? {} : { maxLlmCalls }),
-          ...(traceSessions === undefined ? {} : { traceSessions })
-        })
-        const payload = sleepRunReport(report)
-        return ["sleep.report", payload, sleepExit(payload)] as const
-      })
-
-    case "sleep resume":
-      return Effect.gen(function* () {
-        const sleep = yield* Sleep
-        const report = yield* sleep.resume(parsed.positional[0] ?? "")
-        const payload = sleepRunReport(report)
-        return ["sleep.report", payload, sleepExit(payload)] as const
-      })
-
-    case "sleep review":
-      return Effect.gen(function* () {
-        const sleep = yield* Sleep
-        const report = yield* sleep.review(parsed.positional[0])
-        const withDiff = bool(parsed, "diff", false)
-        if (!withDiff) return ["sleep.review", report] as const
-        // The raw diff is fetched here rather than inside `review`, because it is the one field whose
-        // size is unbounded, and a review that always carried it would make the default response
-        // unusable in a context window.
-        const git = yield* Git
-        const diff = yield* git
-          .run(["diff", `${report.baseSha}..${report.headSha}`])
-          .pipe(Effect.orElseSucceed(() => ""))
-        return ["sleep.review", { ...report, diff }] as const
-      })
-
-    case "sleep merge":
-      return Effect.gen(function* () {
-        const sleep = yield* Sleep
-        const skipGate = bool(parsed, "skip-gate", false)
-        if (skipGate) {
-          yield* Effect.logWarning(
-            "sleep merge --skip-gate: merging without re-running discrimination"
-          )
-        }
-        /**
-         * **The discrimination gate, composed here.** A sleep run that degrades retrieval quality
-         * cannot land. `@memhtml/sleep` takes the gate as a parameter and supplies none, so a package
-         * that cannot import the eval also cannot silently default it. The composition is visible in
-         * this wiring or it does not exist.
-         *
-         * `discriminationGate` fails on an inversion, `merge` wraps it in `Effect.result`, and the
-         * failure becomes `refusal: "gate-failed"` with `main` never moving.
-         *
-         * `fake` mode, always. The gate measures the ranking stack against its own generated fixture
-         * corpus, so a live-Bedrock run would make an unattended merge conditional on a network call and
-         * on credentials being present at 3am. The deterministic embedder's cosine relations are
-         * a pure function of the text, which is the property a regression gate needs. A
-         * cron whose merge silently skipped its gate because a token expired is the failure this
-         * arrangement prevents.
-         */
-        const report = yield* sleep.merge(
-          parsed.positional[0] ?? "",
-          skipGate ? {} : { preMergeGate: discriminationGate().pipe(Effect.asVoid) }
-        )
-        return ["sleep.merge", report] as const
-      })
-
     case "publish":
       return Effect.gen(function* () {
         const report = yield* publish()
@@ -732,36 +673,6 @@ const dispatch = (
         return ["state.import", report] as const
       })
 
-    case "sleep plan":
-      return Effect.gen(function* () {
-        const sleep = yield* Sleep
-        /**
-         * The instant is read HERE and passed in, which keeps the one clock reading anywhere near sleep
-         * on the caller's side. The settled-transcript cutoff is derived from it, and a plan that read a
-         * clock inside the package would be the first thing in sleep that consults one to decide
-         * something.
-         */
-        const millis = yield* Effect.clockWith((clock) => clock.currentTimeMillis)
-        return ["sleep.plan", yield* sleep.plan(millis)] as const
-      })
-
-    case "sleep status":
-      return Effect.gen(function* () {
-        const sleep = yield* Sleep
-        const report = yield* sleep.review()
-        return [
-          "sleep.report",
-          {
-            runId: report.runId,
-            branch: report.branch,
-            baseSha: report.baseSha,
-            headSha: report.headSha,
-            phases: report.phases,
-            commits: report.commits.length
-          }
-        ] as const
-      })
-
     case "status":
       return Effect.gen(function* () {
         const report = yield* ops.statusReport()
@@ -774,11 +685,6 @@ const dispatch = (
       return Effect.fail({ _tag: "UnhandledCommand", command: parsed.command })
   }
 }
-
-/** Today as `YYYY-MM-DD`, through the Effect clock so a test can pin the run date. */
-const today = Effect.clockWith((clock) =>
-  Effect.map(clock.currentTimeMillis, (millis) => new Date(millis).toISOString().slice(0, 10))
-)
 
 /**
  * The services `dispatch` may reach for, derived from the app layer's own output.
@@ -833,7 +739,7 @@ const EITHER_CLAIM_OR_ARTICLE: ReadonlySet<string> = new Set(["write", "correct"
  * `dispatch` becomes exit 1, so "you passed the wrong flags" must be decided before any service is
  * built. Mutually exclusive parameters are refused at this edge, before dispatch, because a refusal
  * raised any later is masked as a runtime error
- * (`.erpaval/solutions/api-patterns/xor-params-and-mcp-error-masking.md`).
+ * (`.lessons/solutions/api-patterns/xor-params-and-mcp-error-masking.md`).
  *
  * At most one rather than exactly one, because zero doors is legal and means stdin, the same shape
  * `memhtml apply` has, where a bare invocation drains the pipe. `--file -` is the flag spelling of
@@ -844,8 +750,14 @@ const EITHER_CLAIM_OR_ARTICLE: ReadonlySet<string> = new Set(["write", "correct"
  * rather than clamped, because just-bash treats a non-positive `maxJsTimeoutMs` as no bound at all, so
  * `--timeout-ms 0` would read as "be quick" and mean "run forever".
  */
+const SCRIPT_COMMANDS: ReadonlySet<string> = new Set(["exec", "session exec"])
+
 const execFlags = (parsed: Parsed): Failure | undefined => {
-  if (parsed.command !== "exec") return undefined
+  if (!SCRIPT_COMMANDS.has(parsed.command)) return undefined
+  const name = parsed.command
+  // `session exec` reads bash unless `--lang js`, so its suggestions are shell, not a JS one-liner.
+  const inline = name === "session exec" ? "--script 'echo 1'" : "--script 'console.log(1)'"
+  const piped = name === "session exec" ? `memhtml ${name} <<'SH'` : `cat s.mjs | memhtml ${name}`
 
   const file = str(parsed, "file")
   const doors = [
@@ -856,20 +768,16 @@ const execFlags = (parsed: Parsed): Failure | undefined => {
   if (doors.length > 1) {
     return fail(
       "ERR_INVALID_FLAG",
-      "exec takes at most one of --file or --script, not both: two scripts cannot both be the one that runs",
-      [
-        "memhtml exec --file traverse.mjs",
-        "memhtml exec --script 'console.log(1)'",
-        "cat s.mjs | memhtml exec"
-      ]
+      `${name} takes at most one of --file or --script, not both: two scripts cannot both be the one that runs`,
+      [`memhtml ${name} --file traverse.mjs`, `memhtml ${name} ${inline}`, piped]
     )
   }
   // `-`, positional or as `--file -`, is the explicit stdin spelling, so it cannot sit beside a door.
   if (doors.length === 1 && (parsed.positional[0] === "-" || file === "-")) {
     return fail(
       "ERR_INVALID_FLAG",
-      `exec cannot read stdin and ${doors[0]} in the same call: \`-\` names stdin as the script source`,
-      ["cat s.mjs | memhtml exec", `memhtml exec ${doors[0]} …`]
+      `${name} cannot read stdin and ${doors[0]} in the same call: \`-\` names stdin as the script source`,
+      [piped, `memhtml ${name} ${doors[0]} …`]
     )
   }
 
@@ -880,7 +788,7 @@ const execFlags = (parsed: Parsed): Failure | undefined => {
       return fail(
         "ERR_INVALID_FLAG",
         `--timeout-ms must be a positive integer of at most ${MAX_TIMEOUT_MS}: a non-positive bound is no bound at all, which is the one thing a sandbox may not be`,
-        [`memhtml exec --timeout-ms ${DEFAULT_TIMEOUT_MS}`]
+        [`memhtml ${name} --timeout-ms ${DEFAULT_TIMEOUT_MS}`]
       )
     }
   }
@@ -905,6 +813,250 @@ const applyFlags = (parsed: Parsed): Failure | undefined => {
       "apply cannot read stdin and --file in the same call: `-` names stdin as the op stream",
       ["cat ops.jsonl | memhtml apply", "memhtml apply --file ops.jsonl"]
     )
+  }
+  return undefined
+}
+
+/**
+ * `memhtml curate merge <ref> --into <branch>`: the two names must differ and neither may be blank.
+ *
+ * Both are qualified the way the arm qualifies them (`refs/heads/` prepended when absent), so
+ * `curate merge main --into refs/heads/main` is the same self-landing as `curate merge main`. A
+ * self-landing would pass the descendant check trivially (every commit descends from itself) and
+ * report a merge that moved nothing, which is the shape of answer a caller mistakes for success. A
+ * blank `--into` would land on `refs/heads/`, a ref no branch can be.
+ */
+const curateMergeFlags = (parsed: Parsed): Failure | undefined => {
+  if (parsed.command !== "curate merge") return undefined
+  const into = str(parsed, "into")
+  if (into !== undefined && into.trim() === "") {
+    return fail("ERR_INVALID_FLAG", "--into names the branch to fast-forward and cannot be blank", [
+      "memhtml curate merge curate/2026-09-23 --into main"
+    ])
+  }
+  const target = parsed.positional[0]
+  if (target !== undefined && qualifyRef(target) === qualifyRef(into ?? "main")) {
+    return fail(
+      "ERR_INVALID_FLAG",
+      `curate merge ${target} would land ${qualifyRef(target)} on itself; the ref is the curator branch and --into is where it lands`,
+      ["memhtml curate merge curate/2026-09-23 --into main"]
+    )
+  }
+  return undefined
+}
+
+/**
+ * `memhtml curate run`: a `--ref` on the line must name a branch under `refs/heads/curate/`, a
+ * `--model` must have one of the three shapes, and the two budget integers must be positive.
+ *
+ * Each is judged here because it is a property of the argv alone. The ref rule is the command's
+ * contract (a run lands on its own branch and never on `main`, `curate merge` is the only way back),
+ * and `commitSession` fast-forwards whatever ref it is given and syncs the checkout when `HEAD` names
+ * it, so `--ref main` would land model output on the system of record with no gate; `curateRun`
+ * refuses it a second time for a caller that skips the CLI, and also refuses the branch `HEAD` points
+ * at, which needs the repo. Whether a `proxy:` spec has a proxy to go to, and what the model flag
+ * defaults to when absent, both read the environment, so those two are judged in {@link run}'s v2
+ * branch, still at exit 2 and still before any repo opens. A non-positive `--max-steps` would mean
+ * "call the model never" and a non-positive `--wall-clock-ms` "stop before starting", each a run that
+ * reports a stop and did nothing, which reads as success.
+ */
+const CURATOR_COMMANDS: ReadonlySet<string> = new Set(["curate run", "curate collapse"])
+
+const curateRunFlags = (parsed: Parsed): Failure | undefined => {
+  if (!CURATOR_COMMANDS.has(parsed.command)) return undefined
+  const command = parsed.command
+  const ref = str(parsed, "ref")
+  if (ref !== undefined && ref.trim() !== "") {
+    const problem = curateRefProblem(ref)
+    if (problem !== undefined) {
+      return fail("ERR_INVALID_FLAG", `--ref ${JSON.stringify(ref)}: ${problem}`, [
+        `memhtml ${command} --model fake --ref curate/2026-09-23`,
+        "memhtml curate merge curate/2026-09-23"
+      ])
+    }
+  }
+  const model = str(parsed, "model")
+  if (model !== undefined) {
+    const spec = modelSpecOf(model)
+    if (!spec.ok) {
+      return fail("ERR_INVALID_FLAG", `--model ${JSON.stringify(model)}: ${spec.reason}`, [
+        `memhtml ${command} --model fake`,
+        `memhtml ${command} --model bedrock:${DEFAULT_CURATOR_MODEL_ID}`
+      ])
+    }
+  }
+  // `curate collapse` adds two more positive integers: a pool of zero lanes runs no fold, and a limit
+  // of zero executes nothing, each a run that reports a stop as an answer.
+  const positive =
+    command === "curate collapse"
+      ? ["max-steps", "wall-clock-ms", "concurrency", "limit"]
+      : ["max-steps", "wall-clock-ms"]
+  for (const flag of positive) {
+    if (str(parsed, flag) === undefined) continue
+    const value = int(parsed, flag)
+    if (value === undefined || value <= 0) {
+      return fail(
+        "ERR_INVALID_FLAG",
+        `--${flag} must be a positive integer: a non-positive budget is a run that stops before it starts and reports the stop as an answer`,
+        [`memhtml ${command} --model fake --${flag} ${flag === "wall-clock-ms" ? "1200000" : "4"}`]
+      )
+    }
+  }
+  return undefined
+}
+
+/**
+ * `memhtml head snapshot` takes exactly one of `--write` / `--read`.
+ *
+ * Two boolean flags rather than one enum flag, so each direction is a word an agent already knows
+ * and neither is a default: a bare `head snapshot` that silently wrote a file, or silently read one,
+ * would do work the caller did not name. Both together is `ERR_INVALID_FLAG` (present, unusable as
+ * given) and neither is `ERR_MISSING_ARGUMENT` (absent), the two codes this function already uses for
+ * those two conditions.
+ */
+/**
+ * `--id` on every `session` command is one path segment (`SESSION_ID` in `@memhtml/session`). The
+ * session package refuses a bad id too, but that refusal is a storage failure at exit 1; a wrong id is
+ * something the caller fixes by changing the call, so it is judged here as exit 2 before any repo opens.
+ */
+const sessionIdFlag = (parsed: Parsed): Failure | undefined => {
+  // `session prune` names no session: it sweeps every one under the store.
+  if (!parsed.command.startsWith("session ") || parsed.command === "session prune") return undefined
+  const given = parsed.flags.get("id")
+  if (given === undefined) {
+    /**
+     * `--id` is optional in the table because `MEMHTML_SESSION` can supply it, so its absence is
+     * judged here: with neither, the call names no session, which is the missing argument it always
+     * was. A value the variable holds is held to the same shape as one on the line, and the refusal
+     * names the variable so the caller fixes the right place.
+     */
+    const fromEnv = sessionFromEnv()
+    if (fromEnv === undefined) {
+      return fail(
+        "ERR_MISSING_ARGUMENT",
+        `${parsed.command} requires: --id (or ${SESSION_VAR} in the environment)`,
+        [`memhtml ${parsed.command} --id <value>`]
+      )
+    }
+    if (isSessionId(fromEnv)) return undefined
+    return fail(
+      "ERR_INVALID_FLAG",
+      `${SESSION_VAR}=${JSON.stringify(fromEnv)} is not a session id: one segment of letters, digits, ".", "_" or "-", starting with a letter or digit, at most 128 characters`,
+      [`memhtml ${parsed.command} --id s1`]
+    )
+  }
+  for (const id of given) {
+    if (typeof id !== "string" || isSessionId(id)) continue
+    return fail(
+      "ERR_INVALID_FLAG",
+      `--id ${JSON.stringify(id)} is not a session id: one segment of letters, digits, ".", "_" or "-", starting with a letter or digit, at most 128 characters`,
+      ["memhtml session start --id s1", "memhtml session status --id curate-2026-09-23"]
+    )
+  }
+  return undefined
+}
+
+/**
+ * The session a `session` command names: `--id`, else `MEMHTML_SESSION`. `implicit` is true when the
+ * variable supplied it, which is what lets `session put` and `session exec` start it on first use.
+ * `runBound` is true whenever the id is the variable's, spelled on the line or not: the runtime owns
+ * that session and commits it once the run ends, so its puts and harvests are held to the run's bar.
+ */
+const sessionIdOf = (
+  parsed: Parsed
+): { readonly id: string; readonly implicit: boolean; readonly runBound: boolean } => {
+  const flag = str(parsed, "id")
+  const fromEnv = sessionFromEnv()
+  if (flag !== undefined) return { id: flag, implicit: false, runBound: flag === fromEnv }
+  return fromEnv === undefined
+    ? { id: "", implicit: false, runBound: false }
+    : { id: fromEnv, implicit: true, runBound: true }
+}
+
+/**
+ * The v1 doors that create a record close by the store's `v1Doors` mode (`memhtml.config.json`;
+ * `doors.ts` holds the list and each refusal's text). Under `closed-in-session`, the library
+ * default, a process that carries a session (an agent runtime exports one to every subprocess of a
+ * run) has a door held to the write bar, and a v1 write beside it would land unjudged and outside
+ * the run's one commit; under `closed` the doors are shut with or without one; under `open` never.
+ * Refused as a usage error before anything opens, with the session command that does the same job
+ * as the suggestion.
+ *
+ * `doors` is the mode `run()` read from the store before validating, or `deferred` when it could
+ * not know the store yet (an injected layer with no `--repo`, or `MEMHTML_REFUSE_ENV_ROOT` with no
+ * `--repo`), in which case the record arm's own guard (`guardV1Door`) answers inside the layer.
+ */
+const sessionBoundRefusal = (
+  parsed: Parsed,
+  doors: V1DoorMode | "deferred"
+): Failure | undefined => {
+  if (doors === "deferred" || !RECORD_CREATING_V1_COMMANDS.has(parsed.command)) return undefined
+  const state = v1DoorState(doors, sessionFromEnv())
+  if (state.open) return undefined
+  if (state.session === null) {
+    const closed = closedDoorRefusal(parsed.command)
+    return fail("ERR_V1_DOOR_CLOSED", closed.error, closed.suggestions)
+  }
+  const bound = sessionDoorRefusal(parsed.command, state.session)
+  return fail("ERR_SESSION_BOUND", bound.error, bound.suggestions)
+}
+
+/** `memhtml session prune`: `--older-than` is a duration with a unit (`parseOlderThan`). */
+const sessionPruneFlags = (parsed: Parsed): Failure | undefined => {
+  if (parsed.command !== "session prune") return undefined
+  const value = str(parsed, "older-than")
+  if (value === undefined) return undefined
+  const cutoff = parseOlderThan(value)
+  return cutoff.ok
+    ? undefined
+    : fail("ERR_INVALID_FLAG", cutoff.reason, [
+        "memhtml session prune --older-than 7d --dry-run",
+        "memhtml session prune --older-than 48h"
+      ])
+}
+
+const headSnapshotFlags = (parsed: Parsed): Failure | undefined => {
+  if (parsed.command !== "head snapshot") return undefined
+  const write = bool(parsed, "write", false)
+  const read = bool(parsed, "read", false)
+  if (write && read) {
+    return fail(
+      "ERR_INVALID_FLAG",
+      "head snapshot takes exactly one of --write or --read, not both: a call cannot both build the cache and report it",
+      ["memhtml head snapshot --write", "memhtml head snapshot --read"]
+    )
+  }
+  if (!write && !read) {
+    return fail("ERR_MISSING_ARGUMENT", "head snapshot requires exactly one of --write or --read", [
+      "memhtml head snapshot --write",
+      "memhtml head snapshot --read"
+    ])
+  }
+  return undefined
+}
+
+/**
+ * `memhtml head serve`: `--poll-ms` is a non-negative integer (0 turns the poll off, which is a
+ * choice, and a negative period is none), and a `--ref` on the line is not blank, which would follow
+ * `refs/heads/`, a ref no branch can be.
+ */
+const headServeFlags = (parsed: Parsed): Failure | undefined => {
+  if (parsed.command !== "head serve") return undefined
+  if (str(parsed, "poll-ms") !== undefined) {
+    const poll = int(parsed, "poll-ms")
+    if (poll === undefined || poll < 0) {
+      return fail(
+        "ERR_INVALID_FLAG",
+        "--poll-ms must be a non-negative integer of milliseconds; 0 leaves advancing to requests alone",
+        ["memhtml head serve --poll-ms 1000", "memhtml head serve --poll-ms 0"]
+      )
+    }
+  }
+  const ref = str(parsed, "ref")
+  if (ref !== undefined && ref.trim() === "") {
+    return fail("ERR_INVALID_FLAG", "--ref names the ref to follow and cannot be blank", [
+      "memhtml head serve --ref main"
+    ])
   }
   return undefined
 }
@@ -1011,7 +1163,12 @@ const strayBooleanFlags = (parsed: Parsed): Failure | undefined => {
  * token. Their own mutual-exclusion checks (`execFlags`, `applyFlags`) refuse a dash beside a real
  * `--file`.
  */
-const STDIN_MARKER_COMMANDS: ReadonlySet<string> = new Set(["apply", "exec"])
+const STDIN_MARKER_COMMANDS: ReadonlySet<string> = new Set([
+  "apply",
+  "exec",
+  "session exec",
+  "session put"
+])
 
 /**
  * Positionals past what the command declares.
@@ -1044,10 +1201,33 @@ const surplusArgs = (parsed: Parsed, spec: CommandSpec): Failure | undefined => 
 
 /**
  * The arms that resolve the repo root themselves, with no layer: `serve mcp` supervises a child over
- * it and `exec` mounts a worktree of it. For them an injected layer is not a door to the root, so
- * under {@link envRootRefusal} only `--repo` counts.
+ * it, `exec` mounts a worktree of it, and `config` reads its policy file. For them an injected layer
+ * is not a door to the root, so under {@link envRootRefusal} only `--repo` counts.
  */
-const ROOT_WITHOUT_LAYER: ReadonlySet<string> = new Set(["serve mcp", "exec"])
+const ROOT_WITHOUT_LAYER: ReadonlySet<string> = new Set(["serve mcp", "exec", "config"])
+
+/**
+ * The v2 arms (`v2.ts`) resolve the root themselves too: every `session` and `head` command reads
+ * git and a session's own files under `.memhtml/sessions/`, and none opens `index.db`, so the app
+ * layer is never built for them and an injected one is not a door to the root.
+ */
+const isV2Command = (command: string): boolean =>
+  command.startsWith("session ") || command.startsWith("head ") || command.startsWith("curate ")
+
+/**
+ * The v2 arms that embed (`docs/design.md` §16, "The vector arm"): the only ones that bind an
+ * embedder. The head server binds it for the `search` and `neighbors` routes it answers in place of
+ * the first and the third.
+ */
+const V2_EMBEDDING_COMMANDS: ReadonlySet<string> = new Set([
+  "head search",
+  "head embed",
+  "session put",
+  "head serve"
+])
+
+const resolvesRootItself = (command: string): boolean =>
+  ROOT_WITHOUT_LAYER.has(command) || isV2Command(command)
 
 /**
  * `MEMHTML_REFUSE_ENV_ROOT`: the environment is not a door to a repo.
@@ -1074,6 +1254,30 @@ const ROOT_WITHOUT_LAYER: ReadonlySet<string> = new Set(["serve mcp", "exec"])
  * are exit 2 and both are fixed on the line; the repo question comes first because it is the one the
  * flag exists to ask.
  */
+/**
+ * The repo root a call names before any layer is built: `--repo`, else `MEMHTML_ROOT` (or the
+ * `~/memhtml` default) when the caller injected no layer and `MEMHTML_REFUSE_ENV_ROOT` allows the
+ * environment as a door. `undefined` when only a layer could say, which is the injector's statement
+ * of the root.
+ */
+const rootBeforeLayer = (
+  parsed: Parsed,
+  layer: Layer.Layer<DispatchServices> | undefined
+): string | undefined => {
+  const override = str(parsed, "repo")
+  if (override !== undefined && override.trim() !== "") return override.trim()
+  if (layer !== undefined || refusesEnvRoot()) return undefined
+  return Effect.runSync(
+    Effect.gen(function* () {
+      return yield* MemhtmlRoot
+    }).pipe(Effect.orElseSucceed(() => undefined))
+  )
+}
+
+/** True when `error` is a typed failure carrying `tag`. */
+const isTagged = (error: unknown, tag: string): boolean =>
+  typeof error === "object" && error !== null && (error as { _tag?: unknown })._tag === tag
+
 const envRootRefusal = (
   parsed: Parsed,
   layer: Layer.Layer<DispatchServices> | undefined
@@ -1081,7 +1285,7 @@ const envRootRefusal = (
   if (!refusesEnvRoot()) return undefined
   const override = str(parsed, "repo")
   if (override !== undefined && override.trim() !== "") return undefined
-  if (layer !== undefined && !ROOT_WITHOUT_LAYER.has(parsed.command)) return undefined
+  if (layer !== undefined && !resolvesRootItself(parsed.command)) return undefined
   return fail(
     "ERR_REPO_REQUIRED",
     `${parsed.command} opens a repo and ${REFUSE_ENV_ROOT_VAR} is set, so the root is not read from MEMHTML_ROOT or ~/memhtml: name it with --repo`,
@@ -1149,7 +1353,7 @@ const vocabularyPositionals = (parsed: Parsed): Failure | undefined => {
  * error is exit 2 and a runtime error is exit 1, and a validator that emitted its own envelope would
  * have to know that too.
  */
-export const validate = (parsed: Parsed): Failure | undefined => {
+export const validate = (parsed: Parsed, options: ValidateOptions = {}): Failure | undefined => {
   const spec = COMMANDS.find((command) => command.name === parsed.command)
   if (spec === undefined) return unknownCommand(parsed)
   /**
@@ -1157,7 +1361,7 @@ export const validate = (parsed: Parsed): Failure | undefined => {
    * a missing `--host` and a misspelled one are both refused by `validateAgainst`, so by the time
    * {@link vocabularyPositionals} names a host in a suggestion, that host is real.
    */
-  const failure = validateAgainst(parsed, spec) ?? vocabularyPositionals(parsed)
+  const failure = validateAgainst(parsed, spec, options) ?? vocabularyPositionals(parsed)
   if (failure === undefined) return undefined
   /**
    * Every refusal of a KNOWN command ends with that command's help, appended here once rather than
@@ -1172,8 +1376,21 @@ export const validate = (parsed: Parsed): Failure | undefined => {
     : { ...failure, suggestions: [...failure.suggestions, pointer] }
 }
 
+/** What {@link validate} needs from outside the argv: the store's `v1Doors` mode, as `run()` read it. */
+export interface ValidateOptions {
+  /**
+   * The mode the record doors are judged under; `deferred` skips the door here (the arm's guard
+   * answers inside the layer). {@link DEFAULT_V1_DOORS} when omitted, the library's default.
+   */
+  readonly doors?: V1DoorMode | "deferred" | undefined
+}
+
 /** The per-command rules, in order. Nothing here touches a service. */
-const validateAgainst = (parsed: Parsed, spec: CommandSpec): Failure | undefined => {
+const validateAgainst = (
+  parsed: Parsed,
+  spec: CommandSpec,
+  options: ValidateOptions
+): Failure | undefined => {
   /**
    * Flags are validated against THIS command's spec plus the true globals, not the union of every
    * command's flags. A flag that is valid somewhere else is still a usage error here: an agent that
@@ -1209,6 +1426,14 @@ const validateAgainst = (parsed: Parsed, spec: CommandSpec): Failure | undefined
   const surplus = surplusArgs(parsed, spec)
   if (surplus !== undefined) return surplus
 
+  // Before the presence rules: a closed door is the answer whatever else the call is missing, and a
+  // session command that names no session (no `--id`, no `MEMHTML_SESSION`) says so before it
+  // names any other flag it lacks, as it did when `--id` was a required flag in the table.
+  const bound = sessionBoundRefusal(parsed, options.doors ?? DEFAULT_V1_DOORS)
+  if (bound !== undefined) return bound
+  const sessionId = sessionIdFlag(parsed)
+  if (sessionId !== undefined) return sessionId
+
   const missingArgs = spec.args.filter(
     (arg, position) => arg.required && parsed.positional[position] === undefined
   )
@@ -1241,6 +1466,21 @@ const validateAgainst = (parsed: Parsed, spec: CommandSpec): Failure | undefined
 
   const apply = applyFlags(parsed)
   if (apply !== undefined) return apply
+
+  const snapshot = headSnapshotFlags(parsed)
+  if (snapshot !== undefined) return snapshot
+
+  const prune = sessionPruneFlags(parsed)
+  if (prune !== undefined) return prune
+
+  const serve = headServeFlags(parsed)
+  if (serve !== undefined) return serve
+
+  const curate = curateMergeFlags(parsed)
+  if (curate !== undefined) return curate
+
+  const curateRunFailure = curateRunFlags(parsed)
+  if (curateRunFailure !== undefined) return curateRunFailure
 
   // After the unknown-flag loop above, so reaching this with `--as-of` present means this command
   // declares it. The value check therefore needs no command list of its own.
@@ -1420,12 +1660,19 @@ const hookText = async (
  * from a pipe, and a test that had to spawn a process and write to its descriptor to exercise the
  * stdin path would be an integration test of the shell rather than of this function. The default
  * reads `process.stdin`, so `bin.ts` needs no knowledge of which commands want input.
+ *
+ * `embedder` is the v2 arms' embedder (`head search`, `head embed`, `session put`, `head serve`),
+ * injected by a test the way `layerAppWith` injects the v1 one. Those arms never build `layer`, so
+ * the embedder inside it cannot reach them; absent, they bind the one `layerApp` binds,
+ * `layerEmbedder` over `EmbeddingsLive`, from the environment (`MEMHTML_EMBED=off` leaves both ports
+ * absent).
  */
 export const run = async (
   argv: ReadonlyArray<string>,
   layer?: Layer.Layer<DispatchServices>,
   stdin: () => Promise<string> = readStdin,
-  stdoutIsTTY: boolean = process.stdout.isTTY === true
+  stdoutIsTTY: boolean = process.stdout.isTTY === true,
+  embedder?: EmbedderShape
 ): Promise<RunResult> => {
   const parsed = parseArgv(argv)
   const dense = bool(parsed, "dense", false)
@@ -1443,7 +1690,25 @@ export const run = async (
 
   if (parsed.command === "") return emit(succeed("cli.manifest", buildManifest()), EXIT_OK)
 
-  const invalid = validate(parsed)
+  /**
+   * The store's `v1Doors` mode, read before validating so a closed record door answers before
+   * anything opens and before the call's other usage errors. Read only for the record doors, and
+   * only when the root is known without a layer: `--repo`, or the environment when the caller
+   * injected none and `MEMHTML_REFUSE_ENV_ROOT` allows it. Otherwise it is deferred to the arm's
+   * guard, which reads the root the layer states. A file that does not decode refuses the write here,
+   * at exit 1, naming the file.
+   */
+  let doors: V1DoorMode | "deferred" = "deferred"
+  if (RECORD_CREATING_V1_COMMANDS.has(parsed.command)) {
+    const root = rootBeforeLayer(parsed, layer)
+    if (root !== undefined) {
+      const loaded = await Effect.runPromise(Effect.result(loadStorePolicy(root)))
+      if (loaded._tag === "Failure") return emit(failureFor(loaded.failure), EXIT_RUNTIME)
+      doors = loaded.success.policy.v1Doors
+    }
+  }
+
+  const invalid = validate(parsed, { doors })
   if (invalid !== undefined) return emit(invalid, EXIT_USAGE)
 
   /**
@@ -1717,6 +1982,26 @@ export const run = async (
    * The script is read here rather than in `runExec`, so a missing or empty script is exit 2 like every
    * other input error. `runExec` takes source, never a path.
    */
+  /**
+   * `config` builds no layer either: it reads the store's policy file and the environment, and a
+   * store whose index was never built still has a policy to show. A file that does not decode is
+   * the same `ERR_STORE_CONFIG` every command reading it answers, at exit 1.
+   */
+  if (parsed.command === "config") {
+    const override = str(parsed, "repo")
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const configured = yield* MemhtmlRoot
+        const root = override !== undefined && override.trim() !== "" ? override.trim() : configured
+        return yield* configReport(root)
+      }).pipe(
+        Effect.map((report) => emit(succeed("config.report", report), EXIT_OK)),
+        Effect.catch((error) => Effect.succeed(emit(failureFor(error), EXIT_RUNTIME))),
+        Effect.provideService(Logger.LogToStderr, true)
+      )
+    )
+  }
+
   if (parsed.command === "exec") {
     const inline = str(parsed, "script")
     // `-` names stdin in both spellings: the positional and `--file -`. Neither is a path.
@@ -1770,6 +2055,324 @@ export const run = async (
   }
 
   /**
+   * The v2 arms (`session …`, `head …`) do not build the app layer, for the reason `exec` gives: they
+   * read git and a session's own state files and never open `index.db`. See `v2.ts`.
+   *
+   * The two inputs that are files are read HERE so their failures are exit 2: `session exec`'s script
+   * takes the same three doors `exec` takes (`--script`, `--file`, stdin), and `session put`'s op
+   * stream is the JSONL `apply` takes plus `label` and `unlabel` lines, decoded by
+   * `decodeSessionPut` (whose write lines go through `apply`'s own decoder) so a bad line 7 is
+   * refused naming line 7 with nothing appended.
+   */
+  if (isV2Command(parsed.command)) {
+    let script = ""
+    if (parsed.command === "session exec") {
+      const inline = str(parsed, "script")
+      const flagFile = str(parsed, "file")
+      const file = parsed.positional[0] === "-" || flagFile === "-" ? undefined : flagFile
+      const read =
+        inline !== undefined ? inline : file === undefined ? await stdin() : await readScript(file)
+      if (typeof read !== "string") return emit(read, EXIT_USAGE)
+      if (read.trim() === "") {
+        return emit(
+          fail(
+            "ERR_MISSING_ARGUMENT",
+            "session exec needs a script: a blank one would harvest nothing and report an empty answer rather than an error",
+            [
+              "memhtml session exec --id s1 --script 'echo 1'",
+              "memhtml session exec --id s1 --lang js --file curate.mjs"
+            ]
+          ),
+          EXIT_USAGE
+        )
+      }
+      // The cap is the server's (`EXEC_BODY_MAX_BYTES`), measured on the body the client would
+      // send, and held here for both paths so a script's fate never depends on a server running.
+      const bytes = execBodyBytes(
+        execRequestOf({
+          id: sessionIdOf(parsed).id,
+          script: read,
+          lang:
+            EXEC_LANGS.find((lang): lang is ExecLang => lang === str(parsed, "lang")) ??
+            DEFAULT_EXEC_LANG,
+          timeoutMs: int(parsed, "timeout-ms")
+        })
+      )
+      if (bytes > EXEC_BODY_MAX_BYTES) {
+        return emit(
+          fail("ERR_INVALID_FLAG", execBodyTooLarge(bytes), [
+            "memhtml session exec --id s1 --file part-1.sh",
+            "memhtml session put --id s1 --file ops.jsonl"
+          ]),
+          EXIT_USAGE
+        )
+      }
+      script = read
+    }
+    let sessionOps: ReadonlyArray<SessionPutOp> = []
+    if (parsed.command === "session put") {
+      const flagFile = str(parsed, "file")
+      const file = parsed.positional[0] === "-" || flagFile === "-" ? undefined : flagFile
+      const text = await applyText(file, stdin)
+      if (typeof text !== "string") return emit(text, EXIT_USAGE)
+      const decoded = decodeSessionPut(text)
+      if (!decoded.ok) return emit(decoded.failure, EXIT_USAGE)
+      sessionOps = decoded.ops
+    }
+
+    /**
+     * `MEMHTML_EMBED_DEADLINE_MS` for `head search` and `head serve`, `MEMHTML_EMBED_WARM_IDLE_MS`
+     * for `head serve`, and `MEMHTML_COMMIT_DEADLINE_MS` for `session commit` and `session rebase`:
+     * whole milliseconds, `0` for none. Unset is `undefined`, which leaves the default to the code
+     * that applies it (and, for `head search` through a server, leaves the server's own deadline in
+     * charge). A malformed value is refused at exit 2 naming the variable.
+     */
+    const msFromEnv = (
+      name: string,
+      example = 450
+    ): { readonly ms: number | undefined } | { readonly refused: RunResult } => {
+      const raw = process.env[name]
+      if (raw === undefined || raw.trim() === "") return { ms: undefined }
+      const parsedMs = parseDeadlineMs(raw)
+      if (parsedMs.ok) return { ms: parsedMs.ms }
+      return {
+        refused: emit(
+          fail("ERR_INVALID_FLAG", `${name}=${JSON.stringify(raw)}: ${parsedMs.reason}`, [
+            `${name}=${String(example)} memhtml ${parsed.command}`
+          ]),
+          EXIT_USAGE
+        )
+      }
+    }
+    let embedDeadlineMs: number | undefined
+    let warmIdleMs: number | undefined
+    if (parsed.command === "head search" || parsed.command === "head serve") {
+      const deadline = msFromEnv(EMBED_DEADLINE_VAR)
+      if ("refused" in deadline) return deadline.refused
+      embedDeadlineMs = deadline.ms
+    }
+    /**
+     * `MEMHTML_EXEC_POOL_SIZE` and `MEMHTML_EXEC_WORKER_HEAP_MB` for `head serve`: a whole number in
+     * the variable's range, unset for the default, and a malformed value refused at exit 2 naming
+     * the variable.
+     */
+    const poolSettingFromEnv = (
+      name: string,
+      min: number,
+      max: number
+    ): { readonly value: number | undefined } | { readonly refused: RunResult } => {
+      const raw = process.env[name]
+      if (raw === undefined || raw.trim() === "") return { value: undefined }
+      const setting = parsePoolSetting(raw, min, max)
+      if (setting.ok) return { value: setting.value }
+      return {
+        refused: emit(
+          fail("ERR_INVALID_FLAG", `${name}=${JSON.stringify(raw)}: ${setting.reason}`, [
+            `${name}=${String(min)} memhtml ${parsed.command}`
+          ]),
+          EXIT_USAGE
+        )
+      }
+    }
+    let execPoolSize: number | undefined
+    let execWorkerHeapMb: number | undefined
+    if (parsed.command === "head serve") {
+      const idle = msFromEnv(EMBED_WARM_IDLE_VAR)
+      if ("refused" in idle) return idle.refused
+      warmIdleMs = idle.ms
+      const size = poolSettingFromEnv(EXEC_POOL_SIZE_VAR, 1, EXEC_POOL_SIZE_MAX)
+      if ("refused" in size) return size.refused
+      execPoolSize = size.value
+      const heap = poolSettingFromEnv(EXEC_WORKER_HEAP_VAR, WORKER_HEAP_MB_MIN, WORKER_HEAP_MB_MAX)
+      if ("refused" in heap) return heap.refused
+      execWorkerHeapMb = heap.value
+    }
+    let commitDeadlineMs: number | undefined
+    if (parsed.command === "session commit" || parsed.command === "session rebase") {
+      const deadline = msFromEnv(COMMIT_DEADLINE_VAR, COMMIT_DEADLINE_DEFAULT_MS)
+      if ("refused" in deadline) return deadline.refused
+      commitDeadlineMs = deadline.ms
+    }
+
+    /**
+     * `curate run`'s model, resolved from the flag, then `MEMHTML_CURATOR_MODEL`, then `proxy:` with
+     * the default model when a proxy is configured. With none of the three the call is refused as a
+     * missing argument naming `--model`, and a `proxy:` spec with no proxy is refused naming the
+     * variable, both at exit 2 before any repo opens. `fake` is always accepted.
+     */
+    let curatorModelSpec = ""
+    if (CURATOR_COMMANDS.has(parsed.command)) {
+      const proxyConfigured = (process.env[PROXY_BASE_URL_VAR] ?? "").trim() !== ""
+      const fromEnv = (process.env[CURATOR_MODEL_VAR] ?? "").trim()
+      const spec =
+        str(parsed, "model") ??
+        (fromEnv !== "" ? fromEnv : undefined) ??
+        (proxyConfigured ? `proxy:${DEFAULT_CURATOR_MODEL_ID}` : undefined)
+      if (spec === undefined) {
+        return emit(
+          fail(
+            "ERR_MISSING_ARGUMENT",
+            `${parsed.command} needs --model: none was given, ${CURATOR_MODEL_VAR} is unset, and ${PROXY_BASE_URL_VAR} is unset, so there is no default model to run`,
+            [
+              `memhtml ${parsed.command} --model fake`,
+              `memhtml ${parsed.command} --model bedrock:${DEFAULT_CURATOR_MODEL_ID}`
+            ]
+          ),
+          EXIT_USAGE
+        )
+      }
+      const parsedSpec = modelSpecOf(spec)
+      if (!parsedSpec.ok) {
+        return emit(
+          fail(
+            "ERR_INVALID_FLAG",
+            `${CURATOR_MODEL_VAR}=${JSON.stringify(spec)}: ${parsedSpec.reason}`,
+            ["memhtml curate run --model fake"]
+          ),
+          EXIT_USAGE
+        )
+      }
+      if (parsedSpec.spec.kind === "proxy" && !proxyConfigured) {
+        return emit(
+          fail(
+            "ERR_INVALID_FLAG",
+            `--model ${spec} needs ${PROXY_BASE_URL_VAR}, the proxy's origin, in the environment`,
+            [
+              "memhtml curate run --model fake",
+              `memhtml curate run --model bedrock:${DEFAULT_CURATOR_MODEL_ID}`
+            ]
+          ),
+          EXIT_USAGE
+        )
+      }
+      curatorModelSpec = spec
+    }
+
+    const override = str(parsed, "repo")
+    /**
+     * The four arms that embed resolve the embedder; the rest get both ports absent and never read
+     * Bedrock configuration. Built from the environment like `layerApp`'s, and a failed build (a
+     * malformed proxy URL) dies the same way.
+     */
+    const resolveEmbedder: Effect.Effect<EmbedderShape> =
+      embedder !== undefined
+        ? Effect.succeed(embedder)
+        : V2_EMBEDDING_COMMANDS.has(parsed.command)
+          ? Effect.gen(function* () {
+              return yield* Embedder
+            }).pipe(Effect.provide(layerEmbedder.pipe(Layer.provide(EmbeddingsLive), Layer.orDie)))
+          : Effect.succeed({ document: undefined, query: undefined })
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const configured = yield* MemhtmlRoot
+        const root = override !== undefined && override.trim() !== "" ? override.trim() : configured
+        // Long-running: the envelope is written when a signal stops the server, and the listening
+        // line and every advance go to stderr while it serves.
+        if (parsed.command === "head serve") {
+          const data = yield* serveHead({
+            root,
+            ref: str(parsed, "ref"),
+            pollMs: int(parsed, "poll-ms"),
+            embedder: yield* resolveEmbedder,
+            embedDeadlineMs,
+            warmIdleMs,
+            execPoolSize,
+            execWorkerHeapMb
+          })
+          return ["head.served", data] as const
+        }
+        if (parsed.command === "curate run") {
+          const data = yield* curateRun({
+            root,
+            ref: str(parsed, "ref"),
+            model: curatorModelSpec,
+            maxSteps: int(parsed, "max-steps"),
+            wallClockMs: int(parsed, "wall-clock-ms"),
+            dryRun: bool(parsed, "dry-run", false),
+            resume: bool(parsed, "resume", false),
+            charter: str(parsed, "charter")
+          })
+          return ["curate.run", data] as const
+        }
+        if (parsed.command === "curate collapse") {
+          const planFile = str(parsed, "plan")
+          const rulingsFile = str(parsed, "rulings")
+          const only = str(parsed, "only")
+          const data = yield* curateCollapse({
+            root,
+            ref: str(parsed, "ref"),
+            model: curatorModelSpec,
+            plan: planFile === undefined ? undefined : yield* readPlanFile(planFile),
+            rulings: rulingsFile === undefined ? undefined : yield* readRulingsFile(rulingsFile),
+            concurrency: int(parsed, "concurrency"),
+            only:
+              only === undefined
+                ? undefined
+                : only
+                    .split(",")
+                    .map((id) => id.trim())
+                    .filter((id) => id !== ""),
+            limit: int(parsed, "limit"),
+            dryRun: bool(parsed, "dry-run", false),
+            maxSteps: int(parsed, "max-steps"),
+            wallClockMs: int(parsed, "wall-clock-ms"),
+            charter: str(parsed, "charter")
+          })
+          return ["curate.collapse", data] as const
+        }
+        if (parsed.command === "session prune") {
+          const data = yield* sessionPrune({
+            root,
+            olderThan: str(parsed, "older-than") ?? "",
+            dryRun: bool(parsed, "dry-run", false)
+          })
+          return ["session.pruned", data] as const
+        }
+        const session = sessionIdOf(parsed)
+        return yield* runV2(parsed.command, {
+          root,
+          id: session.id,
+          implicitStart: session.implicit,
+          runBound: session.runBound,
+          dropRefused: bool(parsed, "drop-refused", false),
+          ref: str(parsed, "ref"),
+          message: str(parsed, "message") ?? "",
+          force: bool(parsed, "force", false),
+          script,
+          // `--lang`'s value was checked against the table's `values` before dispatch, so the lookup
+          // only narrows the type; an absent flag is the CLI's `bash` default.
+          lang:
+            EXEC_LANGS.find((lang): lang is ExecLang => lang === str(parsed, "lang")) ??
+            DEFAULT_EXEC_LANG,
+          timeoutMs: int(parsed, "timeout-ms"),
+          query: parsed.positional[0] ?? "",
+          limit: int(parsed, "limit"),
+          snapshotMode: bool(parsed, "read", false) ? "read" : "write",
+          ops: sessionOps,
+          target: parsed.positional[0] ?? "",
+          into: str(parsed, "into"),
+          skipGate: bool(parsed, "skip-gate", false),
+          embedder: yield* resolveEmbedder,
+          server: bool(parsed, "server", true),
+          embedDeadlineMs,
+          commitDeadlineMs
+        })
+      }).pipe(
+        Effect.map(([type, data]) => emit(succeed(type, data), EXIT_OK)),
+        Effect.catch((error) => Effect.succeed(emit(failureFor(error), EXIT_RUNTIME))),
+        Effect.catchCause((cause) =>
+          Effect.succeed(
+            emit(fail("ERR_UNKNOWN", `unexpected failure: ${String(cause)}`, []), EXIT_RUNTIME)
+          )
+        ),
+        Effect.provide(layerTelemetry({ serviceName: "memhtml-cli" })),
+        Effect.provideService(Logger.LogToStderr, true),
+        Effect.scoped
+      )
+    )
+  }
+
+  /**
    * `memhtml apply` checks the shape of its whole op stream before any service is built (AC-6-4).
    *
    * Here rather than in `validate` because reading a file is async and `validate` is a pure synchronous
@@ -1796,7 +2399,13 @@ export const run = async (
 
   const program = dispatch(parsed, applyOps).pipe(
     Effect.map(([type, data, exitCode]) => emit(succeed(type, data), exitCode ?? EXIT_OK)),
-    Effect.catch((error) => Effect.succeed(emit(failureFor(error), EXIT_RUNTIME))),
+    // A closed record door is a usage error wherever it is found: the arm's guard raises it inside
+    // the layer only when `run()` could not read the mode before validating.
+    Effect.catch((error) =>
+      Effect.succeed(
+        emit(failureFor(error), isTagged(error, "V1DoorClosed") ? EXIT_USAGE : EXIT_RUNTIME)
+      )
+    ),
     // A defect is still an answer. An unexpected throw anywhere below would otherwise reach the
     // process as an unhandled rejection and print a stack trace onto stdout. Stdout is a parse
     // target, so it carries the envelope and nothing else.
@@ -1824,4 +2433,5 @@ export const run = async (
 }
 
 /** The envelope's api version, re-exported so a caller can assert on it without a second import. */
-export { API_VERSION }
+/** The record-creating door table, re-exported from `doors.ts` for the tests that read it here. */
+export { API_VERSION, RECORD_CREATING_V1_COMMANDS }

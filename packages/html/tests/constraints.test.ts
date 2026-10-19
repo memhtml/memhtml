@@ -262,7 +262,7 @@ describe("constraint 4 — link rels and hrefs", () => {
     const links = [
       '<link rel="memhtml-supersedes" href="/archive/2026/a.html">',
       '<link rel="memhtml-laterally-related" href="/areas/b.html">',
-      '<link rel="memhtml-about-person" href="/resources/people/sanju.html">',
+      '<link rel="memhtml-about-person" href="/resources/people/sasha.html">',
       '<link rel="memhtml-from-session" href="/resources/sessions/s.html">'
     ].join("\n")
     const doc = parseOk(fileWith(MINIMAL_ARTICLE, links))
@@ -327,7 +327,7 @@ describe("constraint 6 — an unknown element warns, it does not fail", () => {
 
   it("accepts <address> for a person file", () => {
     const doc = parseOk(
-      fileWith("<p><mark>Sanju reviews the deploy path.</mark></p><address>sanju@x</address>")
+      fileWith("<p><mark>Sasha reviews the deploy path.</mark></p><address>sasha@x</address>")
     )
     expect(doc.warnings).toEqual([])
   })

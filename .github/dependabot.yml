@@ -44,7 +44,7 @@ updates:
         update-types: ["version-update:semver-major"]
       # `highlight.js` relevance scores ARE the fence-language detector's confidences, so any
       # grammar change moves which fences get `data-lang` stamped. `packages/html/src/detect.ts`
-      # ships a threshold swept by `memhtml-evals` over a 332-snippet corpus at a 95%-precision
+      # ships a threshold swept by `external-evals` over a 332-snippet corpus at a 95%-precision
       # floor, and this repo holds neither that corpus nor that harness — so a bump cannot be
       # accepted here without re-running the eval and re-deriving the threshold. Measured against
       # 11.12.0 on 2026-08-18: `slice:example-service/mise.toml@42+9` fell 0.5406 -> 0.1993 and

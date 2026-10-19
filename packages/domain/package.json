@@ -1,6 +1,6 @@
 {
   "name": "@memhtml/domain",
-  "version": "0.15.1",
+  "version": "0.16.0",
   "private": true,
   "description": "Pure math: retention, decay, RRF, MMR, merge guards.",
   "type": "module",
@@ -36,9 +36,9 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
     "@effect/vitest": "catalog:",
-    "@types/node": "26.6.4",
+    "@types/node": "26.6.5",
     "fast-check": "catalog:",
     "typescript": "7.0.2",
-    "vitest": "5.0.3"
+    "vitest": "5.0.4"
   }
 }

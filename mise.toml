@@ -12,9 +12,7 @@
 # only where the members are genuinely independent (security), never to re-express a
 # tier ordering turbo already owns.
 #
-# There is deliberately no value-bearing [env] var. A credential-presence test deletes
-# the AWS vars and then asserts the ambient environment is credential-free
-# (apps/cli/tests/consolidator-wiring.test.ts), effect/Config snapshots process.env at
+# There is deliberately no value-bearing [env] var. effect/Config snapshots process.env at
 # module load, and the sandbox backend switches on VERCEL. The integration tier sets
 # MEMHTML_EMBED=off / MEMHTML_LLM=off itself, which is what keeps the gate secret-free.
 min_version = "2026.4.16" # raw_args
@@ -82,16 +80,16 @@ description = "Re-resolve every `latest` tool in mise.lock, leaving mise.toml al
 run = "mise lock --bump"
 
 [tasks.browsers]
-description = "Fetch the pinned Chromium the accessibility and budget gates drive"
+description = "Fetch the pinned Chromium the accessibility gate drives"
 # Playwright 1.62 ships NO install script, so `pnpm install` never fetches a browser — measured, and
 # it is why `allowBuilds` needed no new entry for it. Acquiring it is therefore an explicit step, and
-# it belongs in `install`: `mise run check` runs both browser gates, so a clone that installed
+# it belongs in `install`: `mise run check` runs the browser gate, so a clone that installed
 # without this would fail the gate for want of a binary rather than for a defect.
 #
 # The download lands in a per-user cache (~/.cache/ms-playwright on Linux) keyed by Playwright's
 # build number, so this is a no-op once the version is present, and CI restores that path from a
-# cache before installing. `chromium` is Chrome for Testing: one binary serves axe through Playwright
-# and Lighthouse through CHROME_PATH, so both gates measure the same engine as each other and as CI.
+# cache before installing. `chromium` is Chrome for Testing, the engine axe drives through
+# Playwright, so the gate measures the same engine on a laptop as in CI.
 run = "pnpm --filter @memhtml/docs exec playwright install chromium"
 
 [tasks.install]
@@ -110,7 +108,7 @@ run = "pnpm install --frozen-lockfile"
 # --- the gate -----------------------------------------------------------------------
 
 [tasks.check]
-description = "The definition of done: lint, typecheck, tests, integration, eval, a11y, budget"
+description = "The definition of done: lint, typecheck, tests, integration, eval, a11y"
 raw_args = true
 run = "pnpm check"
 
@@ -175,11 +173,6 @@ description = "WCAG 2.2 AA over four pages of the built docs site, plus the prob
 raw_args = true
 run = "pnpm test:a11y"
 
-[tasks."test:budget"]
-description = "Lighthouse category floors and the byte budget over the built docs site"
-raw_args = true
-run = "pnpm test:budget"
-
 [tasks.spell]
 description = "Spell-check the docs site's authored prose against the project dictionary"
 # Also reached by `mise run lint`: @memhtml/docs's own lint script ends with this, so the gate needs
@@ -193,12 +186,6 @@ description = "Write a browsable fixture corpus: mise run gen:fixture --out DIR 
 # parses --out / --seed / --size / --probes / --dry-run.
 raw_args = true
 run = "pnpm gen:fixture"
-
-[tasks."eval:freeze-write-path"]
-description = "Re-run the write-path discrimination arm and rewrite its frozen manifest (review the diff)"
-# The manifest under packages/eval/fixtures is the per-decision record the eval tier replays against.
-# Refuses to freeze a failing report, so the floor and the replay cannot disagree about one run.
-run = "pnpm freeze:write-path"
 
 [tasks.agents-doc]
 description = "Regenerate AGENTS.md from the BUILT CLI's own command table"
@@ -226,7 +213,7 @@ depends = ["package:assemble"]
 run = "pnpm package:lint"
 
 [tasks."package:smoke:live"]
-description = "package:smoke plus the three edges that reach Bedrock: embeddings, sleep's model calls, the consolidator"
+description = "package:smoke plus the edge that reaches Bedrock: embeddings through the installed binary"
 # Spends real tokens, and needs AWS_BEARER_TOKEN_BEDROCK (or SigV4 keys). The credential check FAILS
 # rather than skips: `--live` was asked for, and quietly proving less is what this tier exists to
 # prevent. lefthook's pre-push picks this when a credential is present and says so when it cannot.

@@ -40,7 +40,7 @@ describe("the emitted file is always valid", () => {
       sessionId: "f7e32699",
       promptId: "pr_01JQ8",
       turnUuid: "9e0b41c2",
-      entities: ["service:checkout-api", "person:sanju"],
+      entities: ["service:checkout-api", "person:sasha"],
       tags: ["deploy", "oncall"],
       links: [
         { rel: "supersedes", href: "/archive/2026/areas/oncall/old.html" },

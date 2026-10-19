@@ -1,6 +1,6 @@
 {
   "name": "@memhtml/mcp",
-  "version": "0.15.1",
+  "version": "0.16.0",
   "private": true,
   "description": "The `memhtml-mcp` stdio server.",
   "type": "module",
@@ -47,7 +47,6 @@
     "@memhtml/html": "workspace:*",
     "@memhtml/index": "workspace:*",
     "@memhtml/llm": "workspace:*",
-    "@memhtml/sleep": "workspace:*",
     "@memhtml/store": "workspace:*",
     "@memhtml/telemetry": "workspace:*",
     "@memhtml/traces": "workspace:*",
@@ -56,8 +55,8 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
     "@effect/vitest": "catalog:",
-    "@types/node": "26.6.4",
+    "@types/node": "26.6.5",
     "typescript": "7.0.2",
-    "vitest": "5.0.3"
+    "vitest": "5.0.4"
   }
 }

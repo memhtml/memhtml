@@ -7,7 +7,7 @@ description: Four rankers folded into one SQL statement, weighted rank fusion, d
 
 Retrieval runs four rankers independently and merges their ordered result lists. That merge is a standard technique called reciprocal rank fusion, and this page calls each ranker an arm. `search` and `recall` sit on the same fused SQL and the same diversification pass (`packages/index/src/retrieval.ts:17-24`), so a ranking change cannot apply to one and miss the other.
 
-Each arm is an entry in a registry, and `buildRrfSql` folds over that registry to assemble the statement (`packages/index/src/retrieval-sql.ts:223`, `packages/index/src/retrieval-sql.ts:262`). Adding a fifth arm therefore means adding a table entry, and dropping one means filtering the registry. Each arm returns exactly `(path, rank)`, with rank counted from 1.
+Each arm is an entry in a registry, and `buildRrfSql` folds over that registry to assemble the statement (`packages/index/src/retrieval-sql.ts:268`, `packages/index/src/retrieval-sql.ts:307`). Adding a fifth arm therefore means adding a table entry, and dropping one means filtering the registry. Each arm returns exactly `(path, rank)`, with rank counted from 1.
 
 Figure 1 draws the whole path, and labels the diversification pass by its usual name, maximal marginal relevance, abbreviated MMR. Everything down to the per-path sum is one SQL statement, and MMR is TypeScript over what that statement returned.
 
@@ -125,11 +125,11 @@ Arcs fold under their own 9,000-character envelope instead of competing with the
 
 ## 9. Reinforcement
 
-`reinforce` (`packages/index/src/reinforce.ts:45`) is the only call site that writes `state.access`, and the cooldown is why. `access_count` feeds the salience arm, so a second writer would let a loop in an agent replay one query and rewrite the corpus's ranking.
+`reinforce` (`packages/index/src/reinforce.ts:69`) is the only call site that bumps `state.access` on a read or a reinforcement, and the cooldown is why. `access_count` feeds the salience arm, so a second bumping path would let a loop in an agent replay one query and rewrite the corpus's ranking. Three other paths write the table without answering a query: `memhtml state import`, the store's `onMove` hook, which re-keys the row of a moved file (`apps/cli/src/api-layer.ts:204-205`), and `memhtml doctor --fix`.
 
 The guard is necessarily expressed twice, once as the SQL `WHERE` clause and once as a pure function, so both read the same constant, `REINFORCE_COOLDOWN_S = 900` (`packages/domain/src/ranking.ts:17`), and a property test pins the two together at the boundary.
 
-The conditional upsert's `RETURNING` clause makes the bumped-versus-cooled split authoritative rather than inferred (`packages/index/src/reinforce.ts:30-43`). Reading `last_accessed_at` first and deciding in TypeScript would race a concurrent reinforce and report a bump that never happened. Only a non-neutral signal moves `reinforcement_count` and the outcome average, because being read is evidence of relevance and not of correctness.
+The conditional upsert's `RETURNING` clause makes the bumped-versus-cooled split authoritative rather than inferred (`packages/index/src/reinforce.ts:91-110`). Reading `last_accessed_at` first and deciding in TypeScript would race a concurrent reinforce and report a bump that never happened. Only a non-neutral signal moves `reinforcement_count` and the outcome average, because being read is evidence of relevance and not of correctness.
 
 ### 9.1. Which reads bump salience
 
@@ -137,9 +137,9 @@ Salience accumulates evidence that someone chose a memory, so the three read tie
 
 | Read                                                                                      | Bumps                                     | Why                                                                                                                         |
 | ----------------------------------------------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `memory_read` or `memhtml read` of a named path, and the `memhtml://file/{path}` resource | yes                                       | the caller chose that memory, which is the strongest signal short of a write (`apps/cli/src/operations.ts:898`)             |
+| `memory_read` or `memhtml read` of a named path, and the `memhtml://file/{path}` resource | yes                                       | the caller chose that memory, which is the strongest signal short of a write (`apps/cli/src/operations.ts:1167`)            |
 | a path merely returned by `memory_search` or `memory_recall`                              | no                                        | that is the ranker's own guess (`apps/cli/src/operations.ts:924`, `:941`)                                                   |
-| every sleep phase                                                                         | no                                        | a schedule that touches the whole corpus drives everything toward uniform salience, and sleep bypasses the tool path anyway |
+| every curation pass                                                                       | no                                        | a sweep that touches the whole corpus drives everything toward uniform salience, and curation bypasses the tool path anyway |
 | `memory_reinforce` with a named signal                                                    | yes, and it moves the outcome average too | the caller is asserting the memory was right or wrong                                                                       |
 
 Bumping on a returned hit would build a rich-get-richer loop. Today's top five would rank higher tomorrow for having been listed, while the memory that should displace them never appears and so never earns a first bump. The cooldown does not prevent that: 900 seconds bounds one query replayed inside a session, and the drift operates across days.

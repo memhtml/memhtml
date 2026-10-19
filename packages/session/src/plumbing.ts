@@ -1,0 +1,433 @@
+import { execFile } from "node:child_process"
+import { resolve } from "node:path"
+import { Effect } from "effect"
+
+import { GitFailure } from "./errors.js"
+
+/**
+ * Git plumbing for one session, over `node:child_process` and nothing else.
+ *
+ * The session writes through its OWN index file, so two sessions on one repository never touch
+ * each other's staging area and never touch the shared index a human's checkout uses. That is
+ * exactly what the store's `Git` service cannot do: it scrubs `GIT_INDEX_FILE` from every child
+ * (correctly, for its purpose), so this package spawns git itself and sets the variable per call.
+ */
+
+/** A raw subprocess result, before a non-zero exit is turned into a failure. */
+interface ProcessResult {
+  readonly stdout: Buffer
+  readonly stderr: string
+  readonly exitCode: number | null
+}
+
+/**
+ * Fixed environment for every git call. `GIT_TERMINAL_PROMPT=0` keeps a credential prompt from
+ * hanging a headless process, `GIT_OPTIONAL_LOCKS=0` stops a read from taking the index lock, and
+ * `LC_ALL=C` pins the message locale so the raced-ref classification reads the same words everywhere.
+ */
+const GIT_ENV: Readonly<Record<string, string>> = {
+  GIT_TERMINAL_PROMPT: "0",
+  GIT_OPTIONAL_LOCKS: "0",
+  LC_ALL: "C"
+}
+
+/**
+ * The variables by which the environment, not `-C`, decides which repository a git call operates
+ * on. Removed from every child for the reason the store removes them: a hook exports an absolute
+ * `GIT_DIR` and a child would silently operate on the hook's repository. The same list as
+ * `packages/store/src/git.ts` `GIT_REPO_SELECTION_ENV`, minus nothing: `GIT_INDEX_FILE` is scrubbed
+ * here too and then set explicitly for the calls that stage into the session index.
+ */
+export const GIT_REPO_SELECTION_ENV: ReadonlyArray<string> = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_COMMON_DIR",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_PREFIX",
+  "GIT_CEILING_DIRECTORIES"
+]
+
+/** `process.env` with {@link GIT_ENV} applied, every repo-selecting variable removed, then `extra`. */
+const childEnv = (extra: Readonly<Record<string, string>>): Record<string, string | undefined> => {
+  const env: Record<string, string | undefined> = { ...process.env, ...GIT_ENV }
+  for (const name of GIT_REPO_SELECTION_ENV) delete env[name]
+  return { ...env, ...extra }
+}
+
+/** 64 MiB, the same bound the store uses. */
+const MAX_BUFFER = 64 * 1024 * 1024
+
+/** The all-zero object name `update-ref` reads as "the ref must not exist yet". */
+const ZERO_SHA = "0".repeat(40)
+
+const spawnGit = (
+  root: string,
+  args: ReadonlyArray<string>,
+  env: Record<string, string | undefined>,
+  stdin?: Uint8Array | string
+): Effect.Effect<ProcessResult> =>
+  Effect.callback<ProcessResult>((resume, signal) => {
+    const child = execFile(
+      "git",
+      ["-C", root, ...args],
+      { encoding: "buffer", maxBuffer: MAX_BUFFER, env, signal },
+      (error: (Error & { code?: unknown }) | null, stdout: Buffer, stderr: Buffer) => {
+        resume(
+          Effect.succeed({
+            stdout,
+            stderr: stderr.toString("utf8"),
+            exitCode: error === null ? 0 : typeof error.code === "number" ? error.code : null
+          })
+        )
+      }
+    )
+    // stdin is closed unconditionally so a command that reads until EOF exits. A child that read
+    // no stdin may already have exited, and a write to its closed pipe raises EPIPE asynchronously,
+    // which only an `error` listener can absorb.
+    const input = child.stdin
+    if (input !== null) {
+      input.on("error", () => {})
+      input.end(stdin ?? "")
+    }
+  })
+
+interface RunOptions {
+  readonly stdin?: Uint8Array | string | undefined
+  readonly okExitCodes?: ReadonlyArray<number> | undefined
+}
+
+/** A full 40-hex object name. */
+const FULL_SHA = /^[0-9a-f]{40}$/
+
+export interface Plumbing {
+  /** `read-tree <sha>` into the session index file. */
+  readTree(sha: string): Effect.Effect<void, GitFailure>
+  /** `hash-object -w --stdin`; the blob sha. */
+  hashObjectWrite(bytes: Uint8Array): Effect.Effect<string, GitFailure>
+  /** `update-index --add --index-info`, one child for the whole batch. */
+  updateIndexAdd(
+    entries: ReadonlyArray<{ readonly mode: "100644"; readonly sha: string; readonly path: string }>
+  ): Effect.Effect<void, GitFailure>
+  /** `update-index --force-remove -z --stdin`, one child for the whole batch. */
+  updateIndexRemove(paths: ReadonlyArray<string>): Effect.Effect<void, GitFailure>
+  /** `write-tree` over the session index file; the tree sha. */
+  writeTree(): Effect.Effect<string, GitFailure>
+  /** `commit-tree`, message on stdin; the commit sha. */
+  commitTree(
+    tree: string,
+    parents: ReadonlyArray<string>,
+    message: string
+  ): Effect.Effect<string, GitFailure>
+  /**
+   * `update-ref <ref> <next> <expected>` as a compare-and-swap. `expected: null` means the ref must
+   * not exist. A non-zero exit whose stderr names the ref as locked or moved is `"raced"`; any other
+   * non-zero exit is a `GitFailure`.
+   */
+  updateRef(
+    ref: string,
+    next: string,
+    expected: string | null
+  ): Effect.Effect<"updated" | "raced", GitFailure>
+  /** The commit a ref resolves to, or `null` when it does not resolve. */
+  revParse(ref: string): Effect.Effect<string | null, GitFailure>
+  /** `diff-tree -r --name-only --no-renames -z from to`. */
+  diffTreePaths(from: string, to: string): Effect.Effect<ReadonlyArray<string>, GitFailure>
+  /**
+   * `read-tree -m -u from to` on the SHARED index, so the working tree follows a commit. A two-tree
+   * merge: a path unchanged between `from` and `to` keeps whatever the index and working tree hold,
+   * so uncommitted edits elsewhere survive; a path that changed must be clean or git refuses. The
+   * shared index lock is contended by every writer of the checkout, so `index.lock` being held is
+   * retried briefly before it is a failure.
+   */
+  readTreeIntoWorktree(from: string, to: string): Effect.Effect<void, GitFailure>
+  /** The branch `HEAD` points at (`refs/heads/...`), or `null` when detached. Shared index. */
+  headRef(): Effect.Effect<string | null, GitFailure>
+  /**
+   * The subset of `paths` that `status --porcelain` reports over the shared index and working tree:
+   * staged, modified, or untracked. Empty when every named path is clean and absent when untracked.
+   */
+  dirtyPaths(paths: ReadonlyArray<string>): Effect.Effect<ReadonlyArray<string>, GitFailure>
+  /** `merge-base --is-ancestor sha ref`: true when `sha` is reachable from `ref`. */
+  isAncestor(sha: string, ref: string): Effect.Effect<boolean, GitFailure>
+  /**
+   * `for-each-ref` under `prefix` (`refs/memhtml/sessions/`): each ref, the object it names, and the
+   * committer time of that commit in epoch seconds (`null` when it names no commit).
+   */
+  forEachRef(prefix: string): Effect.Effect<ReadonlyArray<RefEntry>, GitFailure>
+  /** `update-ref --stdin` with one `delete` per ref, as one transaction; nothing when `refs` is empty. */
+  deleteRefs(refs: ReadonlyArray<string>): Effect.Effect<void, GitFailure>
+}
+
+/** One row of {@link Plumbing.forEachRef}. */
+export interface RefEntry {
+  readonly ref: string
+  readonly sha: string
+  readonly committedAt: number | null
+}
+
+/**
+ * Where git keeps `relative` for this repository (`rev-parse --git-path`), absolute. `info/exclude`
+ * of a linked worktree lives in the common directory and `.git` may be a file, so the path is asked
+ * of git rather than spelled as `<root>/.git/<relative>`.
+ */
+export const gitPathOf = (root: string, relative: string): Effect.Effect<string, GitFailure> =>
+  Effect.gen(function* () {
+    const result = yield* spawnGit(root, ["rev-parse", "--git-path", relative], childEnv({}))
+    const out = result.stdout.toString("utf8").trim()
+    if (result.exitCode !== 0 || out === "") {
+      yield* Effect.logError(
+        `git rev-parse --git-path exited ${String(result.exitCode)}: ${result.stderr.trim()}`
+      )
+      return yield* Effect.fail(
+        GitFailure.make({ command: "rev-parse", exitCode: result.exitCode })
+      )
+    }
+    return resolve(root, out)
+  })
+
+/** How many times a shared-index write waits for another writer's `index.lock`, and how long. */
+const INDEX_LOCK_ATTEMPTS = 40
+const INDEX_LOCK_WAIT_MS = 50
+
+/**
+ * The plumbing over `root`. `indexFile` is the index the staging calls (`readTree`, `updateIndexAdd`,
+ * `updateIndexRemove`, `writeTree`) read and write: a commit's own temporary file
+ * (`withTemporaryIndex` in `commit.ts`). Without one those four fail with a `GitFailure` before any
+ * child runs, so a caller that only reads refs, moves a ref, or updates the checkout can never stage
+ * into the shared index by accident.
+ */
+export const makePlumbing = (input: {
+  readonly root: string
+  readonly indexFile?: string | undefined
+}): Plumbing => {
+  const { root, indexFile } = input
+  const sharedEnv = childEnv({})
+  const sessionEnv = indexFile === undefined ? sharedEnv : childEnv({ GIT_INDEX_FILE: indexFile })
+  /** A staging call needs the commit's own index; without one it fails instead of using the shared one. */
+  const staging = <A>(
+    command: string,
+    effect: () => Effect.Effect<A, GitFailure>
+  ): Effect.Effect<A, GitFailure> =>
+    indexFile === undefined
+      ? Effect.logError(`git ${command}: no session index file, refusing to stage`).pipe(
+          Effect.andThen(Effect.fail(GitFailure.make({ command, exitCode: null })))
+        )
+      : Effect.suspend(effect)
+
+  const run = (
+    env: Record<string, string | undefined>,
+    command: string,
+    args: ReadonlyArray<string>,
+    options: RunOptions = {}
+  ): Effect.Effect<ProcessResult, GitFailure> =>
+    Effect.gen(function* () {
+      const result = yield* spawnGit(root, args, env, options.stdin)
+      const accepted = options.okExitCodes ?? [0]
+      if (result.exitCode !== null && accepted.includes(result.exitCode)) return result
+      yield* Effect.logError(
+        `git ${command} exited ${String(result.exitCode)}: ${result.stderr.trim()}`
+      )
+      return yield* Effect.fail(GitFailure.make({ command, exitCode: result.exitCode }))
+    }).pipe(Effect.withSpan(`session.git.${command}`))
+
+  const text = (result: ProcessResult): string => result.stdout.toString("utf8")
+
+  /** A sha on stdout, or a `GitFailure` when the output is not one (a truncated pipe). */
+  const shaOf = (command: string, result: ProcessResult): Effect.Effect<string, GitFailure> => {
+    const sha = text(result).trim()
+    return FULL_SHA.test(sha)
+      ? Effect.succeed(sha)
+      : Effect.fail(GitFailure.make({ command, exitCode: result.exitCode }))
+  }
+
+  return {
+    readTree: (sha) =>
+      staging("read-tree", () =>
+        run(sessionEnv, "read-tree", ["read-tree", sha]).pipe(Effect.asVoid)
+      ),
+
+    hashObjectWrite: (bytes) =>
+      run(sessionEnv, "hash-object", ["hash-object", "-w", "--stdin"], { stdin: bytes }).pipe(
+        Effect.flatMap((result) => shaOf("hash-object", result))
+      ),
+
+    updateIndexAdd: (entries) =>
+      entries.length === 0
+        ? Effect.void
+        : staging("update-index", () =>
+            run(sessionEnv, "update-index", ["update-index", "--add", "-z", "--index-info"], {
+              // `-z` makes the record NUL-terminated so a path carrying a newline stays one path.
+              stdin: entries.map((entry) => `${entry.mode} ${entry.sha}\t${entry.path}\0`).join("")
+            }).pipe(Effect.asVoid)
+          ),
+
+    updateIndexRemove: (paths) =>
+      paths.length === 0
+        ? Effect.void
+        : staging("update-index", () =>
+            run(sessionEnv, "update-index", ["update-index", "--force-remove", "-z", "--stdin"], {
+              stdin: paths.map((path) => `${path}\0`).join("")
+            }).pipe(Effect.asVoid)
+          ),
+
+    writeTree: () =>
+      staging("write-tree", () =>
+        run(sessionEnv, "write-tree", ["write-tree"]).pipe(
+          Effect.flatMap((result) => shaOf("write-tree", result))
+        )
+      ),
+
+    commitTree: (tree, parents, message) =>
+      run(
+        sessionEnv,
+        "commit-tree",
+        ["commit-tree", tree, ...parents.flatMap((parent) => ["-p", parent])],
+        { stdin: message.endsWith("\n") ? message : `${message}\n` }
+      ).pipe(Effect.flatMap((result) => shaOf("commit-tree", result))),
+
+    updateRef: (ref, next, expected) =>
+      Effect.gen(function* () {
+        const result = yield* spawnGit(
+          root,
+          ["update-ref", ref, next, expected ?? ZERO_SHA],
+          sessionEnv
+        )
+        if (result.exitCode === 0) return "updated" as const
+        // Probed git 2.50.1: a moved ref reports `cannot lock ref '<ref>': is at <sha> but expected
+        // <sha>`; a create-only on an existing ref reports `cannot lock ref '<ref>': reference
+        // already exists`. Both name the ref and both mean another writer got there first.
+        if (result.stderr.includes(`'${ref}'`) && result.stderr.includes("cannot lock ref")) {
+          return "raced" as const
+        }
+        yield* Effect.logError(
+          `git update-ref exited ${String(result.exitCode)}: ${result.stderr.trim()}`
+        )
+        return yield* Effect.fail(
+          GitFailure.make({ command: "update-ref", exitCode: result.exitCode })
+        )
+      }).pipe(Effect.withSpan("session.git.update-ref")),
+
+    revParse: (ref) =>
+      run(sessionEnv, "rev-parse", ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], {
+        // Exit 1 with empty output is "does not resolve", an answer rather than a failure.
+        okExitCodes: [0, 1]
+      }).pipe(
+        Effect.map((result) => {
+          const sha = text(result).trim()
+          return FULL_SHA.test(sha) ? sha : null
+        })
+      ),
+
+    diffTreePaths: (from, to) =>
+      run(sessionEnv, "diff-tree", [
+        "diff-tree",
+        "-r",
+        "--name-only",
+        "--no-renames",
+        "-z",
+        from,
+        to
+      ]).pipe(
+        Effect.map((result) =>
+          text(result)
+            .split("\0")
+            .filter((path) => path !== "")
+        )
+      ),
+
+    readTreeIntoWorktree: (from, to) =>
+      Effect.gen(function* () {
+        for (let attempt = 1; ; attempt += 1) {
+          const result = yield* spawnGit(root, ["read-tree", "-m", "-u", from, to], sharedEnv)
+          if (result.exitCode === 0) return
+          // Probed git 2.50.1: a held shared index reports `Unable to create '<...>/index.lock':
+          // File exists.` Another writer of this checkout holds it for milliseconds; wait for it.
+          if (result.stderr.includes("index.lock") && attempt < INDEX_LOCK_ATTEMPTS) {
+            yield* Effect.sleep(INDEX_LOCK_WAIT_MS)
+            continue
+          }
+          yield* Effect.logError(
+            `git read-tree exited ${String(result.exitCode)}: ${result.stderr.trim()}`
+          )
+          return yield* Effect.fail(
+            GitFailure.make({ command: "read-tree", exitCode: result.exitCode })
+          )
+        }
+      }).pipe(Effect.withSpan("session.git.read-tree-worktree")),
+
+    headRef: () =>
+      run(sharedEnv, "symbolic-ref", ["symbolic-ref", "-q", "HEAD"], {
+        // Exit 1 is a detached HEAD.
+        okExitCodes: [0, 1]
+      }).pipe(
+        Effect.map((result) => {
+          const ref = text(result).trim()
+          return ref === "" ? null : ref
+        })
+      ),
+
+    dirtyPaths: (paths) =>
+      paths.length === 0
+        ? Effect.succeed([])
+        : run(sharedEnv, "status", [
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--no-renames",
+            "--untracked-files=all",
+            "--",
+            ...paths
+          ]).pipe(
+            // `-z` records are `XY<space><path>NUL`; `--no-renames` keeps each to one path.
+            Effect.map((result) =>
+              text(result)
+                .split("\0")
+                .filter((entry) => entry.length > 3)
+                .map((entry) => entry.slice(3))
+                .sort()
+            )
+          ),
+
+    isAncestor: (sha, ref) =>
+      run(sharedEnv, "merge-base", ["merge-base", "--is-ancestor", sha, ref], {
+        // Exit 1 is "not an ancestor", an answer rather than a failure.
+        okExitCodes: [0, 1]
+      }).pipe(Effect.map((result) => result.exitCode === 0)),
+
+    forEachRef: (prefix) =>
+      run(sharedEnv, "for-each-ref", [
+        "for-each-ref",
+        // NUL-separated fields, one ref per line: a ref name holds neither (check-ref-format).
+        "--format=%(refname)%00%(objectname)%00%(committerdate:unix)",
+        prefix
+      ]).pipe(
+        Effect.map((result) =>
+          text(result)
+            .split("\n")
+            .filter((line) => line !== "")
+            .flatMap((line) => {
+              const [ref, sha, at] = line.split("\0")
+              if (ref === undefined || sha === undefined) return []
+              const seconds = Number(at)
+              return [
+                {
+                  ref,
+                  sha,
+                  committedAt:
+                    at === undefined || at === "" || !Number.isFinite(seconds) ? null : seconds
+                }
+              ]
+            })
+        )
+      ),
+
+    deleteRefs: (refs) =>
+      refs.length === 0
+        ? Effect.void
+        : run(sharedEnv, "update-ref", ["update-ref", "--stdin"], {
+            stdin: refs.map((ref) => `delete ${ref}\n`).join("")
+          }).pipe(Effect.asVoid)
+  }
+}

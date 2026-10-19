@@ -1,6 +1,6 @@
 {
   "name": "memhtml",
-  "version": "0.15.1",
+  "version": "0.16.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.21.0",
@@ -21,10 +21,8 @@
     "test:eval": "turbo run test:eval",
     "figures:readme": "node scripts/readme-figures.mjs",
     "test:a11y": "turbo run test:a11y",
-    "test:budget": "turbo run test:budget",
     "gen:fixture": "turbo run build --filter=@memhtml/eval && node packages/eval/dist/gen-fixture.js",
-    "freeze:write-path": "turbo run build --filter=@memhtml/eval && node packages/eval/scripts/freeze-write-path.mjs",
-    "check": "turbo run lint lint:repo lint:md typecheck test test:integration test:eval test:a11y test:budget",
+    "check": "turbo run lint lint:repo lint:md typecheck test test:integration test:eval test:a11y",
     "package:assemble": "turbo run build && rm -rf dist-package && tsdown && node scripts/package-manifest.mjs",
     "package:smoke": "pnpm package:assemble && pnpm package:lint && node scripts/smoke-package.mjs",
     "package:lint": "publint --strict dist-package",
@@ -34,8 +32,8 @@
     "@biomejs/biome": "2.5.15",
     "effect": "catalog:",
     "publint": "0.3.25",
-    "tsdown": "0.23.0",
-    "turbo": "2.11.4",
+    "tsdown": "0.23.1",
+    "turbo": "2.11.7",
     "typescript": "7.0.2"
   }
 }

@@ -16,10 +16,10 @@ import { type StaticSite, serveStatic } from "./static-server.js"
 /**
  * Layout stability, measured where the viewport cannot change under the measurement.
  *
- * ## Why this exists beside the Lighthouse budget rather than inside it
+ * ## Why a dedicated probe rather than a Lighthouse reading
  *
- * Cumulative Layout Shift is the one metric in the performance category that Lighthouse cannot
- * measure reliably on a loaded machine, because it competes with Lighthouse's OWN viewport
+ * Cumulative Layout Shift is the one metric in the performance category that a Lighthouse audit
+ * cannot measure reliably on a loaded machine, because it competes with Lighthouse's OWN viewport
  * emulation. Measured 2026-08-14 on `/internals/the-memory-file-format/`: three runs of one
  * unchanged page, identical `screenEmulation` (1350x940) and host `benchmarkIndex` (1075-1176),
  * scored `1, 1, 0.81` — the odd one out carrying `CLS 0.427` with `TBT 0 ms` and `LCP 324 ms`, so
@@ -30,21 +30,19 @@ import { type StaticSite, serveStatic } from "./static-server.js"
  * Under CPU contention that resize lands after first paint often enough to fail a blocking gate —
  * observed on CI (`memhtml/memhtml` run 31843605723) and reproduced locally on two pinned cores.
  *
- * So the composite score is asserted `optimistic` in `lighthouserc.json` — contention can only
- * depress a static page's score, never inflate it — and layout stability is asserted HERE instead,
- * with the viewport fixed before the first navigation so no emulation can race the paint. Same
+ * So layout stability is asserted HERE, with the viewport fixed before the first navigation so no
+ * emulation can race the paint, and no Lighthouse score gates this site. Same
  * remedy the `scrollable-region-focusable` flake got in `tests/a11y.test.ts`, and for the same
  * reason: a blocking gate cannot hold a measurement that flips on an unchanged page.
  *
  * The ceiling is not a suppression. `LAYOUT_SHIFT_CEILING` is the Core Web Vitals "good" threshold,
  * and every page here measures 0 today, so a real shift — an image without dimensions, a late
- * stylesheet, a web font that changes metrics — fails this gate on the first run rather than on the
- * one run in three where Lighthouse happens to notice.
+ * stylesheet, a web font that changes metrics — fails this gate on the first run.
  */
 
 const dist = join(fileURLToPath(new URL("..", import.meta.url)), DIST_DIR)
 
-/** The viewport Lighthouse's desktop preset emulates, set BEFORE any navigation. */
+/** 1350x940, the desktop viewport the 2026-08-14 measurement used, set BEFORE any navigation. */
 const VIEWPORT = { width: 1350, height: 940 }
 
 /**

@@ -48,7 +48,7 @@ const seedCorpus = (): ReadonlyArray<SeedFile> => [
       memoryType: "procedural",
       confidence: "0.90",
       importance: "8",
-      entities: ["service:checkout-api", "person:sanju"],
+      entities: ["service:checkout-api", "person:sasha"],
       tags: ["deploy", "oncall"],
       eventAt: "2026-07-28",
       facets: [
@@ -75,12 +75,12 @@ const seedCorpus = (): ReadonlyArray<SeedFile> => [
     })
   },
   {
-    path: "resources/people/sanju.html",
+    path: "resources/people/sasha.html",
     html: memoryHtml({
-      title: "Sanju",
-      claim: "Sanju owns the astrolabe paper and reviews via merge requests.",
+      title: "Sasha",
+      claim: "Sasha owns the astrolabe paper and reviews via merge requests.",
       memoryType: "semantic",
-      entities: ["person:sanju"],
+      entities: ["person:sasha"],
       tags: ["people"]
     })
   },
@@ -323,7 +323,7 @@ describe("rebuild", () => {
       })
     )
     expect(entities).toEqual([
-      { entity_type: "person", entity_name: "sanju" },
+      { entity_type: "person", entity_name: "sasha" },
       { entity_type: "service", entity_name: "checkout-api" }
     ])
   })
@@ -639,26 +639,26 @@ describe("update", () => {
         const callsAfterRebuild = embedder.calls()
         const chunkBefore = yield* db.get<{ chunk_id: string }>(
           "SELECT chunk_id FROM chunks WHERE path = ?",
-          ["resources/people/sanju.html"]
+          ["resources/people/sasha.html"]
         )
 
         // The eviction: git mv into archive/<YYYY>/, path-preserving. `diff -M` reports it as R100.
         yield* Effect.promise(() =>
           repo.move(
-            "resources/people/sanju.html",
-            "archive/2026/resources/people/sanju.html",
-            "archive sanju"
+            "resources/people/sasha.html",
+            "archive/2026/resources/people/sasha.html",
+            "archive sasha"
           )
         )
         const report = yield* indexer.update({ embed: true })
 
         const moved = yield* db.get<{ path: string; archived: number; origin_path: string | null }>(
           "SELECT path, archived, origin_path FROM files WHERE path = ?",
-          ["archive/2026/resources/people/sanju.html"]
+          ["archive/2026/resources/people/sasha.html"]
         )
         const gone = yield* db.get<{ n: number }>(
           "SELECT count(*) AS n FROM files WHERE path = ?",
-          ["resources/people/sanju.html"]
+          ["resources/people/sasha.html"]
         )
         const chunkAfter = yield* db.get<{ chunk_id: string; path: string }>(
           "SELECT chunk_id, path FROM chunks WHERE chunk_id = ?",
@@ -684,11 +684,11 @@ describe("update", () => {
 
     expect(outcome.report.renamed).toBe(1)
     expect(outcome.moved?.archived).toBe(1)
-    expect(outcome.moved?.origin_path).toBe("resources/people/sanju.html")
+    expect(outcome.moved?.origin_path).toBe("resources/people/sasha.html")
     expect(outcome.gone).toBe(0)
     expect(outcome.total).toBe(20)
     // The whole reason chunks key on content_hash: a git mv costs ZERO Bedrock calls.
-    expect(outcome.chunkAfter?.path).toBe("archive/2026/resources/people/sanju.html")
+    expect(outcome.chunkAfter?.path).toBe("archive/2026/resources/people/sasha.html")
     expect(outcome.embedding).toBe(1)
     expect(outcome.callsAfterMove).toBe(outcome.callsAfterRebuild)
   })
@@ -1106,7 +1106,7 @@ describe("embedMissing scan scope", () => {
          * scoping, any `update --embed` would incidentally backfill these; after it, only a full scan
          * closes them, and that difference is the behavior change this task accepts on purpose.
          */
-        const strandedPaths = ["resources/people/sanju.html", "areas/arcs/reversibility-first.html"]
+        const strandedPaths = ["resources/people/sasha.html", "areas/arcs/reversibility-first.html"]
         const stranded = yield* db.all<{ chunk_id: string }>(
           `SELECT chunk_id FROM chunks WHERE path IN (?, ?)`,
           strandedPaths
@@ -1183,7 +1183,7 @@ describe("embedMissing scan scope", () => {
          */
         const stale = yield* db.get<{ chunk_id: string }>(
           "SELECT chunk_id FROM chunks WHERE path = ?",
-          ["resources/people/sanju.html"]
+          ["resources/people/sasha.html"]
         )
         yield* db.run("UPDATE embeddings SET model = ? WHERE chunk_id = ?", [
           "superseded.model@8",
@@ -1550,7 +1550,7 @@ describe("rebuild reproducibility", () => {
                   claim: "Entry one now mentions wildebeest.",
                   memoryType: "episodic",
                   tags: ["topic-1", "revised"],
-                  entities: ["service:svc-1", "person:sanju"]
+                  entities: ["service:svc-1", "person:sasha"]
                 })
               },
               {
@@ -1643,8 +1643,8 @@ describe("frame_key end to end", () => {
       html: memoryHtml({ title: "Water", claim: "Water is wet." })
     },
     {
-      path: "areas/facts/priya.html",
-      html: memoryHtml({ title: "Priya", claim: "Priya adopted a dog named Waffles." })
+      path: "areas/facts/paula.html",
+      html: memoryHtml({ title: "Paula", claim: "Paula adopted a dog named Waffles." })
     }
   ]
 
@@ -1674,7 +1674,7 @@ describe("frame_key end to end", () => {
       { path: "archive/2026/areas/facts/capital-old.html", frame_key: "the capital of india is" },
       { path: "areas/facts/capital-a.html", frame_key: "the capital of india is" },
       { path: "areas/facts/capital-b.html", frame_key: "the capital of india is" },
-      { path: "areas/facts/priya.html", frame_key: null },
+      { path: "areas/facts/paula.html", frame_key: null },
       { path: "areas/facts/water.html", frame_key: null },
       { path: "areas/inbox/tasks/capital-check.html", frame_key: "the capital of india is" }
     ])

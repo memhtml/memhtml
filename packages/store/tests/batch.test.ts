@@ -149,7 +149,7 @@ describe("writeMemories: N writes, one commit", () => {
     const result = await run(
       repo.store.writeMemories([
         writeInput({ title: "Alpha", claim: "A.", tags: ["deploy"] }),
-        writeInput({ title: "Beta", claim: "B.", entities: ["person:sanju"] })
+        writeInput({ title: "Beta", claim: "B.", entities: ["person:sasha"] })
       ])
     )
     const first = await run(repo.store.readMemory(result.results[0]?.path ?? ""))
@@ -158,9 +158,10 @@ describe("writeMemories: N writes, one commit", () => {
     expect(first.doc.metas.contentHash).toBe(result.results[0]?.contentHash)
     expect(second.doc.article.gist).toBe("B.")
     expect(second.doc.metas.contentHash).toBe(result.results[1]?.contentHash)
-    // Placement is the same rule the singular write follows — a tag routes to `resources/<tag>/`.
+    // Placement is the same rule the singular write follows — a tag routes to `resources/<tag>/`,
+    // and a person entity alone routes nowhere special.
     expect(first.path).toBe("resources/deploy/alpha.html")
-    expect(second.path).toBe("resources/people/beta.html")
+    expect(second.path).toBe("areas/inbox/beta.html")
   })
 
   it("stamps ONE set of provenance trailers on the batch commit", async () => {

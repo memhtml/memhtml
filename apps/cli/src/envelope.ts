@@ -17,6 +17,8 @@ export const RESPONSE_TYPES = [
   "recall.pack",
   "index.report",
   "trace.sessions",
+  // Retired: no command answers `sleep.report`, `sleep.review`, `sleep.merge`, or `sleep.plan` any
+  // more. The strings stay because this list is append-only; a parser that learned them keeps parsing.
   "sleep.report",
   "sleep.review",
   "eval.discrimination",
@@ -54,7 +56,35 @@ export const RESPONSE_TYPES = [
   "integrations.list",
   "integrations.doctor",
   "integrations.shell",
-  "hook.output"
+  "hook.output",
+  // The session family and the head family (`docs/design.md` §17 and §22), appended in the order
+  // the v2 command table lists them, plus `session.rebased` for the rebase step the
+  // commit path hands back to the caller rather than retrying itself.
+  "session.started",
+  "session.appended",
+  "session.exec.report",
+  "session.committed",
+  "session.status",
+  "session.rebased",
+  "head.status",
+  "head.search",
+  "head.snapshot",
+  "head.served",
+  // The curation door (`docs/design.md` §23): a curator branch landed on its target.
+  "curate.merged",
+  // The curator itself (`docs/design.md` §23): one model-driven run over a curator session.
+  "curate.run",
+  // The collapse (`docs/design.md` §23): a planned set of archive and fold clusters landed
+  // on one curator branch.
+  "curate.collapse",
+  // The head's vector cache (`docs/design.md` §20, "The vector cache"): `head embed` filling it.
+  "head.embedded",
+  // `memhtml config`: the store's effective policy (`memhtml.config.json`) and the process tuning
+  // variables, each value with where it came from.
+  "config.report",
+  // `session prune`: the session state removed (or, under `--dry-run`, that would be) and the logs
+  // kept because they still hold ops.
+  "session.pruned"
 ] as const
 
 export type ResponseType = (typeof RESPONSE_TYPES)[number]
@@ -111,7 +141,23 @@ export const ERROR_CODES = [
   // than overwrite a change a human made.
   "ERR_UNKNOWN_HOST",
   "ERR_UNKNOWN_HOOK_EVENT",
-  "ERR_INTEGRATION_MODIFIED"
+  "ERR_INTEGRATION_MODIFIED",
+  // `head serve` found a live server on the store's socket. Exit 1: the call parsed, and the store
+  // already has its server; stop that one (the message names its pid) or use it.
+  "ERR_HEAD_SERVER_RUNNING",
+  // A v1 door that creates a record (`write`, `apply`, `correct`, `task add`) was called with
+  // `MEMHTML_SESSION` set. Those doors commit with no write bar, and the process has a session to
+  // write through, so the call is refused before anything opens. A usage code: the fix is on the line
+  // (`session exec` or `session put`), not in the store.
+  "ERR_SESSION_BOUND",
+  // A v1 door that creates a record was called with no session set, and the store's
+  // `memhtml.config.json` sets `v1Doors` to `closed`: records go in through sessions only. A usage
+  // code, like ERR_SESSION_BOUND: the fix is on the line (start a session and put through it).
+  "ERR_V1_DOOR_CLOSED",
+  // The store's `memhtml.config.json` exists and cannot be read or does not decode (an unknown key,
+  // a value of the wrong type, JSON that does not parse). Exit 1: the fix is in the store, and every
+  // command that needs the policy refuses rather than running under the library defaults.
+  "ERR_STORE_CONFIG"
 ] as const
 
 export type ErrorCode = (typeof ERROR_CODES)[number]

@@ -7,6 +7,13 @@ import { Option } from "effect"
  */
 export const RRF_K = 60
 
+/**
+ * How many candidates each arm contributes before fusion. The retrieval SQL binds it as every
+ * arm's `LIMIT`, and the v2 head caps its lexical and vector arms at it, so both stores fuse the
+ * same number of candidates per arm.
+ */
+export const DEFAULT_ARM_LIMIT = 40
+
 /** Maximal-marginal-relevance's relevance/diversity split. */
 export const MMR_LAMBDA = 0.5
 

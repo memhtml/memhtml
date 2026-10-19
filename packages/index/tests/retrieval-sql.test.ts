@@ -216,7 +216,7 @@ describe("trace firewall", () => {
       assembleScope({ memoryTypes: ["semantic", "arc"], workspace: "memhtml", tags: ["a", "b"] }),
       // The entity axis is checked here too: its subquery is the newest table name to enter this
       // filter, and a firewall that holds for three scope shapes and leaks for the fourth is not one.
-      assembleScope({ entity: "person:sanju" })
+      assembleScope({ entity: "person:sasha" })
     ]
     let checked = 0
     for (const scope of scopes) {

@@ -11,7 +11,7 @@ import { isMemoryMetaName, META_ORDER, META_PREFIX, type MemoryMetaName } from "
  * Surgical head editors: byte-level splices that change exactly one line and provably do not
  * touch the article.
  *
- * The sleep phases stamp `memhtml-updated`, decay `memhtml-confidence`, bump `memhtml-reprieves`, and set
+ * Bookkeeping passes stamp `memhtml-updated`, decay `memhtml-confidence`, bump `memhtml-reprieves`, and set
  * `memhtml-needs-revision` on files they otherwise leave alone. Round-tripping the whole document
  * for that would re-serialize the article and make a bookkeeping pass look like a content
  * change in `git diff`. The article is the hash scope, so that would also risk moving the
@@ -172,7 +172,7 @@ export const setMeta = (html: string, name: string, value: string): string => {
 /**
  * Append another `<meta>` of a repeatable name, a new `memhtml-entity` or `memhtml-tag`, after the
  * last one already present. Adding a value that is already there is a no-op, so the operation
- * is idempotent and a re-run of a sleep phase cannot grow the head.
+ * is idempotent and a re-run of a bookkeeping pass cannot grow the head.
  */
 export const addMeta = (html: string, name: string, value: string): string => {
   if (!isMemoryMetaName(name)) return html
@@ -193,13 +193,22 @@ export const addMeta = (html: string, name: string, value: string): string => {
   return offset === undefined ? html : insertAt(html, offset, `${metaLine(name, value)}\n`)
 }
 
-/** Drop every `<meta>` of a name, one whole line each. A name that is absent is a no-op. */
-export const removeMeta = (html: string, name: string): string => {
+/**
+ * Drop a `<meta>` of a name, one whole line each. Omitting `value` drops every meta of that name;
+ * naming one drops just the metas carrying it, which is how a session's `unlabel` op takes one
+ * `memhtml-entity` off a file and leaves its other entities alone. A name or value that is absent
+ * is a no-op. Like {@link removeLink}, the cut is outside the article, so the content hash is
+ * unchanged.
+ */
+export const removeMeta = (html: string, name: string, value?: string): string => {
   const document = parseDocument(html)
   const head = headOf(document)
   if (head === undefined) return html
   const spans = memhtmlMetas(head)
-    .filter((meta) => meta.name === name)
+    .filter(
+      (meta) =>
+        meta.name === name && (value === undefined || attr(meta.element, "content") === value)
+    )
     .flatMap((meta) => {
       const span = spanOf(meta.element)
       return span === undefined
@@ -210,8 +219,8 @@ export const removeMeta = (html: string, name: string): string => {
 }
 
 /**
- * Append a `<link rel="memhtml-…">` edge. Idempotent on the `(rel, href)` pair, because the sleep
- * conflict phase promotes the same corroborated edge on every run and a duplicated `<link>`
+ * Append a `<link rel="memhtml-…">` edge. Idempotent on the `(rel, href)` pair, because a caller
+ * can add the same edge on every run, as a session's `link` op can, and a duplicated `<link>`
  * would become a duplicated `edges` row.
  */
 export const addLink = (html: string, rel: EdgeRel, href: string): string => {

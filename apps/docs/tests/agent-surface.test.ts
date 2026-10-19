@@ -15,6 +15,7 @@ import {
   referencePrompt,
   siteUrl
 } from "../src/lib/agent-surface.js"
+import { isRemovedPage } from "../src/lib/removed-pages.js"
 
 /**
  * The dead-button lock, and the checks over the built agent surface.
@@ -59,7 +60,10 @@ const BUILT_BASE = ((base: string) => (base.endsWith("/") ? base : `${base}/`))(
 
 const CONTEXT = { site: new URL("https://memhtml.github.io"), base: "/memhtml" }
 
-/** Every page directory Astro emitted, as the site-absolute paths a browser would request. */
+/**
+ * Every page directory Astro emitted, as the site-absolute paths a browser would request, less the
+ * redirect stubs at removed pages' old addresses (`src/lib/removed-pages.ts`).
+ */
 const builtPages = (): ReadonlyArray<string> => {
   const walk = (directory: string, prefix: string): ReadonlyArray<string> =>
     readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -67,7 +71,7 @@ const builtPages = (): ReadonlyArray<string> => {
       if (entry.isDirectory()) return walk(join(directory, entry.name), `${prefix}${entry.name}/`)
       return entry.name === "index.html" ? [prefix] : []
     })
-  return walk(dist, BUILT_BASE)
+  return walk(dist, BUILT_BASE).filter((path) => !isRemovedPage(path, BUILT_BASE))
 }
 
 /** Every `href` in a built HTML document. */

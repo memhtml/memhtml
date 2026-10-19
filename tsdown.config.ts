@@ -14,7 +14,7 @@ import { defineConfig } from "tsdown"
  *
  * ## What is bundled, and what must not be
  *
- * The fourteen `@memhtml/*` packages are the bundle. Every real dependency stays external, and two of
+ * The sixteen `@memhtml/*` packages are the bundle. Every real dependency stays external, and two of
  * them MUST: `memhtml exec` reads `node-html-parser`'s published `dist/index.mjs` as BYTES to seed the
  * QuickJS guest, and `@memhtml/html` loads `highlight.js` through `createRequire` on the first
  * detection. Inlined, each becomes a module in this graph rather than a file on disk, and both break
@@ -23,28 +23,30 @@ import { defineConfig } from "tsdown"
  *
  * ## Where the assets go, and why not into `dist/`
  *
- * Five things resolve a path from their own module location at run time, and after bundling that
+ * Three things resolve a path from their own module location at run time, and after bundling that
  * location is `dist/`. So each asset is copied to the PACKAGE ROOT, one level above the bundle, which
  * is exactly where `../migrations` and `../guest` land from a module in `dist/`:
  *
  * - `migrations/`, `state-migrations/` — `new URL("../migrations", import.meta.url)`
  * - `guest/corpus.mjs` — read as bytes by `memhtml exec`
- * - `prompts/instructions.md` — the consolidator's system prompt, read as a file from
- *   `join(packageRoot(), "prompts", "instructions.md")` in `apps/consolidator/src/instructions.ts`
+ * - `prompts/charter.md`, `prompts/collapse.md`: the two curator prompts, read by `memhtml curate run`
+ *   and `memhtml curate collapse`
  */
 
 const WORKSPACE_PACKAGES = [
   "apps/cli",
   "apps/mcp",
-  "apps/consolidator",
   "packages/contracts",
+  "packages/curator",
   "packages/domain",
   "packages/eval",
+  "packages/head",
   "packages/html",
   "packages/index",
   "packages/integrations",
   "packages/llm",
-  "packages/sleep",
+  "packages/session",
+  "packages/snapshot",
   "packages/store",
   "packages/telemetry",
   "packages/traces"
@@ -54,8 +56,8 @@ const WORKSPACE_PACKAGES = [
  * Every non-`@memhtml` dependency any shipped package declares, as patterns that also match SUBPATHS.
  *
  * A bare package name is not enough, and the gap is expensive rather than theoretical: this repo
- * imports `effect/unstable/cli`, `effect/unstable/ai`, and `@effect/platform-node`'s subpaths, none of
- * which a `"effect"` string matches. Externalizing only the bare specifier inlined the rest and took
+ * imports `effect/ai`, `effect/http`, `effect/observability`, and `@effect/platform-node`'s subpaths,
+ * none of which a `"effect"` string matches. Externalizing only the bare specifier inlined the rest and took
  * `memhtml-mcp.mjs` from 192 kB to 1.45 MB (measured 2026-08-17), with no warning — tsdown's
  * bundled-dependency hint reports top-level names, so it stayed silent.
  *
@@ -98,7 +100,7 @@ export default defineConfig({
    * Only `neverBundle`. The `@memhtml/*` packages need no `alwaysBundle` entry — nothing declares them
    * as a dependency of this root, so they are not candidates for externalization and get bundled by
    * default. Naming them in `alwaysBundle` additionally force-bundles what THEY import, which drags
-   * `effect`, `eve`, and `msgpackr`'s native loader into the output and takes `memhtml-mcp.mjs` from
+   * `effect` and every native loader into the output and takes `memhtml-mcp.mjs` from
    * 192 kB to 1.45 MB (measured 2026-08-17).
    */
   deps: {
@@ -122,8 +124,8 @@ export default defineConfig({
     { from: "packages/index/migrations", to: OUT_DIR },
     { from: "packages/index/state-migrations", to: OUT_DIR },
     { from: "apps/cli/guest", to: OUT_DIR },
-    // The consolidator's system prompt, read as a FILE at run time (`src/instructions.ts`).
-    { from: "apps/consolidator/prompts", to: OUT_DIR },
+    // `prompts/*.md`: `new URL("../prompts/<name>.md", import.meta.url)` in the curator's charter.ts
+    { from: "packages/curator/prompts", to: OUT_DIR },
     { from: "README.md", to: OUT_DIR },
     { from: "LICENSE", to: OUT_DIR }
   ]
