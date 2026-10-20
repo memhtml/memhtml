@@ -14,6 +14,8 @@ Every page below this one is generated from the TSDoc on a package's exported su
 | `@memhtml/eval`      | [One page](/api/eval/): the corpus generator and the discrimination gate, one import path.                                                                                                                                |
 | `@memhtml/domain`    | [One page](/api/domain/): the pure arithmetic of retention, decay, fusion, diversification, merge guards and graph scores, one import path.                                                                               |
 | `@memhtml/llm`       | [One page](/api/llm/): the Bedrock and proxy model clients, embeddings, the model table and the wire helpers, one import path.                                                                                            |
+| `@memhtml/head`      | [One page](/api/head/): the corpus as one immutable version per commit, its lexical and vector search, and the head gate, one import path.                                                                                |
+| `@memhtml/telemetry` | [One page](/api/telemetry/): the opt-in OTLP trace exporter, active only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, one import path.                                                                                      |
 
 Each package's overview page is its `README.md` from the repository, with the module list appended by the generator. The remaining workspace packages are added one per maintenance run, smallest exported surface first, once their generated pages pass the same gates as the authored ones.
 
