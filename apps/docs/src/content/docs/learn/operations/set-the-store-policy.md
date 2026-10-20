@@ -66,7 +66,7 @@ A put that breaks the bar refuses the whole call and adds nothing:
 | `closed-in-session` | refused with `ERR_SESSION_BOUND` | open                              |
 | `closed`            | refused with `ERR_SESSION_BOUND` | refused with `ERR_V1_DOOR_CLOSED` |
 
-Both refusals exit 2 before anything opens, and their suggestions are runnable session commands. The default closes the doors only inside an agent run, because a run that writes through a session should land all its records through the bar and in one commit. `closed` makes sessions the only way records go in.
+Both refusals exit 2 before anything opens, and their suggestions are session commands with placeholders to fill in. The default closes the doors only inside an agent run, because a run that writes through a session should land all its records through the bar and in one commit. `closed` makes sessions the only way records go in.
 
 The MCP server has no per-call session, so its `memory_write`, `memory_write_batch`, and `memory_correct` tools read `MEMHTML_SESSION` from the server's own environment. A server an agent runtime starts inside a run is closed under `closed-in-session`, and a shared server started outside any run is open.
 
