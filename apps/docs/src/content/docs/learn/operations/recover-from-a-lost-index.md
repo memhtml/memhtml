@@ -40,7 +40,7 @@ The git tree is the system of record. It holds every memory, every authored `<li
 | The trace tables                                                                                                          | `$MEMHTML_TRACE_ROOT`         | `memhtml trace index` from a zero watermark: slow, and it loses nothing.                                          |
 | An unmerged `curate/<date>` branch                                                                                        | Nothing, unless it was pushed | Run `memhtml curate run` again. A run never moved `main`, so it's safe to repeat.                                 |
 | A session's operations that never landed, in `.memhtml/sessions/`                                                         | Nothing                       | The writes are gone. The agent that made them has to write them again.                                            |
-| The snapshots in `.memhtml/snapshots/` and the vector cache in `.memhtml/vectors/`                                        | The tree                      | The first head load reads git and writes a snapshot. `memhtml head embed` refills the vectors, at Bedrock prices. |
+| The snapshots in `.memhtml/snapshots/` and the vector cache in `.memhtml/vectors/`                                        | The tree                      | A load reads git; a session commit writes a snapshot. `memhtml head embed` refills the vectors at Bedrock prices. |
 
 :::agent
 

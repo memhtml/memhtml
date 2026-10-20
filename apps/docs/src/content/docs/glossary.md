@@ -15,7 +15,7 @@ The terms are alphabetical, and each entry names the page that develops it. Seve
 
 ### Checkout lock
 
-`.memhtml/checkout.lock`, the lock every writer of the shared git index holds while it stages and commits: each v1 write, each session commit, and the `curate merge` fast-forward. A writer waits up to 15 seconds for it and then fails with `ERR_STORAGE` (`checkout.locked`) having written nothing. See [Sessions and the commit path](/internals/sessions-and-the-commit-path/).
+`.memhtml/checkout.lock`, the lock every writer of the shared git index holds while it stages and commits: each v1 write, each session commit, and the `curate merge` fast-forward. A writer waits up to 15 seconds for it and then fails with `ERR_STORAGE` (`checkout.locked`), having written nothing unless it is `doctor --fix` or `task status <path> done`. See [Sessions and the commit path](/internals/sessions-and-the-commit-path/).
 
 ### Claim
 
@@ -131,7 +131,7 @@ A pointer to one version of the corpus plus an ordered log of its own operations
 
 ### Snapshot
 
-`.memhtml/snapshots/<sha>.arrow`, a cached copy of the head at one commit, written by every commit that moves a ref. Loading from a snapshot skips the git read, and a snapshot that fails to read is treated as a cache miss. The directory keeps the newest four. See [Sessions and the commit path](/internals/sessions-and-the-commit-path/).
+`.memhtml/snapshots/<sha>.arrow`, a cached copy of the head at one commit, written by each session commit and `curate merge`. Loading from a snapshot skips the git read, and a snapshot that fails to read is treated as a cache miss. The directory keeps the newest four. See [Sessions and the commit path](/internals/sessions-and-the-commit-path/).
 
 ### State plane
 
