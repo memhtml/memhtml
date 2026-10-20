@@ -18,9 +18,11 @@ import type { HttpClient } from "effect/http"
  * OTel SDK, which is not this repo's situation.
  */
 
-/** The two module graphs the exporter needs, loaded only when the endpoint is set. */
+/** The two Effect modules the exporter needs, imported here only when the endpoint is set. */
 export interface TelemetryModules {
+  /** The `effect/http` module, for the fetch-backed HTTP client the exporter posts spans with. */
   readonly http: typeof import("effect/http")
+  /** The `effect/observability` module, for `OtlpTracer` and its JSON serialization. */
   readonly observability: typeof import("effect/observability")
 }
 
@@ -32,18 +34,20 @@ const loadModules = async (): Promise<TelemetryModules> => {
   return { http, observability }
 }
 
+/** What a runtime assembly passes to {@link layerTelemetry}. */
 export interface TelemetryOptions {
   /**
-   * The `service.name` resource attribute when `OTEL_SERVICE_NAME` is absent: which of the runtime
-   * assemblies this process is (`memhtml-cli`, `memhtml-mcp`), because one collector typically
-   * receives both and the operator's first question is which process a trace came from.
+   * The `service.name` resource attribute when `OTEL_SERVICE_NAME` is unset or blank: which of the
+   * runtime assemblies this process is (`memhtml-cli`, `memhtml-mcp`), because one collector
+   * typically receives both and the operator's first question is which process a trace came from.
    */
   readonly serviceName: string
   /**
-   * The environment snapshot, defaulting to `process.env`, read when the factory is CALLED rather
-   * than through `effect/Config` — Config's default provider snapshots `process.env` at module load
-   * (`apps/cli/src/api-layer.ts:417-424`), and this factory runs once per invocation, so a test that
-   * sets the variable after import must still be seen.
+   * Where the endpoint and `OTEL_SERVICE_NAME` are read, defaulting to `process.env`, when the
+   * factory is CALLED rather than through `effect/Config`. Config's default provider is built once
+   * per process and cached (`hookConfigProvider` in `apps/cli/src/hook.ts` records the probe), and
+   * this factory runs once per invocation, so either variable set by a test after an earlier read
+   * must still be seen.
    */
   readonly env?: Record<string, string | undefined> | undefined
   /**
@@ -55,8 +59,9 @@ export interface TelemetryOptions {
 }
 
 /**
- * A wrapper over the exporter's HTTP client that logs ONE warning on the first failed export and
- * stays silent after.
+ * A wrapper over the exporter's HTTP client that logs ONE warning on the first failed connection
+ * and stays silent after. It wraps the bare fetch client, below the exporter's status check, so an
+ * error status from the collector logs nothing.
  *
  * The exporter itself already never fails the program: after its retries it catches the cause,
  * disables itself for sixty seconds, and emits only a DEBUG log — invisible at the default level. A
@@ -87,18 +92,17 @@ const warnOnce = (
 /**
  * The tracer layer for one runtime assembly.
  *
- * `OTEL_EXPORTER_OTLP_ENDPOINT` unset or blank returns `Layer.empty`: byte-identical behavior to
- * today, no exporter module loaded, no socket opened. Set, the layer overrides effect's tracer
- * reference with a batching OTLP HTTP exporter aimed at `<endpoint>/v1/traces` (the standard
- * per-signal path; a trailing slash on the endpoint is tolerated because both spellings arrive
- * from shell profiles).
+ * `OTEL_EXPORTER_OTLP_ENDPOINT` unset or blank returns `Layer.empty`: the program runs as it would
+ * without this package, with no exporter module loaded and no socket opened. Set, the layer
+ * overrides effect's tracer reference with a batching OTLP HTTP exporter aimed at
+ * `<endpoint>/v1/traces` (the standard per-signal path; a trailing slash on the endpoint is
+ * tolerated because both spellings arrive from shell profiles).
  *
- * Export can never fail a command. The exporter retries transient failures, then disables itself
- * and drops the batch — the program's error channel never sees it, so the envelope, the exit code,
- * and the MCP stream are exactly what they would have been. The final batch of a short-lived
- * process is flushed when the layer's scope closes (`Effect.scoped` in the CLI, `Layer.launch` in
- * the server), bounded by the exporter's own shutdown timeout so a dead collector delays exit by
- * seconds, never hangs it.
+ * A failed export never fails a command. The exporter retries transient failures, then disables
+ * itself and drops the batch, and the program's error channel never sees it, so the envelope, the
+ * exit code, and the MCP stream are exactly what they would have been. The final batch of a
+ * short-lived process is flushed when the layer's scope closes, bounded by the exporter's own
+ * shutdown timeout so a dead collector delays exit by seconds, never hangs it.
  */
 export const layerTelemetry = (options: TelemetryOptions): Layer.Layer<never> => {
   const env = options.env ?? process.env

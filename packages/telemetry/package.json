@@ -2,6 +2,7 @@
   "name": "@memhtml/telemetry",
   "version": "0.16.0",
   "private": true,
+  "description": "The opt-in OTLP trace exporter for the memhtml CLI and MCP server, active only when OTEL_EXPORTER_OTLP_ENDPOINT is set.",
   "type": "module",
   "engines": {
     "node": ">=24"

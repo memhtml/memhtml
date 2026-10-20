@@ -435,6 +435,27 @@ export default defineConfig({
             entryFileName: "index",
             disableSources: true
           }
+        }),
+        /*
+         * `@memhtml/telemetry`: one module, one import path and one page, with the settled options and
+         * no source change beyond doc comments. TypeDoc renders it with no warning and no MDX brace
+         * outside code; the two `TelemetryModules` members print as `__module` because their type is a
+         * `typeof import(...)`, so each carries a doc comment naming its module.
+         */
+        starlightTypeDoc({
+          entryPoints: [join(REPO_ROOT, "packages", "telemetry", "src", "index.ts")],
+          tsconfig: join(REPO_ROOT, "packages", "telemetry", "tsconfig.json"),
+          output: "api/telemetry",
+          typeDoc: {
+            outputFileStrategy: "modules",
+            useCodeBlocks: true,
+            parametersFormat: "list",
+            excludeExternals: true,
+            readme: join(REPO_ROOT, "packages", "telemetry", "README.md"),
+            mergeReadme: true,
+            entryFileName: "index",
+            disableSources: true
+          }
         })
       ],
       /*
@@ -497,6 +518,11 @@ export default defineConfig({
               label: "@memhtml/head",
               collapsed: true,
               items: [{ autogenerate: { directory: "api/head" } }]
+            },
+            {
+              label: "@memhtml/telemetry",
+              collapsed: true,
+              items: [{ autogenerate: { directory: "api/telemetry" } }]
             }
           ]
         },
