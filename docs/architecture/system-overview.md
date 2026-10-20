@@ -107,12 +107,12 @@ flowchart LR
 | Atomic writes | write-file-atomic 8.0.0 for session logs, snapshots, and vector caches                           | `packages/session/package.json:31`, `packages/snapshot/package.json:29`       |
 | HTML parsing  | parse5 8.0.1                                                                                     | `packages/html/package.json:36`                                               |
 | Embeddings    | AWS Bedrock SDK 3.1152.0, `cohere.embed-v4:0` at 1024 dims                                       | `packages/llm/package.json:33`, `packages/llm/src/constants.ts:7-8`           |
-| Curator model | AI SDK `ai` 7.0.142 with `@ai-sdk/amazon-bedrock` 5.0.117 and `@ai-sdk/openai-compatible` 3.0.70 | `packages/curator/package.json:28-38`                                         |
+| Curator model | AI SDK `ai` 7.0.143 with `@ai-sdk/amazon-bedrock` 5.0.118 and `@ai-sdk/openai-compatible` 3.0.71 | `packages/curator/package.json:28-38`                                         |
 | Collapse plan | graphology 0.26.0, graphology-communities-louvain 2.0.2, graphology-metrics 2.4.2                | `packages/curator/package.json:40-42`                                         |
 | Sandbox       | just-bash 3.4.2 for `exec` and `session exec`                                                    | `apps/cli/package.json:56`                                                    |
 | Head server   | `@effect/platform-node` 4.0.5, HTTP over the store's Unix socket                                 | `pnpm-workspace.yaml:62`, `apps/cli/src/head-client.ts:30-33`                 |
 | Tracing       | Effect's own `OtlpTracer`, opt-in                                                                | `packages/telemetry/src/index.ts:14-18`                                       |
-| Build tooling | turbo 2.11.8, pnpm 11.21.0, biome 2.5.15, tsdown 0.23.1                                          | `package.json:6`, `package.json:32-36`                                        |
+| Build tooling | turbo 2.11.9, pnpm 11.21.0, biome 2.5.15, tsdown 0.23.1                                          | `package.json:6`, `package.json:32-36`                                        |
 | Test tooling  | vitest 5.0.5, `@effect/vitest`, fast-check 4.10.2                                                | `apps/cli/package.json:60-67`, `pnpm-workspace.yaml:64-65`                    |
 | Docs site     | astro ^7.4.0, `@astrojs/starlight` ^0.42.6                                                       | `apps/docs/package.json:19`, `apps/docs/package.json:24`                      |
 

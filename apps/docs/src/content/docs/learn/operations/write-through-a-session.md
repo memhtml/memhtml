@@ -15,9 +15,9 @@ memhtml session rebase --id s1        # only after a rebase-needed answer
 memhtml session prune --older-than 7d --dry-run
 ```
 
-A session is a small log of operations that sits on top of one version of the corpus. Each `session put` or `session exec` adds operations to the log, and nothing reaches git until `session commit` lands the whole log as one commit. The store's write bar judges every record when you add it and again when you commit it.
+A session is a small log of operations that sits on top of one version of the corpus. Each `session put` or `session exec` adds operations to the log. Nothing reaches git until `session commit` lands the whole log as one commit. The store's write bar judges every record when you add it and again when you commit it.
 
-`memhtml write` and `memhtml apply` still commit straight to the store, and outside a session they work the way they always have. Inside an agent run that exports `MEMHTML_SESSION`, the store's default policy closes them and points you at the session commands instead. [Bind a whole run](#bind-a-whole-run-with-memhtml_session) covers that case.
+`memhtml write` and `memhtml apply` still commit straight to the store, with no write bar. Inside an agent run that exports `MEMHTML_SESSION`, the store's default policy closes them and points you at the session commands instead. [Bind a whole run](#bind-a-whole-run-with-memhtml_session) covers that case.
 
 ## Start a session
 
@@ -48,11 +48,11 @@ memhtml session start --id s1
 }
 ```
 
-The id is one path segment made of letters, digits, `.`, `_`, and `-`. The session's log lives at `.memhtml/sessions/<id>.json`, which git ignores. `baseSha` is the commit the session sees, and `ref` is where its commit will land. That's `refs/heads/main` unless you pass `--ref`.
+The id is one path segment of letters, digits, `.`, `_`, and `-`, starting with a letter or digit. The session's log lives at `.memhtml/sessions/<id>.json`, which git ignores. `baseSha` is the commit the session sees, and `ref` is where its commit will land. The ref is `refs/heads/main` whatever branch the checkout has open, unless you pass `--ref`, so a store on `master` passes `--ref master`.
 
 Starting an id that already has a log is refused with `ERR_STORAGE` (`session.exists`), so a retried start can't throw away work in progress. `--force` replaces the log on purpose.
 
-`head` says how the corpus was loaded. `git` is a full read of the tree. `snapshot` means a cached copy of that exact commit was read from `.memhtml/snapshots/`, and `snapshot+advance` means an older snapshot was read and brought forward over the files that changed. Every commit that moves a ref writes a snapshot, so most loads after the first one are fast.
+`head` says how the corpus was loaded. `git` is a full read of the tree. `snapshot` means a cached copy of that exact commit was read from `.memhtml/snapshots/`, and `snapshot+advance` means an older snapshot was read and brought forward over the files that changed. A session commit and `curate merge` write a snapshot of the commit they land, so once a session has committed, most loads are fast. A `memhtml write` or a hand `git commit` writes none, so the next load advances an older snapshot, or reads git when there is none.
 
 ## Add records with session put
 
@@ -114,7 +114,7 @@ memhtml session put --id s1 --file ops.jsonl
 }
 ```
 
-The store renders each line into the file it would write and picks the path it would pick. `neighbors` lists the three records nearest each new one, ranked the way `memhtml head search` ranks. Read them before you commit. A neighbor that already states your fact means you can drop the line, and a related one is worth a `link`. `vector` says whether the vector arm ranked the neighbors. When it can't run, the neighbors come from the lexical arm alone and the put still succeeds.
+The store renders each line into the file it would write and picks the path it would pick. `neighbors` lists up to three records nearest each new one, ranked the way `memhtml head search` ranks. Read them before you commit. A neighbor that already states your fact means you can drop the line, and a related one is worth a `link`. `vector` says whether the vector arm ranked the neighbors. When it can't run, the neighbors come from the lexical arm alone and the put still succeeds.
 
 Two more line shapes edit an existing record's entities without touching its article, so the record keeps its content hash:
 
@@ -212,9 +212,9 @@ After the script exits, the harvester compares every file with what it seeded an
 | Deleted a record with no copy, or edited its head in any other way                  | a `rejected` entry naming the reason      |
 | Changed an existing record's article                                                | a `put` the commit refuses (`claim-edit`) |
 
-A `move` keeps the record's bytes, so its content hash and its history come with it. Every live record that links to the old path has to be pointed at the new one in the same script, by cutting the old `<link>` line and adding one with the new path. Otherwise the harvest is blocked and names the edge to fix.
+A `move` keeps the record's bytes, so its content hash and its history come with it. Every live record that links to the old path has to drop that edge in the same script: cut the old `<link>` line, and add one with the new path to keep the edge. Otherwise the harvest is blocked and names the edge to fix.
 
-The harvest is added to the log only when the script exits 0 and nothing it produced breaks a rule a rebase can't fix. `blocking` lists those violations, and `appended` is 0 when there were any. A non-zero `exitCode` is your script failing, and the envelope still exits 0.
+The harvest is added to the log only when the script exits 0 and no harvested operation breaks a rule a rebase can't fix. `blocking` lists those violations, and `appended` is 0 when it lists any. A non-zero `exitCode` means your script failed, and `memhtml` itself still exits 0.
 
 The sandbox has no network, and `curl` isn't a command. `--timeout-ms` bounds the run (30000 by default, 600000 at most). A run past it reports `exitCode` 124 with `timedOut: true`. The script and its request together can't exceed 1 MiB, so a bigger batch is several calls.
 
@@ -251,7 +251,7 @@ memhtml session status --id s1
 }
 ```
 
-`behind: true` means the ref moved past the session's base, so the next commit will ask for a rebase. `pending` names a commit that a killed `session commit` built and may have landed. The next commit settles it, as [a commit killed halfway](#a-commit-killed-halfway) describes.
+`behind: true` means the ref moved past the session's base, so the session needs a rebase before its commit can land. `pending` names a commit that a killed `session commit` built and may have landed. The next commit settles it, as [a commit killed halfway](#a-commit-killed-halfway) describes.
 
 ## Commit
 
@@ -297,16 +297,18 @@ The commit's subject is `memhtml(session): <message>`, and a `Memhtml-Session: s
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
 | `committed`      | The log landed as one commit. `sha` names it, and the log is empty again.                                                            | Nothing.                                             |
 | `rebase-needed`  | The ref moved past the session's base. `mainSha` is the new tip, and `overlapping` lists the session's paths that changed meanwhile. | `memhtml session rebase`, then commit again.         |
-| `refused`        | An operation breaks a rule. `violations` names each one. Nothing moved.                                                              | Fix or drop the operation, or pass `--drop-refused`. |
+| `refused`        | An operation breaks a rule, and `violations` names each one. An empty log is `refused` with no violations. Nothing moved.            | Fix or drop the operation, or pass `--drop-refused`. |
 | `worktree-dirty` | The ref is checked out, and the checkout holds uncommitted changes at a path this commit writes. Nothing moved.                      | Commit or stash those changes, then commit again.    |
 
-When the ref is the branch your checkout has open, the working tree moves with the commit (`worktreeSynced: true`), and uncommitted edits at other paths survive. When a new record's claim has the same frame key as an active record at another path, both stay live, the new file gets a `memhtml-contradicts` link to the old one, and `contradictions` lists the pair. Deciding which claim is right stays with a writer or a person.
+When the ref is the branch your checkout has open, the working tree moves with the commit (`worktreeSynced: true`), and uncommitted edits at other paths survive.
 
-`index.db` doesn't move with a session commit. `memhtml head search` and a running [head server](/learn/operations/run-a-head-server/) see the new records at once. `memhtml search`, `memhtml recall`, and the MCP tools that read the index see them after the next `memhtml index update`, which is why that command stays on the [cron schedule](/learn/operations/run-the-store-day-to-day/#the-cron-schedule).
+When a new record's claim has the same frame key as an active record at another path, both stay live. The new file gets a `memhtml-contradicts` link to the old one, and `contradictions` lists the pair. Deciding which claim is right stays with a writer or a person.
+
+`index.db` doesn't move with a session commit. When the session's ref is the branch the checkout has open, `memhtml head search` and a running [head server](/learn/operations/run-a-head-server/) see the new records at once. `memhtml search`, `memhtml recall`, and the MCP tools that read the index see them after the next `memhtml index update`, which is why that command stays on the [cron schedule](/learn/operations/run-the-store-day-to-day/#the-cron-schedule).
 
 ## When the ref moved, rebase
 
-A commit never retries on its own. When it answers `rebase-needed`, move the session's base to the ref's new tip and commit again:
+A commit without `--drop-refused` never retries on its own. When it answers `rebase-needed`, move the session's base to the ref's new tip and commit again:
 
 ```bash
 memhtml session rebase --id s1
@@ -323,21 +325,23 @@ The fixed half holds in every store:
 
 - `format`: the file has to parse as a memory, with exactly one claim.
 - `duplicate`: the article already exists in an active record.
-- `claim-edit`: a put over an active record with a different article. Write the new fact under its own title with a `memhtml-supersedes` link, or use `memhtml correct`.
+- `claim-edit`: a put over an active record with a different article. Write the new fact under its own title with a `memhtml-supersedes` link.
 - `reserved-path`: `.memhtml/`, `memhtml.config.json`, and any `index.html` or `sitemap.xml` are never writable. `areas/arcs/` and `resources/people/` are writable only by curation.
 - `batch-cap`: one commit holds at most 200 operations.
 
-The configurable half is the store's policy, `writeBar` in `memhtml.config.json`. With no file, it refuses no type and asks for no anchor. A strict store can refuse whole types (a run narrative, a review verdict) and can require every record to name what it's about through a `memhtml-entity` or a `projects/<slug>/` path. [Set the store policy](/learn/operations/set-the-store-policy/) lists the keys. The file is read at every put, exec, and commit, so a commit judges the log by the policy in force when the commit runs.
+The configurable half is the store's policy, `writeBar` in `memhtml.config.json`. With no file, it refuses no type and asks for no anchor. A strict store can refuse whole types (a run narrative, a review verdict) and can require every record to name what it's about through a `memhtml-entity` or a `projects/<slug>/` path. [Set the store policy](/learn/operations/set-the-store-policy/) lists the keys.
 
-`session put` and `session exec` refuse the whole call for a format problem, a reserved path, the batch cap, or a write-bar reason, because no rebase can fix those. A `duplicate` or a `claim-edit` is reported under `violations` and still added, because a rebase can change the answer, and the commit refuses it. In a run-bound session those two refuse the call too.
+The file is read at every put, exec, and commit, so a commit judges the log by the policy in force when the commit runs.
+
+`session put` refuses the whole call for a format problem, a reserved path, the batch cap, or a write-bar reason, because no rebase can fix those. `session exec` appends none of its harvest for the same reasons, except a reserved path: that file is only listed under `rejected`, and the rest still lands. A `duplicate` or a `claim-edit` is reported under `violations` and still added, because a rebase can change the answer, and the commit refuses it. In a run-bound session those two refuse the call too.
 
 ## Bind a whole run with MEMHTML_SESSION
 
 An agent runtime runs many short CLI processes in one run. When it exports `MEMHTML_SESSION` to all of them, the whole run writes through one session:
 
 - Every `session` command takes the variable as its default `--id`.
-- The first `session put` or `session exec` starts the session on `refs/heads/main`'s tip, so the run needs no `session start`. Two subagents starting at once share the one session.
-- `memhtml write`, `apply`, `correct`, and `task add` refuse with `ERR_SESSION_BOUND` at exit 2. The refusal's `suggestions` carry a runnable `session put` line. `link`, `archive`, `task status`, `reinforce`, and every read stay open.
+- The first `session put` or `session exec` starts the session on `refs/heads/main`, so the run needs no `session start` (on a store whose branch isn't `main`, run `session start --ref <branch>` first). Two subagents starting at once share the one session, but when two puts reach it at the same instant one can fail with `ERR_STORAGE` and append nothing.
+- `memhtml write`, `apply`, `correct`, and `task add` refuse with `ERR_SESSION_BOUND` at exit 2. The refusal's `suggestions` carry a `session put` line with placeholders to fill in. `link`, `archive`, `task status`, `reinforce`, and every read stay open.
 - `duplicate` and `claim-edit` refuse a put or an exec at once, so the agent sees the problem inside the turn.
 
 ```bash
@@ -354,7 +358,7 @@ The runtime commits the session when the run ends:
 memhtml session commit --message "run 42" --drop-refused
 ```
 
-On `rebase-needed` it runs `session rebase` once and commits again. `--drop-refused` is for this commit, where no agent turn is left to fix a line. It takes every operation that touches a path a refusal names out of the log, appends each to `.memhtml/sessions/<id>.dropped.jsonl` with the time and the reasons, and commits the rest. `dropped` in the payload lists them. A batch-cap refusal names no path, so it's never dropped.
+On `rebase-needed` it runs `session rebase` once and commits again. Through a head server, `--drop-refused` has already rebased and committed again up to 3 times before it answers `rebase-needed`. `--drop-refused` is for this commit, where no agent turn is left to fix a line. It takes out of the log every operation that touches a path a refusal names, and commits the rest. Each dropped operation is appended to `.memhtml/sessions/<id>.dropped.jsonl` with the time and the reasons, and `dropped` in the payload lists them. A batch-cap refusal names no path, so it's never dropped.
 
 An id given with `--id` must name a session that already started. A typo then fails with `ERR_STORAGE` (`session.read`) instead of quietly opening a new session. A blank variable counts as unset, and a value that isn't a valid id is `ERR_INVALID_FLAG` naming the variable.
 
@@ -362,7 +366,7 @@ An id given with `--id` must name a session that already started. A typo then fa
 
 Every writer that changes the shared git index holds the checkout lock, `.memhtml/checkout.lock`, while it stages and commits. That covers every `memhtml write`, `apply`, `correct`, `link`, `archive`, `task status`, `publish`, `state export`, and `doctor --fix`, every session commit, and the fast-forward in `curate merge`. So a session commit and a `memhtml write` in another process never commit each other's files.
 
-A writer waits up to 15 seconds for the lock. Past that it fails with `ERR_STORAGE` (`checkout.locked`) and has written nothing, so running it again is safe. A lock left by a killed process goes stale after 10 seconds and the next writer takes it.
+A writer waits up to 15 seconds for the lock. Past that it fails with `ERR_STORAGE` (`checkout.locked`). Every writer but `doctor --fix` and `task status <path> done` has then written nothing, so running it again is safe. A lock left by a killed process goes stale after 10 seconds and the next writer takes it.
 
 ## A commit killed halfway
 
@@ -370,11 +374,11 @@ Before anything shared moves, `session commit` writes the commit it built into t
 
 ## Make these calls faster with a head server
 
-Each session command loads the corpus when it starts, which takes seconds on a large store. A running [head server](/learn/operations/run-a-head-server/) keeps it loaded, and `session put`, `session exec`, `session commit`, and `session rebase` ask the server first. The payload then says `head.source: "server"` or `via: "server"`. `--no-server` makes any of them work alone.
+`session start`, `put`, `exec`, `commit`, and `rebase` each load the corpus when they start, which takes seconds on a large store. A running [head server](/learn/operations/run-a-head-server/) keeps it loaded, and `session put`, `session exec`, `session commit`, and `session rebase` ask the server first. The payload then says `head.source: "server"` or `via: "server"`. `--no-server` makes any of them work alone.
 
 ## Clean up with session prune
 
-A session leaves files behind under `.memhtml/sessions/`, and a run's id is never used again. `session prune` removes the ones nothing reads any more:
+A session leaves files behind under `.memhtml/sessions/`, and a runtime that gives every run a new id never reads them again. `session prune` removes the ones nothing reads any more:
 
 ```bash
 memhtml session prune --older-than 7d --dry-run
@@ -400,7 +404,9 @@ memhtml session prune --older-than 7d --dry-run
 }
 ```
 
-Past the cutoff it removes logs with no operations left, lock directories a killed writer left behind, and the `<id>.idx` index files and `refs/memhtml/sessions/<id>` refs that earlier builds wrote. It never removes a log that still holds operations. That log is a run whose writes haven't landed, so it's listed under `unlanded` with its id, operation count, `pending`, and age, and you can land it with `memhtml session commit --id <id> --message <summary> --drop-refused`. An id whose lock is held is listed under `busy`, and a log that doesn't decode is kept and listed under `unreadable`. The `.dropped.jsonl` trails are kept.
+Past the cutoff it removes logs with no operations left, lock directories a killed writer left behind, and the `<id>.idx` index files and `refs/memhtml/sessions/<id>` refs that earlier builds wrote. The `.dropped.jsonl` trails are kept.
+
+It never removes a log that still holds operations. That log is a run whose writes haven't landed, so it's listed under `unlanded` with its id, operation count, `pending`, and age. Land it with `memhtml session rebase --id <id>` and then `memhtml session commit --id <id> --message <summary> --drop-refused`. An id whose lock is held is listed under `busy`, and a log that doesn't decode is kept and listed under `unreadable`.
 
 `--older-than` takes a duration with a unit: `7d`, `48h`, `90m`, or `2 weeks`. A bare number is `ERR_INVALID_FLAG`. `--dry-run` reports the same counts and removes nothing. A weekly cron line keeps the directory small:
 

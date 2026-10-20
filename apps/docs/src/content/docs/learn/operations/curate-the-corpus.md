@@ -100,7 +100,7 @@ git -C ~/memhtml diff --stat main...curate/2026-10-18
 git -C ~/memhtml show curate/2026-10-18
 ```
 
-The commit message holds the model's whole report, including what it left undone. Every archive is a move into `archive/<YYYY>/` with the original path mirrored beneath, so `git diff -M` shows it as a rename.
+The commit's subject is `memhtml(curate):` followed by the report's first line, cut to 72 characters. The whole report, including what it left undone, is the `curate.run` payload's `report`. Every archive is a move into `archive/<YYYY>/` with the original path mirrored beneath, so `git diff -M` shows it as a rename.
 
 ## Land it with curate merge
 
