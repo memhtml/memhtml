@@ -32,7 +32,10 @@ export { ftsQueryForms, hasFtsTerms, sanitizeFtsQuery } from "./fts-query.js"
 export {
   type GitAdapterDeps,
   makeGitPort,
-  type StoreGitShape
+  type StoreChangedPath,
+  type StoreGitShape,
+  type StoreStatusEntry,
+  type StoreTreeEntry
 } from "./git-adapter.js"
 export {
   type DiffEntry,
@@ -44,6 +47,7 @@ export {
 export { IndexStateRow, readIndexState } from "./index-state.js"
 export {
   type BackfillReport,
+  type EmbedMissingOptions,
   EmbedModelMismatch,
   type EmbedPort,
   GENERATED_NAMES,
@@ -76,6 +80,7 @@ export {
   reinforce
 } from "./reinforce.js"
 export {
+  type ArchivedMatch,
   DEFAULT_ARM_LIMIT,
   DEFAULT_SEARCH_LIMIT,
   MMR_POOL_FACTOR,

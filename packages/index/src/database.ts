@@ -294,7 +294,7 @@ export const attachState = (db: Database, statePath: string, migrationsDir: stri
     return yield* runStateMigrations(db, migrationsDir)
   })
 
-/** {@link runMigrations} against the `state.` ledger. Named so a caller reads which plane it moves. */
+/** `runMigrations` against the `state.` ledger. Named so a caller reads which plane it moves. */
 export const runStateMigrations = (db: Database, migrationsDir: string) =>
   runMigrations(db, migrationsDir, "state.")
 

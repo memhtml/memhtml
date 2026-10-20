@@ -81,7 +81,9 @@ export const MemoryMetas = Schema.Struct({
    */
   dueAt: Schema.optional(Schema.String)
 })
-export type MemoryMetas = typeof MemoryMetas.Type
+type MemoryMetasShape = typeof MemoryMetas.Type
+/** The parsed shape `MemoryMetas` decodes to, named so a signature can refer to it. */
+export interface MemoryMetas extends MemoryMetasShape {}
 
 /**
  * One `<link rel="memhtml-*">`. `rel` is the unprefixed rel from the closed edge vocabulary; the
@@ -95,7 +97,9 @@ export const MemoryLink = Schema.Struct({
   rel: EdgeRel,
   href: Schema.String
 })
-export type MemoryLink = typeof MemoryLink.Type
+type MemoryLinkShape = typeof MemoryLink.Type
+/** The parsed shape `MemoryLink` decodes to, named so a signature can refer to it. */
+export interface MemoryLink extends MemoryLinkShape {}
 
 /**
  * One `<dt>`/`<dd>` pair. `name` is the `<dt>` text, `value` the `<dd>` text.
@@ -110,7 +114,9 @@ export const Facet = Schema.Struct({
   value: Schema.String,
   numericValue: Schema.optional(Schema.Number)
 })
-export type Facet = typeof Facet.Type
+type FacetShape = typeof Facet.Type
+/** The parsed shape `Facet` decodes to, named so a signature can refer to it. */
+export interface Facet extends FacetShape {}
 
 /**
  * One `<cite>` or `<q>`. `href` is the `<q cite>` URI when present, an absolute or
@@ -120,7 +126,9 @@ export const Citation = Schema.Struct({
   text: Schema.String,
   href: Schema.optional(Schema.String)
 })
-export type Citation = typeof Citation.Type
+type CitationShape = typeof Citation.Type
+/** The parsed shape `Citation` decodes to, named so a signature can refer to it. */
+export interface Citation extends CitationShape {}
 
 /**
  * What the indexer reads out of `<article>`. Field names are the indexer's own, so the indexing
@@ -183,7 +191,9 @@ export const ArticleExtractions = Schema.Struct({
   /** `<abbr title>` expansions in document order. FTS-visible. */
   abbreviations: Schema.Array(Schema.String)
 })
-export type ArticleExtractions = typeof ArticleExtractions.Type
+type ArticleExtractionsShape = typeof ArticleExtractions.Type
+/** The parsed shape `ArticleExtractions` decodes to, named so a signature can refer to it. */
+export interface ArticleExtractions extends ArticleExtractionsShape {}
 
 /**
  * A parsed memory file. Frozen: a consumer that wants a changed doc builds a new one, so a
@@ -217,4 +227,6 @@ export const MemoryDoc = Schema.Struct({
    */
   warnings: Schema.Array(Schema.String)
 })
-export type MemoryDoc = typeof MemoryDoc.Type
+type MemoryDocShape = typeof MemoryDoc.Type
+/** The parsed shape `MemoryDoc` decodes to, named so a signature can refer to it. */
+export interface MemoryDoc extends MemoryDocShape {}
