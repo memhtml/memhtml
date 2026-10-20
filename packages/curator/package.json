@@ -25,9 +25,9 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ai-sdk/amazon-bedrock": "5.0.117",
-    "@ai-sdk/openai-compatible": "3.0.70",
-    "@ai-sdk/provider": "4.0.28",
+    "@ai-sdk/amazon-bedrock": "5.0.118",
+    "@ai-sdk/openai-compatible": "3.0.71",
+    "@ai-sdk/provider": "4.0.29",
     "@aws-sdk/credential-providers": "3.1152.0",
     "@memhtml/contracts": "workspace:*",
     "@memhtml/domain": "workspace:*",
@@ -35,7 +35,7 @@
     "@memhtml/html": "workspace:*",
     "@memhtml/llm": "workspace:*",
     "@memhtml/session": "workspace:*",
-    "ai": "7.0.142",
+    "ai": "7.0.143",
     "effect": "catalog:",
     "graphology": "0.26.0",
     "graphology-communities-louvain": "2.0.2",

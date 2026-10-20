@@ -34,7 +34,7 @@ The retry layer therefore matches `SQLITE_BUSY` alone, where a blanket retry on 
 
 ## Git writers wait for each other
 
-The git side has its own rule. Every write that commits holds the checkout lock, `.memhtml/checkout.lock`, from its first stage to its commit. That covers `memhtml write`, `apply`, `correct`, `link`, `archive`, `task status`, `publish`, `state export`, `doctor --fix`, every session commit, and the `curate merge` fast-forward, in any process. So a CLI write and an MCP server write never commit each other's staged files. A writer waits up to 15 seconds for the lock and then fails with `ERR_STORAGE` (`checkout.locked`), having written nothing, and running it again is safe.
+The git side has its own rule. Every write that commits holds the checkout lock, `.memhtml/checkout.lock`, from its first stage to its commit. That covers `memhtml write`, `apply`, `correct`, `link`, `archive`, `task status`, `publish`, `state export`, `doctor --fix`, every session commit, and the `curate merge` fast-forward, in any process. So a CLI write and an MCP server write never commit each other's staged files. A writer waits up to 15 seconds for the lock and then fails with `ERR_STORAGE` (`checkout.locked`). Every writer but `doctor --fix` and `task status <path> done` has then written nothing, and running it again is safe.
 
 A running [head server](/learn/operations/run-a-head-server/) shares the store the same way. It holds the head in memory and opens no database, and when it commits a session it takes the same lock.
 
