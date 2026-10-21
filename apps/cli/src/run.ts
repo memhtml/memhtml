@@ -283,7 +283,12 @@ const bool = (parsed: Parsed, name: string, fallback: boolean): boolean => {
   return value !== "false" && value !== "0" && value !== "no"
 }
 
-/** A flag as an integer, or `undefined` when absent or unparseable. */
+/**
+ * A flag as an integer, or `undefined` when absent.
+ *
+ * Every flag read here is declared `type: "int"`, and `validateAgainst` has already refused any
+ * value that is not an integer as written ({@link intFlags}), so `parseInt` cannot truncate one.
+ */
 const int = (parsed: Parsed, name: string): number | undefined => {
   const raw = str(parsed, name)
   if (raw === undefined) return undefined
@@ -1156,6 +1161,53 @@ const strayBooleanFlags = (parsed: Parsed): Failure | undefined => {
 }
 
 /**
+ * The spelling every `type: "int"` flag accepts: an optional minus sign, then decimal digits.
+ *
+ * `int()` reads a value with `Number.parseInt`, which stops at the first character that is not a
+ * digit and returns `NaN` for none. So before this check `--limit 2.5` ran as 2, `--limit 3abc` as 3,
+ * `--limit 1e2` as 1, and `--limit abc` fell back to the command's default, each at exit 0 (measured
+ * on 0.16.0 with `memhtml list`). A number the caller did not ask for, in a response that looks like
+ * the one they did, is the silent wrong answer {@link strayBooleanFlags} refuses for booleans.
+ */
+const INTEGER_SPELLING = /^-?\d+$/
+
+/**
+ * Every value given to an integer flag, refused unless it is an integer as written.
+ *
+ * Checked here once, against the spec table, so all of the call sites that read an integer flag are
+ * covered by the flag's declared type and none of them has to remember. A flag given no value at all
+ * (`--limit` last on the line, or `--no-limit`) is refused too, since it reached `int()` as a boolean
+ * and fell back to the default the same way `abc` did.
+ *
+ * Syntax only. Whether a well-formed integer is in range for its command, such as a zero `--limit`,
+ * stays with the command that reads it, because the range is a fact about that command.
+ *
+ * `ERR_INVALID_FLAG`, the code for a flag present but unusable as given.
+ */
+const intFlags = (parsed: Parsed, spec: CommandSpec): Failure | undefined => {
+  for (const flag of [...GLOBAL_FLAGS, ...spec.flags]) {
+    if (flag.type !== "int") continue
+    for (const value of parsed.flags.get(flag.name) ?? []) {
+      if (
+        typeof value === "string" &&
+        INTEGER_SPELLING.test(value) &&
+        Number.isSafeInteger(Number(value))
+      ) {
+        continue
+      }
+      return fail(
+        "ERR_INVALID_FLAG",
+        typeof value === "string"
+          ? `--${flag.name} takes an integer and was given ${JSON.stringify(value)}`
+          : `--${flag.name} takes an integer and was given no value`,
+        [`memhtml ${spec.name} --${flag.name} <integer>`]
+      )
+    }
+  }
+  return undefined
+}
+
+/**
  * The commands where a bare `-` positional names stdin rather than an argument.
  *
  * Both declare no positional argument and both document `-` as the spelling that reads the stream
@@ -1422,6 +1474,9 @@ const validateAgainst = (
   // BOTH a wrong flag value and a surplus positional, and the flag is the mistake worth naming.
   const strayBoolean = strayBooleanFlags(parsed)
   if (strayBoolean !== undefined) return strayBoolean
+
+  const malformedInt = intFlags(parsed, spec)
+  if (malformedInt !== undefined) return malformedInt
 
   const surplus = surplusArgs(parsed, spec)
   if (surplus !== undefined) return surplus

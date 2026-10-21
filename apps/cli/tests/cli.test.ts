@@ -466,6 +466,74 @@ describe("error envelopes", () => {
     })
   })
 
+  describe("an integer flag given something that is not an integer", () => {
+    /**
+     * The silent truncation. `int()` reads with `Number.parseInt`, so before `intFlags` existed
+     * `memhtml list --limit 2.5` listed 2, `--limit 3abc` listed 3, `--limit 1e2` listed 1, and
+     * `--limit abc` listed the default 50, all at exit 0 (measured on 0.16.0). The cases are every
+     * `type: "int"` flag in the table, so a new integer flag is covered the day it is declared.
+     *
+     * No layer is provided: the refusal must come from validation, before any service is built.
+     *
+     * (Mutation: dropping the `intFlags` call from `validateAgainst` fails every table case and both
+     * refusal cases, observed `expected undefined to be 'ERR_INVALID_FLAG'` on 27 of 29. Dropping only
+     * the `Number.isSafeInteger` arm lets `99999999999999999999` through, which `parseInt` reads as
+     * 100000000000000000000, observed on every table case.)
+     */
+    const integerFlags = COMMANDS.flatMap((command) =>
+      command.flags
+        .filter((flag) => flag.type === "int")
+        .map((flag) => [command.name, flag.name] as const)
+    )
+
+    it("has integer flags to check", () => {
+      // Guards the table-driven case below against passing vacuously over an empty list.
+      expect(integerFlags.length).toBeGreaterThan(10)
+    })
+
+    it.each(integerFlags)("refuses a malformed value on %s --%s", (command, flag) => {
+      for (const value of ["2.5", "3abc", "1e2", "abc", "", " 3", "0x10", "99999999999999999999"]) {
+        const failure = validate(parseArgv([...command.split(" "), `--${flag}=${value}`]))
+        const call = `${command} --${flag}=${value}`
+        expect(failure?.code, call).toBe("ERR_INVALID_FLAG")
+        expect(failure?.error, call).toBe(
+          `--${flag} takes an integer and was given ${JSON.stringify(value)}`
+        )
+      }
+    })
+
+    it("refuses an integer flag given no value, rather than falling back to the default", () => {
+      for (const argv of [
+        ["list", "--limit"],
+        ["list", "--no-limit"],
+        ["list", "--limit", "--dense"]
+      ]) {
+        const failure = validate(parseArgv(argv))
+        expect(failure?.code, argv.join(" ")).toBe("ERR_INVALID_FLAG")
+        expect(failure?.error, argv.join(" ")).toBe(
+          "--limit takes an integer and was given no value"
+        )
+      }
+    })
+
+    it("accepts an integer as written, leaving its range to the command", () => {
+      // A sign and leading zeros are still integer syntax. A negative limit is a range question the
+      // command answers (list clamps it), so syntax validation lets it through.
+      for (const value of ["3", "-1", "0", "007"]) {
+        expect(validate(parseArgv(["list", "--limit", value])), value).toBeUndefined()
+      }
+    })
+
+    it("answers exit 2 through run, naming the flag and the value", async () => {
+      const result = await run(["list", "--limit", "2.5"])
+      expect(result.exitCode).toBe(EXIT_USAGE)
+      const body = parse(result.stdout)
+      expect(body.code).toBe("ERR_INVALID_FLAG")
+      expect(body.error).toBe('--limit takes an integer and was given "2.5"')
+      expect(body.suggestions).toContain("memhtml list --limit <integer>")
+    })
+  })
+
   describe("a positional the command does not declare", () => {
     /**
      * The other half of the same hole: `validate` checked only for MISSING arguments, so a surplus one
