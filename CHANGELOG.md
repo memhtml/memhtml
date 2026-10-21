@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.1](https://github.com/memhtml/memhtml/compare/memhtml-v0.16.0...memhtml-v0.16.1) (2026-10-21)
+
+
+### Bug Fixes
+
+* **cli:** refuse an integer flag whose value is not an integer as written ([#312](https://github.com/memhtml/memhtml/issues/312)) ([f938d80](https://github.com/memhtml/memhtml/commit/f938d8013d42dc7678cbf55f6167148d1935582f))
+* **store:** make an interrupted git call wait for its child before finalizers run ([#216](https://github.com/memhtml/memhtml/issues/216)) ([ed1b826](https://github.com/memhtml/memhtml/commit/ed1b82601d60c6d295dd722fc6630de3fefca802))
+
 ## [0.16.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.15.2...memhtml-v0.16.0) (2026-10-18)
 
 

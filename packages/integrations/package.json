@@ -1,6 +1,6 @@
 {
   "name": "@memhtml/integrations",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "private": true,
   "description": "Wire a coding agent (Claude Code, Codex, Cursor, OpenCode) to a memhtml store: MCP entry, hooks, instruction block, skill, receipt.",
   "type": "module",

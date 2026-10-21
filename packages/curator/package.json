@@ -1,6 +1,6 @@
 {
   "name": "@memhtml/curator",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "private": true,
   "description": "The curator memhtml itself owns: a bounded model-driven tool loop over a curator session, its charter, its budget, and its model factory.",
   "type": "module",
