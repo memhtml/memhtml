@@ -126,7 +126,7 @@ Payloads say which path a call took. `head.source` is `server` when the server a
 | `MEMHTML_EXEC_WORKER_HEAP_MB` | `head serve`                                 | `2048`                                                                       | Each script worker's heap limit, 64 to 65536. A worker past it is stopped and replaced, and its job fails with `ERR_STORAGE`.                                                                        |
 | `MEMHTML_COMMIT_DEADLINE_MS`  | `session commit`, `session rebase`           | `60000`                                                                      | How long the client waits for the server's answer. `0` waits as long as the server takes. A malformed value exits 2.                                                                                 |
 
-`memhtml config` shows the three variables `head serve` reads, with the value each one resolves to and whether it came from the environment. A value the server would refuse is reported there with a `problem`.
+`memhtml config` shows three of the variables `head serve` reads, with the value each one resolves to and whether it came from the environment. A value the server would refuse is reported there with a `problem`.
 
 The server also bounds its own queues. One `session exec` per session runs at a time, and a request waits at most 30 seconds for that session's earlier exec and 30 more for a free worker before it's declined as `busy`. A script still running 5 seconds past its own timeout has its worker stopped, and it reports exit 124 with nothing harvested. One commit or rebase runs at a time, and one that waits more than 20 seconds to start is declined as `busy`, so the client commits locally with time to spare.
 
