@@ -786,6 +786,20 @@ const execFlags = (parsed: Parsed): Failure | undefined => {
     )
   }
 
+  /**
+   * `--sha` reaches `git worktree add` as its commit-ish, so a value git would read as an option
+   * (`--sha=--no-checkout`) is refused here as a usage error. Refs and abbreviated shas still pass:
+   * `execCommand` resolves the value to the full commit it names before anything is mounted.
+   */
+  const sha = str(parsed, "sha")?.trim()
+  if (sha?.startsWith("-") === true) {
+    return fail(
+      "ERR_INVALID_FLAG",
+      `--sha names a commit, and "${sha}" starts with a dash, which git would read as an option`,
+      ["git rev-parse HEAD", "memhtml exec --sha <sha>"]
+    )
+  }
+
   const raw = str(parsed, "timeout-ms")
   if (raw !== undefined) {
     const timeout = int(parsed, "timeout-ms")
