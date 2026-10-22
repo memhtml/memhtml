@@ -1613,6 +1613,11 @@ describe("expandRoot", () => {
     expect(expandRoot("~")).toBe(homedir())
   })
 
+  it("expands the backslash spelling a Windows-native config writes", async () => {
+    const { homedir } = await import("node:os")
+    expect(expandRoot("~\\memhtml")).toBe(join(homedir(), "memhtml"))
+  })
+
   it("leaves an absolute path alone and resolves a relative one", () => {
     expect(expandRoot("/srv/memory")).toBe("/srv/memory")
     expect(expandRoot("  /srv/memory  ")).toBe("/srv/memory")

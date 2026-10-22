@@ -119,11 +119,18 @@ const THREE = [
 /** Every `.html` under the repo, excluding the scaffold's own `README.html`. */
 const htmlOnDisk = async (root: string): Promise<ReadonlyArray<string>> => {
   const entries = await readdir(root, { recursive: true, withFileTypes: true })
-  return entries
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".html"))
-    .map((entry) => join(entry.parentPath, entry.name).slice(root.length + 1))
-    .filter((path) => path !== "README.html")
-    .sort()
+  return (
+    entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".html"))
+      // `readdir` yields the platform separator; the index and every assertion speak forward slashes.
+      .map((entry) =>
+        join(entry.parentPath, entry.name)
+          .slice(root.length + 1)
+          .replaceAll("\\", "/")
+      )
+      .filter((path) => path !== "README.html")
+      .sort()
+  )
 }
 
 const commitCount = Effect.gen(function* () {

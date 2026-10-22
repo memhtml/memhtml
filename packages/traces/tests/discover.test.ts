@@ -92,7 +92,13 @@ describe("discoverSessions", () => {
     expect(files.map((file) => file.kind)).toEqual(["session"])
   })
 
-  it("reports an unreadable projects directory as a StorageFailure rather than as empty", async () => {
+  it("reports an unreadable projects directory as a StorageFailure rather than as empty", async (ctx) => {
+    // uid 0 reads a mode-000 directory, and win32 does not enforce the mode bits for the owner, so
+    // the denial cannot be staged on either.
+    ctx.skip(
+      process.getuid?.() === 0 || process.platform === "win32",
+      "chmod 000 does not deny the read on this platform or user, so the denial cannot be staged"
+    )
     const root = await tempRoot("denied")
     const projects = join(root, PROJECTS_DIR)
     await mkdir(projects, { recursive: true })

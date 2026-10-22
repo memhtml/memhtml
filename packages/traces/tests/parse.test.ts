@@ -28,9 +28,13 @@ const run = <A>(effect: Effect.Effect<A, never>) => Effect.runPromise(effect)
  * `chmod(path, 0o000)` is how the permission probe denies a read, and uid 0 IGNORES the mode bits —
  * root opens a mode-000 file. Under root the denial never happens, the read SUCCEEDS, and the
  * assertion would be describing a successful read. Skipped there with the reason on the record.
+ * win32 is the same case: it stores the mode bits but does not enforce them for the file's owner.
  */
-const RUNNING_AS_ROOT = process.getuid?.() === 0
-const CHMOD_INEFFECTIVE = "chmod 000 does not deny a read to uid 0, so the denial cannot be staged"
+const CHMOD_CANNOT_DENY = process.getuid?.() === 0 || process.platform === "win32"
+const CHMOD_INEFFECTIVE =
+  process.platform === "win32"
+    ? "win32 stores the POSIX mode bits but does not enforce them for the owner, so the denial cannot be staged"
+    : "chmod 000 does not deny a read to uid 0, so the denial cannot be staged"
 
 const tempFile = async (name: string, content: string): Promise<string> => {
   const dir = await mkdtemp(join(tmpdir(), "memhtml-traces-parse-"))
@@ -165,7 +169,7 @@ describe("parseSessionFile failure degradation", () => {
   })
 
   it("flags a permission rejection as readFailed rather than an empty file", async (ctx) => {
-    ctx.skip(RUNNING_AS_ROOT, CHMOD_INEFFECTIVE)
+    ctx.skip(CHMOD_CANNOT_DENY, CHMOD_INEFFECTIVE)
     const path = await tempFile(
       "denied.jsonl",
       `${JSON.stringify({ type: "mode", mode: "default", sessionId: "s1" })}\n`

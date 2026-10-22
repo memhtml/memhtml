@@ -22,7 +22,8 @@ describe("resolving the mcp server", () => {
      * so they are located as siblings.
      */
     const entry = await Effect.runPromise(mcpEntryPoint())
-    expect(entry).toMatch(/apps\/mcp\/dist\/bin\.js$/)
+    // `mcpEntryPoint` returns a platform path, so the pattern accepts either separator.
+    expect(entry).toMatch(/apps[\\/]mcp[\\/]dist[\\/]bin\.js$/)
     // Resolved AND present: a path that merely looked right would spawn a node process that exits 1
     // with a module-not-found, which reads to an operator as "the MCP server crashed".
     await expect(access(entry)).resolves.toBeUndefined()
@@ -42,7 +43,7 @@ describe("resolving the mcp server", () => {
     try {
       // A blank override falls through to the sibling rather than being taken literally: an empty
       // environment variable is a shell accident, not a request to spawn `""`.
-      expect(await Effect.runPromise(mcpEntryPoint())).toMatch(/apps\/mcp\/dist\/bin\.js$/)
+      expect(await Effect.runPromise(mcpEntryPoint())).toMatch(/apps[\\/]mcp[\\/]dist[\\/]bin\.js$/)
     } finally {
       delete process.env[MCP_BIN_VAR]
     }
