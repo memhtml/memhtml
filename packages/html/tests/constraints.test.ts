@@ -259,6 +259,20 @@ describe("constraint 3 — no presentation, no execution", () => {
     ).toContain('uses the "javascript:" scheme')
   })
 
+  it("rejects a scheme assembled across a tab, LF, or CR, which the URL parser deletes before reading it", () => {
+    for (const href of [
+      "java&#9;script:alert(1)",
+      "java\tscript:alert(1)",
+      "java\nscript:alert(1)",
+      "j\ravascript:alert(1)"
+    ]) {
+      expect(
+        parseErr(fileWith(`<p><mark>A claim.</mark> <a href="${href}">x</a></p>`)),
+        href
+      ).toContain('uses the "javascript:" scheme')
+    }
+  })
+
   it("rejects a javascript: scheme on a <q cite> URI, which lands in file_citations", () => {
     expect(
       parseErr(fileWith('<p><mark>A claim.</mark> <q cite="javascript:alert(1)">q</q></p>'))
