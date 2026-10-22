@@ -112,7 +112,7 @@ export class InvalidMemory extends Schema.TaggedError<InvalidMemory>()("InvalidM
 }) {}
 ```
 
-The typed failure for a memory file that breaks the format or the type and placement vocabulary. Its one field, `reason`, is free text. `parseMemory` fills it with every violation it found, joined by `VIOLATION_SEPARATOR`, which is `"; "` (`packages/html/src/constraints.ts:40`). Other sites write their own reason. The store writes `a memory cannot link to itself: <path>` (`packages/store/src/store.ts:1328-1330`), and the CLI writes one for an unknown memory type (`apps/cli/src/operations.ts:83-92`). The head's overlay raises it for an op that doesn't parse or doesn't resolve, such as a `link` on a path the view doesn't hold or an `unlink` of an edge the file doesn't carry (`packages/head/src/overlay.ts:45-88`). `curate merge` also uses it to report a replay that was refused at commit (`apps/cli/src/v2.ts:1837-1842`).
+The typed failure for a memory file that breaks the format or the type and placement vocabulary. Its one field, `reason`, is free text. `parseMemory` fills it with every violation it found, joined by `VIOLATION_SEPARATOR`, which is `"; "` (`packages/html/src/constraints.ts:42`). Other sites write their own reason. The store writes `a memory cannot link to itself: <path>` (`packages/store/src/store.ts:1332-1334`), and the CLI writes one for an unknown memory type (`apps/cli/src/operations.ts:83-92`). The head's overlay raises it for an op that doesn't parse or doesn't resolve, such as a `link` on a path the view doesn't hold or an `unlink` of an edge the file doesn't carry (`packages/head/src/overlay.ts:45-88`). `curate merge` also uses it to report a replay that was refused at commit (`apps/cli/src/v2.ts:1837-1842`).
 
 `packages/contracts/src/errors.ts:48-50`, 20 importer files
 
@@ -297,7 +297,7 @@ export const addLink = (html: string, rel: EdgeRel, href: string): string => {
 }
 ```
 
-Appends one `<link>` edge line to a memory's head. The rel token is `memhtml-` plus the rel with underscores written as hyphens, which `relTokenFor` builds (`packages/contracts/src/edges.ts:106-110`). It's idempotent on the `(rel, href)` pair, so a second call with the same edge returns the input. The new line goes after the last `memhtml-` link, else after the last `memhtml-` meta, else at `</head>` (`packages/html/src/editors.ts:102-128`). It splices bytes by source offset and never touches the article, so the content hash doesn't change. It never fails. A file with no `<head>`, or a parse with no source location, comes back unchanged. The store calls it to add a link and to record a correction's `supersedes` edge (`packages/store/src/store.ts:1335`, `packages/store/src/store.ts:1090`). The overlay's `link` op and the session commit call it too (`packages/head/src/overlay.ts:57`, `packages/session/src/commit.ts:130-137`). The commit also uses it to mark a frame-key rival with a `contradicts` edge (`packages/session/src/commit.ts:197-208`).
+Appends one `<link>` edge line to a memory's head. The rel token is `memhtml-` plus the rel with underscores written as hyphens, which `relTokenFor` builds (`packages/contracts/src/edges.ts:106-110`). It's idempotent on the `(rel, href)` pair, so a second call with the same edge returns the input. The new line goes after the last `memhtml-` link, else after the last `memhtml-` meta, else at `</head>` (`packages/html/src/editors.ts:102-128`). It splices bytes by source offset and never touches the article, so the content hash doesn't change. It never fails. A file with no `<head>`, or a parse with no source location, comes back unchanged. The store calls it to add a link and to record a correction's `supersedes` edge (`packages/store/src/store.ts:1339`, `packages/store/src/store.ts:1094`). The overlay's `link` op and the session commit call it too (`packages/head/src/overlay.ts:57`, `packages/session/src/commit.ts:130-137`). The commit also uses it to mark a frame-key rival with a `contradicts` edge (`packages/session/src/commit.ts:197-208`).
 
 `packages/html/src/editors.ts:226-238`, 8 importer files
 
@@ -373,7 +373,7 @@ export const STATE_SCHEMA = "state"
 
 The schema name, `state`, under which `state.db` is ATTACHed. Queries that reach the durable state plane qualify its tables with this name, and most TypeScript sites interpolate the constant. The ATTACH statement itself, the state migrations, and the CLI's archive mirror write `state` literally (`packages/index/src/database.ts:291-293`, `packages/index/state-migrations/S0001_access.sql:13`, `apps/cli/src/api-layer.ts:198`). Changing the constant alone wouldn't move them.
 
-`packages/index/src/schema-const.ts:19`, 7 importer files
+`packages/index/src/schema-const.ts:21`, 7 importer files
 
 ### STORE_CONFIG_FILE
 
@@ -430,7 +430,7 @@ export class DirtyTree extends Schema.TaggedError<DirtyTree>()("DirtyTree", {
 }) {}
 ```
 
-The typed failure for an operation that needs a clean tree and found uncommitted changes. It carries the dirty `paths`, and the CLI maps it to `ERR_DIRTY_TREE` (`apps/cli/src/errors.ts:55-56`). When the target ref is checked out, `landOnRef` checks the paths a landing changes and answers `worktree-dirty` when any of them has uncommitted state (`packages/session/src/commit.ts:308-313`). `curate merge` turns that answer into `DirtyTree` on both its fast-forward and its replay (`apps/cli/src/v2.ts:1741-1743`, `apps/cli/src/v2.ts:1843-1844`). `curate run` does the same when it lands (`apps/cli/src/curate-run.ts:511-512`). Nothing moves in either case. `session commit` reports the same case as its `worktree-dirty` outcome (`apps/cli/src/v2.ts:1085-1090`). The store's `requireCleanTree` raises it over every dirty path that isn't ignored (`packages/store/src/store.ts:1356-1369`).
+The typed failure for an operation that needs a clean tree and found uncommitted changes. It carries the dirty `paths`, and the CLI maps it to `ERR_DIRTY_TREE` (`apps/cli/src/errors.ts:55-56`). When the target ref is checked out, `landOnRef` checks the paths a landing changes and answers `worktree-dirty` when any of them has uncommitted state (`packages/session/src/commit.ts:308-313`). `curate merge` turns that answer into `DirtyTree` on both its fast-forward and its replay (`apps/cli/src/v2.ts:1741-1743`, `apps/cli/src/v2.ts:1843-1844`). `curate run` does the same when it lands (`apps/cli/src/curate-run.ts:511-512`). Nothing moves in either case. `session commit` reports the same case as its `worktree-dirty` outcome (`apps/cli/src/v2.ts:1085-1090`). The store's `requireCleanTree` raises it over every dirty path that isn't ignored (`packages/store/src/store.ts:1360-1373`).
 
 `packages/contracts/src/errors.ts:67-69`, 6 importer files
 

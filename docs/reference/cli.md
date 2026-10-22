@@ -10,9 +10,9 @@ The six commands without a section are `integrations install`, `integrations uni
 
 Start with `memhtml manifest`. It returns the whole contract: every command, argument, flag, response type, error code, and environment variable, built by walking `COMMANDS` (`buildManifest` at `apps/cli/src/commands.ts:1995-2023`). It opens no store.
 
-The code in this repository is the software. The memory corpus lives in a separate git repository, the memhtml root. A command acts on the root named by `--repo`, else `$MEMHTML_ROOT`, else `~/memhtml` (`layerRoots` at `apps/cli/src/api-layer.ts:100-109`, `MemhtmlRoot` at `apps/cli/src/config.ts:277-280`).
+The code in this repository is the software. The memory corpus lives in a separate git repository, the memhtml root. A command acts on the root named by `--repo`, else `$MEMHTML_ROOT`, else `~/memhtml` (`layerRoots` at `apps/cli/src/api-layer.ts:100-109`, `MemhtmlRoot` at `apps/cli/src/config.ts:282-286`).
 
-The commands fall into two families. The v1 commands (`write`, `apply`, `search`, the `index` and `trace` families, and the rest) read and write through the SQLite index under `.memhtml/`. The v2 commands (`session …`, `head …`, `curate …`) treat the corpus as an immutable version built from git, change it through a session's overlay log, and never open `index.db` (`isV2Command` at `apps/cli/src/run.ts:1214-1215`). `docs/design.md` §15 covers why, and §16 to §23 cover each part.
+The commands fall into two families. The v1 commands (`write`, `apply`, `search`, the `index` and `trace` families, and the rest) read and write through the SQLite index under `.memhtml/`. The v2 commands (`session …`, `head …`, `curate …`) treat the corpus as an immutable version built from git, change it through a session's overlay log, and never open `index.db` (`isV2Command` at `apps/cli/src/run.ts:1228-1229`). `docs/design.md` §15 covers why, and §16 to §23 cover each part.
 
 Removed in 0.16: the sleep pipeline (`sleep run`, `sleep resume`, `sleep review`, `sleep merge`, `sleep status`, `sleep plan`), the consolidator, `apply --consolidate` with its `consolidated_into`, `superseded_path`, and `consolidated` fields, and the `lastSleep` and `stuckSleepRuns` status fields. Curation runs on a branch through `curate run`, `curate collapse`, and `curate merge` instead. The four `sleep.*` response type strings stay in the append-only `RESPONSE_TYPES` list, and no command answers them (`apps/cli/src/envelope.ts:20-23`). `init` still scaffolds the empty reports directory `.memhtml/sleep/`, so an existing store's layout doesn't change (`SLEEP_REPORTS_DIR` at `packages/store/src/layout.ts:33-34`). The operator migration guide is <https://memhtml.github.io/learn/operations/migrate-to-0-16/>.
 
@@ -20,13 +20,13 @@ Removed in 0.16: the sleep pipeline (`sleep run`, `sleep resume`, `sleep review`
 
 A command writes one JSON envelope to stdout. A success is `{apiVersion, type, data}`, and `type` names the shape of `data`. A failure is `{apiVersion, error, code, suggestions}` (`Success` and `Failure` at `apps/cli/src/envelope.ts:92-103`). Branch on `type` and `code`. The `error` prose changes freely.
 
-Four commands write something else to stdout, or write it late. `help` on a terminal writes Markdown from `renderAgentsDoc` (`apps/cli/src/run.ts:1572-1576`) or `renderCommandHelp` (`apps/cli/src/run.ts:1614-1616`). `serve mcp` spawns the server child with `stdio: "inherit"` and writes its `serve.exit` envelope after the child exits (`spawn` at `apps/cli/src/serve.ts:87-90`, `apps/cli/src/run.ts:1955`). `head serve` runs until SIGTERM or SIGINT stops it and writes its `head.served` envelope then (`apps/cli/src/run.ts:2269-2283`). `hook` writes the host's own protocol (`apps/cli/src/run.ts:1815-1869`).
+Four commands write something else to stdout, or write it late. `help` on a terminal writes Markdown from `renderAgentsDoc` (`apps/cli/src/run.ts:1586-1590`) or `renderCommandHelp` (`apps/cli/src/run.ts:1628-1630`). `serve mcp` spawns the server child with `stdio: "inherit"` and writes its `serve.exit` envelope after the child exits (`spawn` at `apps/cli/src/serve.ts:87-90`, `apps/cli/src/run.ts:1969`). `head serve` runs until SIGTERM or SIGINT stops it and writes its `head.served` envelope then (`apps/cli/src/run.ts:2283-2297`). `hook` writes the host's own protocol (`apps/cli/src/run.ts:1829-1883`).
 
-Logs go to stderr (`LogToStderr` at `apps/cli/src/run.ts:2428`). `bin.ts` calls `process.exit` from the `process.stdout.write` callback, so a slow pipe reader still gets the whole envelope (`apps/cli/src/bin.ts:22`).
+Logs go to stderr (`LogToStderr` at `apps/cli/src/run.ts:2442`). `bin.ts` calls `process.exit` from the `process.stdout.write` callback, so a slow pipe reader still gets the whole envelope (`apps/cli/src/bin.ts:22`).
 
 Exit 0 is success. Exit 2 is a usage error, fixed by changing the call. Exit 1 is a runtime failure, fixed by changing the root or the environment (`EXIT_OK`, `EXIT_USAGE`, `EXIT_RUNTIME` at `apps/cli/src/envelope.ts:166-168`).
 
-Three outcomes don't follow the envelope-per-exit pattern. `exec` and `session exec` exit 0 when the script itself failed, and report the script's exit code in the payload (`apps/cli/src/run.ts:2041`, `apps/cli/src/run.ts:2361`). `session commit` exits 0 with a `session.committed` envelope whatever its outcome, so a `refused`, `rebase-needed`, or `worktree-dirty` commit is a success envelope that committed nothing, and a caller reads its `kind` field (`apps/cli/src/v2.ts:1927-1928`, `apps/cli/src/run.ts:2361`). A failure to build the app layer writes no envelope at all; see the next section.
+Three outcomes don't follow the envelope-per-exit pattern. `exec` and `session exec` exit 0 when the script itself failed, and report the script's exit code in the payload (`apps/cli/src/run.ts:2055`, `apps/cli/src/run.ts:2375`). `session commit` exits 0 with a `session.committed` envelope whatever its outcome, so a `refused`, `rebase-needed`, or `worktree-dirty` commit is a success envelope that committed nothing, and a caller reads its `kind` field (`apps/cli/src/v2.ts:1927-1928`, `apps/cli/src/run.ts:2375`). A failure to build the app layer writes no envelope at all; see the next section.
 
 ## Conventions
 
@@ -38,22 +38,22 @@ A list item reads `` `--name` (type, default, required, repeatable, one of …):
 
 ## How a command fails
 
-`run` handles a call in a fixed order, and the step that fails decides the exit code and what is touched (`run` at `apps/cli/src/run.ts:1670-2433`).
+`run` handles a call in a fixed order, and the step that fails decides the exit code and what is touched (`run` at `apps/cli/src/run.ts:1684-2447`).
 
 1. `parseArgv` turns argv into a command, positionals, and flag arrays. It never fails (`apps/cli/src/run.ts:187-264`).
-2. `help`, `--help`, and `-h` are answered at once, before validation (`apps/cli/src/run.ts:1687-1689`). A bare `memhtml` answers the manifest (`apps/cli/src/run.ts:1691`).
-3. For the four record-creating v1 doors (`write`, `apply`, `correct`, `task add`), `run` reads the store's `memhtml.config.json` when it knows the root without a layer. A file that doesn't decode is `ERR_STORE_CONFIG` at exit 1 here, before validation (`apps/cli/src/run.ts:1701-1709`).
-4. `validate` refuses a malformed call with exit 2 before any service is built (`apps/cli/src/run.ts:1711-1712`). A closed v1 door is refused here too; see [Run sessions and the v1 doors](#run-sessions-and-the-v1-doors).
-5. `manifest`, `agents-doc`, `eval discriminate`, and the `integrations` family answer without opening a root (`apps/cli/src/run.ts:1727-1923`). `hook` is answered in the same block, but it opens an existing store and never scaffolds one (`hookStoreReady` at `apps/cli/src/run.ts:1852`, `layerApp` at `apps/cli/src/run.ts:1866`).
-6. With `MEMHTML_REFUSE_ENV_ROOT` set and no `--repo`, every remaining command is refused with `ERR_REPO_REQUIRED` at exit 2 (`envRootRefusal` at `apps/cli/src/run.ts:1281-1294`, `apps/cli/src/run.ts:1930-1931`).
-7. `serve mcp`, `config`, and `exec` resolve the root themselves and build no app layer (`apps/cli/src/run.ts:1946-2055`).
-8. The v2 commands resolve the root themselves too. Before anything opens, `run` reads their file inputs (the `session exec` script, the `session put` op stream), their environment variables, and the curator's model, and refuses a bad one at exit 2 (`apps/cli/src/run.ts:2067-2249`). Then `runV2` or the command's own function runs with no app layer, and a typed failure becomes an envelope through `failureFor` at exit 1 (`apps/cli/src/run.ts:2251-2373`).
-9. `apply` reads and decodes its whole op stream. A bad stream is exit 2 with nothing opened (`apps/cli/src/run.ts:2387-2398`).
-10. Every other command runs its `dispatch` arm inside `layerApp(--repo)`. A typed failure becomes an envelope through `failureFor` at exit 1, a closed v1 door found inside the layer is exit 2, and a defect becomes `ERR_UNKNOWN` at exit 1 (`apps/cli/src/run.ts:2400-2432`).
+2. `help`, `--help`, and `-h` are answered at once, before validation (`apps/cli/src/run.ts:1701-1703`). A bare `memhtml` answers the manifest (`apps/cli/src/run.ts:1705`).
+3. For the four record-creating v1 doors (`write`, `apply`, `correct`, `task add`), `run` reads the store's `memhtml.config.json` when it knows the root without a layer. A file that doesn't decode is `ERR_STORE_CONFIG` at exit 1 here, before validation (`apps/cli/src/run.ts:1715-1723`).
+4. `validate` refuses a malformed call with exit 2 before any service is built (`apps/cli/src/run.ts:1725-1726`). A closed v1 door is refused here too; see [Run sessions and the v1 doors](#run-sessions-and-the-v1-doors).
+5. `manifest`, `agents-doc`, `eval discriminate`, and the `integrations` family answer without opening a root (`apps/cli/src/run.ts:1741-1937`). `hook` is answered in the same block, but it opens an existing store and never scaffolds one (`hookStoreReady` at `apps/cli/src/run.ts:1866`, `layerApp` at `apps/cli/src/run.ts:1880`).
+6. With `MEMHTML_REFUSE_ENV_ROOT` set and no `--repo`, every remaining command is refused with `ERR_REPO_REQUIRED` at exit 2 (`envRootRefusal` at `apps/cli/src/run.ts:1295-1308`, `apps/cli/src/run.ts:1944-1945`).
+7. `serve mcp`, `config`, and `exec` resolve the root themselves and build no app layer (`apps/cli/src/run.ts:1960-2069`).
+8. The v2 commands resolve the root themselves too. Before anything opens, `run` reads their file inputs (the `session exec` script, the `session put` op stream), their environment variables, and the curator's model, and refuses a bad one at exit 2 (`apps/cli/src/run.ts:2081-2263`). Then `runV2` or the command's own function runs with no app layer, and a typed failure becomes an envelope through `failureFor` at exit 1 (`apps/cli/src/run.ts:2265-2387`).
+9. `apply` reads and decodes its whole op stream. A bad stream is exit 2 with nothing opened (`apps/cli/src/run.ts:2401-2412`).
+10. Every other command runs its `dispatch` arm inside `layerApp(--repo)`. A typed failure becomes an envelope through `failureFor` at exit 1, a closed v1 door found inside the layer is exit 2, and a defect becomes `ERR_UNKNOWN` at exit 1 (`apps/cli/src/run.ts:2414-2446`).
 
 Step 10 has a side effect before the command runs. Building `layerApp` opens the database through `layerDatabase`, which creates `<root>/.memhtml/` with `mkdir -p`, creates `index.db` and `state.db`, sets WAL, and applies pending migrations (`layerDatabase` at `apps/cli/src/api-layer.ts:119-129`, `makeDatabase` at `packages/index/src/database.ts:311-352`). A read command on a root that doesn't exist therefore creates `<root>/.memhtml/`. An index read such as `search` then answers empty at exit 0, while a file or git read fails. On a migrated store the build changes nothing. The v2 commands skip this step, so they never create or migrate `index.db`.
 
-A failure while building that layer gets no envelope. `layerDatabase` is `Layer.orDie`, and the layer is provided outside the `catchCause` that turns defects into an `ERR_UNKNOWN` envelope (`apps/cli/src/api-layer.ts:129`, `apps/cli/src/run.ts:2412-2417`). A root that is a file, an unreadable database, a failed migration, or an unusable `MEMHTML_VECTOR_COVERAGE_FLOOR` ends with empty stdout, a stack on stderr, and exit 1. The v2 commands build their embedder inside the program, so a failed embedder build there is caught and answers with an `ERR_UNKNOWN` envelope (`apps/cli/src/run.ts:2257-2264`, `apps/cli/src/run.ts:2363-2367`).
+A failure while building that layer gets no envelope. `layerDatabase` is `Layer.orDie`, and the layer is provided outside the `catchCause` that turns defects into an `ERR_UNKNOWN` envelope (`apps/cli/src/api-layer.ts:129`, `apps/cli/src/run.ts:2426-2431`). A root that is a file, an unreadable database, a failed migration, or an unusable `MEMHTML_VECTOR_COVERAGE_FLOOR` ends with empty stdout, a stack on stderr, and exit 1. The v2 commands build their embedder inside the program, so a failed embedder build there is caught and answers with an `ERR_UNKNOWN` envelope (`apps/cli/src/run.ts:2271-2278`, `apps/cli/src/run.ts:2377-2381`).
 
 Every command can return the usage codes at exit 2: `ERR_UNKNOWN_COMMAND`, `ERR_MISSING_ARGUMENT`, `ERR_INVALID_FLAG`, `ERR_UNEXPECTED_ARGUMENT`, and `ERR_REPO_REQUIRED` where step 6 applies. `memhtml help` lists `ERR_SESSION_BOUND` and `ERR_V1_DOOR_CLOSED` among them too, though only the four record doors return them (`USAGE_ERROR_CODES` at `apps/cli/src/help.ts:26-34`). Every command run through step 8 or step 10 can also return `ERR_STORAGE` and `ERR_UNKNOWN` at exit 1. The per-command `Errors:` lists below name the rest.
 
@@ -61,17 +61,17 @@ Every command can return the usage codes at exit 2: `ERR_UNKNOWN_COMMAND`, `ERR_
 
 The store-backed writes are `write`, `apply`, `correct`, `link`, `archive`, and `task add`, plus `task status done`. Each fails in one of three phases. `session commit` and `curate merge` write through a different path; their sections say what they leave.
 
-1. Validation runs before the store touches disk: the strict-path gate, the render gate, the content-hash dedupe lookup, and placement (`writeMemory` at `packages/store/src/store.ts:718-756`). A refusal here leaves the tree byte-identical.
-2. The file writes, `git add`, and `git commit` run under a journal. On a failure the store unstages every path it touched and restores each one's earlier bytes (`restore` at `packages/store/src/store.ts:530-546`). If that restore fails, `compensated` only logs it and the tree is left dirty (`packages/store/src/store.ts:561-573`). Directories made by `mkdir` stay. The journal also runs when `git commit` landed and the `rev-parse` after it failed. The commit stays, and the restore removes the commit's new files from the worktree and puts back the earlier bytes of the files it changed (`commit` at `packages/store/src/git.ts:403-422`).
+1. Validation runs before the store touches disk: the strict-path gate, the render gate, the content-hash dedupe lookup, and placement (`writeMemory` at `packages/store/src/store.ts:722-760`). A refusal here leaves the tree byte-identical.
+2. The file writes, `git add`, and `git commit` run under a journal. On a failure the store unstages every path it touched and restores each one's earlier bytes (`restore` at `packages/store/src/store.ts:534-550`). If that restore fails, `compensated` only logs it and the tree is left dirty (`packages/store/src/store.ts:565-577`). Directories made by `mkdir` stay. The journal also runs when `git commit` landed and the `rev-parse` after it failed. The commit stays, and the restore removes the commit's new files from the worktree and puts back the earlier bytes of the files it changed (`commit` at `packages/store/src/git.ts:403-422`).
 3. After the commit, the operation calls `reindex` (`apps/cli/src/operations.ts:267-271`). That step can fail with `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` after the commit landed. The call exits 1, but the memory is in git.
 
 A blind retry after a phase-3 failure writes the memory again under a `-2` path. Dedupe reads the index through `activePathForHash`, and the index hasn't seen the commit (`packages/index/src/traces-persist.ts:196-203`). Two active files with one content hash then make every later reindex fail on the unique index over active non-task content hashes, so every later write commits and exits 1 until one of the pair is archived (`files_content_hash_active` at `packages/index/migrations/0008_tasks.sql:126-127`).
 
-The journal compensates any failure the fiber sees: a typed failure, a defect, or an interruption (`Effect.onError` in `compensated` at `packages/store/src/store.ts:561-573`). A killed process skips it. `bin.ts` installs no signal handler, so a killed process can leave files written or staged (`apps/cli/src/bin.ts:1-22`).
+The journal compensates any failure the fiber sees: a typed failure, a defect, or an interruption (`Effect.onError` in `compensated` at `packages/store/src/store.ts:565-577`). A killed process skips it. `bin.ts` installs no signal handler, so a killed process can leave files written or staged (`apps/cli/src/bin.ts:1-22`).
 
 The commit is `git commit -m` with no pathspec, after a `git diff --cached --quiet` check, so it also commits any path that was already staged in the root (`commit` at `packages/store/src/git.ts:403-422`). `init`, `publish`, `state export`, `doctor --fix`, and `task status` commit the same way.
 
-Writes take turns twice. In one process, every store write waits for one permit, `oneWriterAtATime`, and then takes the checkout lock (`exclusive` at `packages/store/src/store.ts:1415-1419`). The checkout lock is a lock directory at `.memhtml/checkout.lock` that every writer of the shared git index holds while it stages and commits, in any process (`CHECKOUT_LOCK_PATH` at `packages/contracts/src/checkout-lock.ts:35`, `checkoutLockTarget` at `packages/store/src/checkout-lock.ts:19`). A session commit holds it around its checkout update and ref swap, and `curate merge` around its fast-forward (`landOnRef` at `packages/session/src/commit.ts:284-333`). `Git.commit` takes it as a backstop, and `init`, `task status`, `publish`, `state export`, and `doctor --fix` take it around their own stage and commit (`packages/store/src/git.ts:403-405`, `packages/store/src/layout.ts:238`, `apps/cli/src/operations.ts:2024`, `apps/cli/src/publish.ts:102`, `apps/cli/src/state.ts:85`, `apps/cli/src/doctor.ts:544`). It's reentrant within one fiber, so a write that archives through another write doesn't wait on itself (`CheckoutLockHeld` at `packages/contracts/src/checkout-lock.ts:94-97`).
+Writes take turns twice. In one process, every store write waits for one permit, `oneWriterAtATime`, and then takes the checkout lock (`exclusive` at `packages/store/src/store.ts:1419-1423`). The checkout lock is a lock directory at `.memhtml/checkout.lock` that every writer of the shared git index holds while it stages and commits, in any process (`CHECKOUT_LOCK_PATH` at `packages/contracts/src/checkout-lock.ts:35`, `checkoutLockTarget` at `packages/store/src/checkout-lock.ts:19`). A session commit holds it around its checkout update and ref swap, and `curate merge` around its fast-forward (`landOnRef` at `packages/session/src/commit.ts:284-333`). `Git.commit` takes it as a backstop, and `init`, `task status`, `publish`, `state export`, and `doctor --fix` take it around their own stage and commit (`packages/store/src/git.ts:403-405`, `packages/store/src/layout.ts:238`, `apps/cli/src/operations.ts:2024`, `apps/cli/src/publish.ts:102`, `apps/cli/src/state.ts:85`, `apps/cli/src/doctor.ts:544`). It's reentrant within one fiber, so a write that archives through another write doesn't wait on itself (`CheckoutLockHeld` at `packages/contracts/src/checkout-lock.ts:94-97`).
 
 A waiter retries the lock for up to 15 s, pausing 10 ms and doubling to 250 ms. Then it fails with `StorageFailure` `checkout.locked`, which is `ERR_STORAGE` at exit 1, having written nothing (`CHECKOUT_LOCK_WAIT_MS` and `CHECKOUT_LOCKED` at `packages/contracts/src/checkout-lock.ts:54-63`, `withCheckoutLockUsing` at `packages/contracts/src/checkout-lock.ts:128-195`). A holder refreshes the lock every 2 s, and a lock with no refresh for 10 s is stale and reclaimed, so a lock left by a killed process blocks writers for up to about 10 s (`CHECKOUT_LOCK_STALE_MS` and `CHECKOUT_LOCK_UPDATE_MS` at `packages/contracts/src/checkout-lock.ts:42-45`).
 
@@ -83,7 +83,7 @@ SQLite writes are serialized by the database. `index.db` runs in WAL mode with a
 
 Set, it does three things.
 
-1. Every `session` command except `session prune` takes it as the default `--id`. With neither `--id` nor the variable, the call is `ERR_MISSING_ARGUMENT` at exit 2, and a variable that isn't a session id is `ERR_INVALID_FLAG` at exit 2 naming the variable (`sessionIdFlag` at `apps/cli/src/run.ts:922-957`, `sessionIdOf` at `apps/cli/src/run.ts:965-974`).
+1. Every `session` command except `session prune` takes it as the default `--id`. With neither `--id` nor the variable, the call is `ERR_MISSING_ARGUMENT` at exit 2, and a variable that isn't a session id is `ERR_INVALID_FLAG` at exit 2 naming the variable (`sessionIdFlag` at `apps/cli/src/run.ts:936-971`, `sessionIdOf` at `apps/cli/src/run.ts:979-988`).
 2. `session put` and `session exec` start the session on first use when the id came from the variable. The start costs one `rev-parse` on `refs/heads/main` (or `HEAD` when there's no `main`), and a second first use at the same moment waits up to 5 s for the first one's log and goes on with it (`ensureSession` at `apps/cli/src/v2.ts:442-469`). An id given with `--id` must name a started session.
 3. A put or a harvest in the run's own session is held to a stricter bar. `duplicate` and `claim-edit` refuse the call there too, as well as the four kinds that always refuse it, so the run's log only holds ops that would land when they're written (`RUN_BOUND_BLOCKING_VIOLATIONS` at `apps/cli/src/v2.ts:350-357`). The id counts as the run's whenever it equals the variable, given on the line or not.
 
@@ -95,7 +95,7 @@ The v1 doors that create a record are `write`, `apply`, `correct`, and `task add
 | `closed-in-session` (the default) | `ERR_SESSION_BOUND`   | open                    |
 | `closed`                          | `ERR_SESSION_BOUND`   | `ERR_V1_DOOR_CLOSED`    |
 
-The default is `closed-in-session` (`DEFAULT_V1_DOORS` at `packages/contracts/src/store-config.ts:123`). Both refusals are exit 2 and open nothing. `run` judges the door in `validate` when it can read the root before building a layer, from `--repo` or from the environment (`apps/cli/src/run.ts:1701-1712`, `sessionBoundRefusal` at `apps/cli/src/run.ts:989-1002`). Otherwise the arm's own guard judges it inside the layer, and the answer is still exit 2 (`guardV1Door` at `apps/cli/src/store-config.ts:125-133`, `apps/cli/src/run.ts:2404-2408`). `codeFor` picks the code by whether a session closed the door (`V1DoorClosed` at `apps/cli/src/errors.ts:97-98`). The suggestions are the session commands that do the same job, as `session put` lines that run as written (`sessionDoorRefusal` and `closedDoorRefusal` at `apps/cli/src/doors.ts:85-106`).
+The default is `closed-in-session` (`DEFAULT_V1_DOORS` at `packages/contracts/src/store-config.ts:123`). Both refusals are exit 2 and open nothing. `run` judges the door in `validate` when it can read the root before building a layer, from `--repo` or from the environment (`apps/cli/src/run.ts:1715-1726`, `sessionBoundRefusal` at `apps/cli/src/run.ts:1003-1016`). Otherwise the arm's own guard judges it inside the layer, and the answer is still exit 2 (`guardV1Door` at `apps/cli/src/store-config.ts:125-133`, `apps/cli/src/run.ts:2418-2422`). `codeFor` picks the code by whether a session closed the door (`V1DoorClosed` at `apps/cli/src/errors.ts:97-98`). The suggestions are the session commands that do the same job, as `session put` lines that run as written (`sessionDoorRefusal` and `closedDoorRefusal` at `apps/cli/src/doors.ts:85-106`).
 
 The edits of existing records, `link`, `archive`, `task status`, and `reinforce`, aren't record doors, and no mode closes them (`apps/cli/src/doors.ts:12-13`). The other v1 commands ignore the variable. The MCP server's `memory_write`, `memory_write_batch`, and `memory_correct` follow the same mode, reading `MEMHTML_SESSION` from the server's own environment (`apps/mcp/src/handlers.ts:338`, `apps/mcp/src/handlers.ts:406`, `apps/mcp/src/handlers.ts:658`). `memhtml config` shows the store's mode.
 
@@ -113,9 +113,9 @@ Flags:
 
 `--dense` drops null and undefined fields at every depth and minifies (`stripNulls` and `render` at `apps/cli/src/envelope.ts:222-235`). Empty arrays stay.
 
-`--repo` is trimmed and used as given (`layerRoots` at `apps/cli/src/api-layer.ts:100-109`). A leading `~` in it isn't expanded, while the same value in `MEMHTML_ROOT` is (`MemhtmlRoot` at `apps/cli/src/config.ts:277-280`). A blank `--repo` falls back to the environment.
+`--repo` is trimmed and used as given (`layerRoots` at `apps/cli/src/api-layer.ts:100-109`). A leading `~` in it isn't expanded, while the same value in `MEMHTML_ROOT` is (`MemhtmlRoot` at `apps/cli/src/config.ts:282-286`). A blank `--repo` falls back to the environment.
 
-`--help` keeps `--json`, `--dense`, and `--repo` and drops every other flag on the line (`HELP_FLAGS` at `apps/cli/src/run.ts:1548-1551`). It never opens a root.
+`--help` keeps `--json`, `--dense`, and `--repo` and drops every other flag on the line (`HELP_FLAGS` at `apps/cli/src/run.ts:1562-1565`). It never opens a root.
 
 There's no global `--json` flag. The envelope is the only output most commands have, so `--json` is declared on `help` alone, the one command with a second shape (`GLOBAL_FLAGS` at `apps/cli/src/commands.ts:59-88`, the `help` entry at `apps/cli/src/commands.ts:194-218`).
 
@@ -127,30 +127,30 @@ An `int` flag goes through `Number.parseInt`, so `7.9` reads as 7 and a value th
 
 ## Flag and argument validation
 
-`validate` checks a call against this command's spec and the three globals, never against the union of every command's flags (`validateAgainst` at `apps/cli/src/run.ts:1389-1511`). A flag that's valid on another command is still `ERR_INVALID_FLAG` here, with that command among the suggestions. `memhtml list --status todo` is refused and points at `task list`.
+`validate` checks a call against this command's spec and the three globals, never against the union of every command's flags (`validateAgainst` at `apps/cli/src/run.ts:1403-1525`). A flag that's valid on another command is still `ERR_INVALID_FLAG` here, with that command among the suggestions. `memhtml list --status todo` is refused and points at `task list`.
 
 The rules run in this order, and the first refusal wins:
 
-1. A flag this command doesn't declare: `ERR_INVALID_FLAG` (`apps/cli/src/run.ts:1405-1419`).
-2. A boolean flag followed by a value-shaped word, such as `--embed false`: `ERR_INVALID_FLAG`, naming `--embed=false` and `--no-embed` (`strayBooleanFlags` at `apps/cli/src/run.ts:1147-1156`).
-3. A positional past what the command declares: `ERR_UNEXPECTED_ARGUMENT`, unless the last argument is `repeatable` (`surplusArgs` at `apps/cli/src/run.ts:1185-1200`). A bare `-` is exempt on `apply`, `exec`, `session exec`, and `session put`, where it names stdin (`STDIN_MARKER_COMMANDS` at `apps/cli/src/run.ts:1166-1171`).
-4. A record door the store's `v1Doors` closes: `ERR_SESSION_BOUND` or `ERR_V1_DOOR_CLOSED` (`sessionBoundRefusal` at `apps/cli/src/run.ts:989-1002`, called at `apps/cli/src/run.ts:1432-1433`).
-5. A `session` command other than `session prune` with no `--id` and no `MEMHTML_SESSION`: `ERR_MISSING_ARGUMENT`. An id that isn't one path segment of letters, digits, `.`, `_`, or `-`, starting with a letter or digit and at most 128 characters: `ERR_INVALID_FLAG` (`sessionIdFlag` at `apps/cli/src/run.ts:922-957`, `SESSION_ID` at `packages/session/src/session.ts:62`).
-6. A required positional absent: `ERR_MISSING_ARGUMENT` (`apps/cli/src/run.ts:1437-1446`).
-7. A required flag absent: `ERR_MISSING_ARGUMENT` (`apps/cli/src/run.ts:1448-1457`).
-8. `write` and `correct` without exactly one of `--claim` and `--article-html` (`claimOrArticle` at `apps/cli/src/run.ts:1076-1101`).
-9. The input doors of `exec` and `session exec` (at most one of `--file` and `--script`, no `-` beside one, a `--timeout-ms` from 1 to 600000), and of `apply` (`execFlags` at `apps/cli/src/run.ts:755-797`, `applyFlags` at `apps/cli/src/run.ts:807-818`).
-10. `head snapshot` without exactly one of `--write` and `--read` (`headSnapshotFlags` at `apps/cli/src/run.ts:1018-1036`).
-11. A `session prune --older-than` that isn't a duration with a unit (`sessionPruneFlags` at `apps/cli/src/run.ts:1005-1016`).
-12. A `head serve --poll-ms` below 0 or a blank `--ref` (`headServeFlags` at `apps/cli/src/run.ts:1043-1062`).
-13. A `curate merge` with a blank `--into` or a ref that would land on itself (`curateMergeFlags` at `apps/cli/src/run.ts:829-846`).
-14. A `curate run` or `curate collapse` `--ref` outside `curate/`, a `--model` of no known shape, or a budget integer below 1 (`curateRunFlags` at `apps/cli/src/run.ts:865-906`).
-15. An `--as-of` outside `YYYY-MM-DD` or `YYYY-MM-DDThh:mm:ssZ`: `ERR_INVALID_FLAG` (`asOfFlag` at `apps/cli/src/run.ts:1122-1134`).
-16. A value outside a flag's declared `values`: `ERR_INVALID_FLAG` with the nearest spellings. Every occurrence of a repeated flag is checked (`apps/cli/src/run.ts:1496-1508`).
+1. A flag this command doesn't declare: `ERR_INVALID_FLAG` (`apps/cli/src/run.ts:1419-1433`).
+2. A boolean flag followed by a value-shaped word, such as `--embed false`: `ERR_INVALID_FLAG`, naming `--embed=false` and `--no-embed` (`strayBooleanFlags` at `apps/cli/src/run.ts:1161-1170`).
+3. A positional past what the command declares: `ERR_UNEXPECTED_ARGUMENT`, unless the last argument is `repeatable` (`surplusArgs` at `apps/cli/src/run.ts:1199-1214`). A bare `-` is exempt on `apply`, `exec`, `session exec`, and `session put`, where it names stdin (`STDIN_MARKER_COMMANDS` at `apps/cli/src/run.ts:1180-1185`).
+4. A record door the store's `v1Doors` closes: `ERR_SESSION_BOUND` or `ERR_V1_DOOR_CLOSED` (`sessionBoundRefusal` at `apps/cli/src/run.ts:1003-1016`, called at `apps/cli/src/run.ts:1446-1447`).
+5. A `session` command other than `session prune` with no `--id` and no `MEMHTML_SESSION`: `ERR_MISSING_ARGUMENT`. An id that isn't one path segment of letters, digits, `.`, `_`, or `-`, starting with a letter or digit and at most 128 characters: `ERR_INVALID_FLAG` (`sessionIdFlag` at `apps/cli/src/run.ts:936-971`, `SESSION_ID` at `packages/session/src/session.ts:62`).
+6. A required positional absent: `ERR_MISSING_ARGUMENT` (`apps/cli/src/run.ts:1451-1460`).
+7. A required flag absent: `ERR_MISSING_ARGUMENT` (`apps/cli/src/run.ts:1462-1471`).
+8. `write` and `correct` without exactly one of `--claim` and `--article-html` (`claimOrArticle` at `apps/cli/src/run.ts:1090-1115`).
+9. The input doors of `exec` and `session exec` (at most one of `--file` and `--script`, no `-` beside one, a `--timeout-ms` from 1 to 600000), and of `apply` (`execFlags` at `apps/cli/src/run.ts:755-811`, `applyFlags` at `apps/cli/src/run.ts:821-832`).
+10. `head snapshot` without exactly one of `--write` and `--read` (`headSnapshotFlags` at `apps/cli/src/run.ts:1032-1050`).
+11. A `session prune --older-than` that isn't a duration with a unit (`sessionPruneFlags` at `apps/cli/src/run.ts:1019-1030`).
+12. A `head serve --poll-ms` below 0 or a blank `--ref` (`headServeFlags` at `apps/cli/src/run.ts:1057-1076`).
+13. A `curate merge` with a blank `--into` or a ref that would land on itself (`curateMergeFlags` at `apps/cli/src/run.ts:843-860`).
+14. A `curate run` or `curate collapse` `--ref` outside `curate/`, a `--model` of no known shape, or a budget integer below 1 (`curateRunFlags` at `apps/cli/src/run.ts:879-920`).
+15. An `--as-of` outside `YYYY-MM-DD` or `YYYY-MM-DDThh:mm:ssZ`: `ERR_INVALID_FLAG` (`asOfFlag` at `apps/cli/src/run.ts:1136-1148`).
+16. A value outside a flag's declared `values`: `ERR_INVALID_FLAG` with the nearest spellings. Every occurrence of a repeated flag is checked (`apps/cli/src/run.ts:1510-1522`).
 
-Then the closed vocabularies that arrive as positionals are checked, for `hook` and the `integrations` verbs only (`vocabularyPositionals` at `apps/cli/src/run.ts:1327-1347`). The rel of `link`, the status of `task status`, and the paths of every command are checked later, at exit 1.
+Then the closed vocabularies that arrive as positionals are checked, for `hook` and the `integrations` verbs only (`vocabularyPositionals` at `apps/cli/src/run.ts:1341-1361`). The rel of `link`, the status of `task status`, and the paths of every command are checked later, at exit 1.
 
-Every refusal of a known command ends with that command's help pointer, `memhtml help <cmd>`, appended once in `validate` (`apps/cli/src/run.ts:1373-1376`). An unknown command gets nearest names instead, measured against the whole typed invocation, so `memhtml index rebiuld` suggests `index rebuild` (`unknownCommand` at `apps/cli/src/run.ts:712-723`).
+Every refusal of a known command ends with that command's help pointer, `memhtml help <cmd>`, appended once in `validate` (`apps/cli/src/run.ts:1387-1390`). An unknown command gets nearest names instead, measured against the whole typed invocation, so `memhtml index rebiuld` suggests `index rebuild` (`unknownCommand` at `apps/cli/src/run.ts:712-723`).
 
 The help pointer is added only by `validate`. Refusals raised later, such as `apply`'s line errors and the v2 environment checks, carry their own suggestions and no pointer.
 
@@ -170,7 +170,7 @@ Response: `cli.manifest`.
 
 Errors: only the usage codes. `memhtml manifest --sha 1` is `ERR_INVALID_FLAG` at exit 2.
 
-Failure: `manifest` is answered after `validate` and before any root is resolved (`apps/cli/src/run.ts:1727-1729`). It opens no store, reads no environment variable, and writes nothing, so it works as a liveness check. A bare `memhtml` returns the same envelope without validation (`apps/cli/src/run.ts:1691`).
+Failure: `manifest` is answered after `validate` and before any root is resolved (`apps/cli/src/run.ts:1741-1743`). It opens no store, reads no environment variable, and writes nothing, so it works as a liveness check. A bare `memhtml` returns the same envelope without validation (`apps/cli/src/run.ts:1705`).
 
 ## help
 
@@ -180,7 +180,7 @@ memhtml help index rebuild --json
 memhtml <command> --help
 ```
 
-Describes one command, or the whole manifest when no command is named (`help` at `apps/cli/src/run.ts:1534-1617`). It's answered before the store's policy file is read and before `validate` runs (`apps/cli/src/run.ts:1687-1689`).
+Describes one command, or the whole manifest when no command is named (`help` at `apps/cli/src/run.ts:1548-1631`). It's answered before the store's policy file is read and before `validate` runs (`apps/cli/src/run.ts:1701-1703`).
 
 Arguments:
 
@@ -194,14 +194,14 @@ Response: `cli.help`, `cli.manifest`.
 
 `cli.help` is the manifest's entry for the command plus four derived fields, `usage`, `globalFlags`, `usageErrorCodes`, and `seeAlso` (`helpData` at `apps/cli/src/help.ts:66-76`). `usage` always ends in `[flags]` (`usageOf` at `apps/cli/src/help.ts:41-47`). `usageErrorCodes` lists the seven codes in `USAGE_ERROR_CODES`, which are `ERR_UNKNOWN_COMMAND`, `ERR_MISSING_ARGUMENT`, `ERR_INVALID_FLAG`, `ERR_UNEXPECTED_ARGUMENT`, `ERR_REPO_REQUIRED`, `ERR_SESSION_BOUND`, and `ERR_V1_DOOR_CLOSED` (`apps/cli/src/help.ts:26-34`). `seeAlso` lists the commands sharing this one's noun or one of its response types (`seeAlsoOf` at `apps/cli/src/help.ts:54-63`).
 
-Output shape follows one rule. With stdout a terminal and no `--json`, the answer is Markdown. A named command gets `renderCommandHelp`, and a call that names no command gets the whole generated `AGENTS.md` from `renderAgentsDoc`. Otherwise the answer is the envelope (`apps/cli/src/run.ts:1565`, `apps/cli/src/run.ts:1572-1576`, `apps/cli/src/run.ts:1614-1616`).
+Output shape follows one rule. With stdout a terminal and no `--json`, the answer is Markdown. A named command gets `renderCommandHelp`, and a call that names no command gets the whole generated `AGENTS.md` from `renderAgentsDoc`. Otherwise the answer is the envelope (`apps/cli/src/run.ts:1579`, `apps/cli/src/run.ts:1586-1590`, `apps/cli/src/run.ts:1628-1630`).
 
-The `--help` form keeps only `--help`, `--json`, `--dense`, and `--repo` (`HELP_FLAGS` at `apps/cli/src/run.ts:1548-1551`), so `memhtml search --type x --help` describes `search`. The spelled-out form validates every flag as a flag of `help`, so `memhtml help search --limit 5` is refused.
+The `--help` form keeps only `--help`, `--json`, `--dense`, and `--repo` (`HELP_FLAGS` at `apps/cli/src/run.ts:1562-1565`), so `memhtml search --type x --help` describes `search`. The spelled-out form validates every flag as a flag of `help`, so `memhtml help search --limit 5` is refused.
 
 Errors:
 
-- `ERR_UNKNOWN_COMMAND` (exit 2) for a name that isn't a command. A noun alone, such as `memhtml help index`, lists the family as suggestions (`apps/cli/src/run.ts:1598-1612`).
-- `ERR_UNEXPECTED_ARGUMENT` (exit 2) for a known command followed by a stray word (`apps/cli/src/run.ts:1583-1597`).
+- `ERR_UNKNOWN_COMMAND` (exit 2) for a name that isn't a command. A noun alone, such as `memhtml help index`, lists the family as suggestions (`apps/cli/src/run.ts:1612-1626`).
+- `ERR_UNEXPECTED_ARGUMENT` (exit 2) for a known command followed by a stray word (`apps/cli/src/run.ts:1597-1611`).
 
 Failure: help never resolves a root, never opens a store, and writes nothing. A refusal is an envelope at exit 2 even on a terminal.
 
@@ -221,7 +221,7 @@ A caller reads `root`, `created`, `headSha`, and `wrote` (`InitResult` at `packa
 
 The scaffold is twelve files. Nine are `.gitkeep` files, one in each directory of `SCAFFOLD_DIRS` (`packages/store/src/layout.ts:33-48`). Those directories are the four PARA buckets, `areas/arcs`, `resources/people`, `areas/inbox`, `.memhtml/state`, and one reports directory under `.memhtml/`. No command in this build writes into that reports directory, and it stays in the scaffold so an existing store's layout doesn't change. The note at the top of this page names it. `.gitignore` lists the two databases and their `-*` side files, the three v2 state directories `.memhtml/sessions/`, `.memhtml/snapshots/`, and `.memhtml/vectors/`, and the head server's socket `.memhtml/head.sock` (`GITIGNORE` at `packages/store/src/layout.ts:84-89`, `V2_IGNORE_PATTERNS` at `packages/store/src/layout.ts:68-73`). `.gitattributes` sets `merge=ours` on `index.html` and `sitemap.xml` and `diff=html` on `*.html` (`GITATTRIBUTES` at `packages/store/src/layout.ts:100-103`). `README.html` is a memory-shaped page that describes the repository (`README` at `packages/store/src/layout.ts:112-130`).
 
-`init`'s dispatch arm (`apps/cli/src/run.ts:357-362`) runs inside `layerApp` (`apps/cli/src/run.ts:2417`), so it also creates and migrates `.memhtml/index.db` and `state.db`.
+`init`'s dispatch arm (`apps/cli/src/run.ts:357-362`) runs inside `layerApp` (`apps/cli/src/run.ts:2431`), so it also creates and migrates `.memhtml/index.db` and `state.db`.
 
 Re-running `init` on a scaffolded repository writes no file and makes no commit. `wrote` is empty and `headSha` is unchanged. It sets the git config again. On an existing repository without the scaffold it reports `created: false`, writes the scaffold, and commits it. An existing `.gitignore`, `.gitattributes`, or `README.html` is kept unchanged and never merged (`writeIfAbsent` at `packages/store/src/layout.ts:144-158`). Files already in a non-empty directory are left untracked. Because `init` never rewrites an existing `.gitignore`, a store scaffolded by an earlier release keeps one without the v2 patterns, and the first writer of each v2 directory appends its pattern to `.git/info/exclude` instead (`packages/session/src/exclude.ts:11-18`, `ensureExcluded` at `packages/session/src/exclude.ts:54-76`).
 
@@ -240,7 +240,7 @@ memhtml write --title <title> --type <type> --claim <sentence> [--body <paragrap
 memhtml write --title <title> --type <type> --article-html <markup>
 ```
 
-Writes one memory, commits it, and reindexes (`writeMemory` at `apps/cli/src/operations.ts:344-353`). It checks the store's `v1Doors` policy first, once before `validate` when the root is known and again in its dispatch arm (`apps/cli/src/run.ts:1701-1712`, `guardV1Door` at `apps/cli/src/run.ts:366`, `apps/cli/src/store-config.ts:125-133`). The type is decoded through the operator vocabulary before the store runs (`decodeOperatorType` at `apps/cli/src/operations.ts:107-114`). The store then runs the strict-path gate, renders and checks the article, looks up the content hash, picks a free path, and writes, stages, and commits under a journal (`writeMemory` at `packages/store/src/store.ts:718-778`). All of that runs inside `exclusive`, which holds the per-process permit and the checkout lock (`packages/store/src/store.ts:1416-1425`). It reindexes only when a file was created, then records a `wrote` session link (`apps/cli/src/operations.ts:350-351`).
+Writes one memory, commits it, and reindexes (`writeMemory` at `apps/cli/src/operations.ts:344-353`). It checks the store's `v1Doors` policy first, once before `validate` when the root is known and again in its dispatch arm (`apps/cli/src/run.ts:1715-1726`, `guardV1Door` at `apps/cli/src/run.ts:366`, `apps/cli/src/store-config.ts:125-133`). The type is decoded through the operator vocabulary before the store runs (`decodeOperatorType` at `apps/cli/src/operations.ts:107-114`). The store then runs the strict-path gate, renders and checks the article, looks up the content hash, picks a free path, and writes, stages, and commits under a journal (`writeMemory` at `packages/store/src/store.ts:722-782`). All of that runs inside `exclusive`, which holds the per-process permit and the checkout lock (`packages/store/src/store.ts:1420-1429`). It reindexes only when a file was created, then records a `wrote` session link (`apps/cli/src/operations.ts:350-351`).
 
 Flags:
 
@@ -262,7 +262,7 @@ Flags:
 
 Response: `memory.written`.
 
-A caller reads `path`, `created`, `deduped`, `existingPath`, `commitSha`, and `contentHash` (`WriteResult` at `packages/store/src/store.ts:96-106`). Exactly one of `created` and `deduped` is true. On a dedupe, `path` and `existingPath` name the stored file, `commitSha` is null, and nothing is written or committed (`packages/store/src/store.ts:730-740`).
+A caller reads `path`, `created`, `deduped`, `existingPath`, `commitSha`, and `contentHash` (`WriteResult` at `packages/store/src/store.ts:96-106`). Exactly one of `created` and `deduped` is true. On a dedupe, `path` and `existingPath` name the stored file, `commitSha` is null, and nothing is written or committed (`packages/store/src/store.ts:734-744`).
 
 A duplicate is never an error. `ERR_DUPLICATE_CONTENT` is in `ERROR_CODES`, but no code path constructs `DuplicateContent`. The lookup skips stored tasks and archived memories, so a write whose article matches an active non-task memory of any type dedupes onto it (`activePathForHash` at `packages/index/src/traces-persist.ts:196-202`).
 
@@ -270,16 +270,16 @@ A duplicate is never an error. `ERR_DUPLICATE_CONTENT` is in `ERROR_CODES`, but 
 
 Errors:
 
-- `ERR_SESSION_BOUND` (exit 2) when `MEMHTML_SESSION` is set and the store's `v1Doors` is `closed-in-session` (the default) or `closed`, and `ERR_V1_DOOR_CLOSED` (exit 2) when `v1Doors` is `closed` and no session is set. Nothing is opened (`sessionBoundRefusal` at `apps/cli/src/run.ts:989-1002`, `v1DoorState` at `apps/cli/src/store-config.ts:111-118`). See [Run sessions and the v1 doors](#run-sessions-and-the-v1-doors).
-- `ERR_STORE_CONFIG` (exit 1) when the store's `memhtml.config.json` exists and can't be read or doesn't decode (`loadStorePolicy` at `apps/cli/src/store-config.ts:64-93`, `apps/cli/src/run.ts:1705-1706`).
-- `ERR_INVALID_MEMORY` (exit 1) when `--strict-path` refuses the path, when the render gate refuses the article (for example an empty `<mark>` from `--claim=`), or when `--type` was given with no value (`strictPathRefusal` at `packages/store/src/store.ts:703-716`, `renderChecked` at `packages/store/src/store.ts:672-679`, `decodeOperatorType` at `apps/cli/src/operations.ts:107-114`).
-- `ERR_WRITE_CONFLICT` (exit 1) when an explicit `--path` is occupied and the content isn't already stored. Nothing is written (`WriteConflict` in `freePathFor` at `packages/store/src/store.ts:428-468`). A duplicate dedupes first, so it returns `deduped: true` at the stored path, exit 0 (`packages/store/src/store.ts:730-740`).
-- `ERR_STORAGE` (exit 1) when the dedupe lookup or the file write fails, or after 1000 slug collisions, as `write.pathExhausted` (`packages/store/src/store.ts:455-467`).
-- `ERR_STORAGE` (exit 1) with operation `checkout.locked` when another writer of the checkout holds `.memhtml/checkout.lock` past the 15 s wait. Nothing is written (`exclusive` at `packages/store/src/store.ts:1416-1419`, `CHECKOUT_LOCK_WAIT_MS` at `packages/contracts/src/checkout-lock.ts:54`).
+- `ERR_SESSION_BOUND` (exit 2) when `MEMHTML_SESSION` is set and the store's `v1Doors` is `closed-in-session` (the default) or `closed`, and `ERR_V1_DOOR_CLOSED` (exit 2) when `v1Doors` is `closed` and no session is set. Nothing is opened (`sessionBoundRefusal` at `apps/cli/src/run.ts:1003-1016`, `v1DoorState` at `apps/cli/src/store-config.ts:111-118`). See [Run sessions and the v1 doors](#run-sessions-and-the-v1-doors).
+- `ERR_STORE_CONFIG` (exit 1) when the store's `memhtml.config.json` exists and can't be read or doesn't decode (`loadStorePolicy` at `apps/cli/src/store-config.ts:64-93`, `apps/cli/src/run.ts:1719-1720`).
+- `ERR_INVALID_MEMORY` (exit 1) when `--strict-path` refuses the path, when the render gate refuses the article (for example an empty `<mark>` from `--claim=`), or when `--type` was given with no value (`strictPathRefusal` at `packages/store/src/store.ts:707-720`, `renderChecked` at `packages/store/src/store.ts:676-683`, `decodeOperatorType` at `apps/cli/src/operations.ts:107-114`).
+- `ERR_WRITE_CONFLICT` (exit 1) when an explicit `--path` is occupied and the content isn't already stored. Nothing is written (`WriteConflict` in `freePathFor` at `packages/store/src/store.ts:432-472`). A duplicate dedupes first, so it returns `deduped: true` at the stored path, exit 0 (`packages/store/src/store.ts:734-744`).
+- `ERR_STORAGE` (exit 1) when the dedupe lookup or the file write fails, or after 1000 slug collisions, as `write.pathExhausted` (`packages/store/src/store.ts:459-471`).
+- `ERR_STORAGE` (exit 1) with operation `checkout.locked` when another writer of the checkout holds `.memhtml/checkout.lock` past the 15 s wait. Nothing is written (`exclusive` at `packages/store/src/store.ts:1420-1423`, `CHECKOUT_LOCK_WAIT_MS` at `packages/contracts/src/checkout-lock.ts:54`).
 - `ERR_GIT` (exit 1) from `git hash-object`, `add`, `commit`, or `rev-parse` (`packages/store/src/git.ts:391-422`).
 - `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` (exit 1) from `reindex`, after the commit landed (`apps/cli/src/operations.ts:267-271`).
 
-Failure: a usage error or a closed door is refused before anything is opened. An unusable `memhtml.config.json` is refused before anything is opened too, and since the file is read ahead of `validate`, `ERR_STORE_CONFIG` answers even a call that has other usage errors (`apps/cli/src/run.ts:1701-1712`). A gate refusal, a dedupe, a conflict, or a lock wait that runs out leaves the tree byte-identical. A git or storage failure during the write is compensated by the journal (`compensated` at `packages/store/src/store.ts:561-573`). A restore that itself fails is logged and leaves the tree dirty. A failure after the commit landed keeps the commit and removes its new file from the worktree. A `reindex` failure leaves the memory committed and unindexed, and a retry writes a second copy (see [What a failed write leaves behind](#what-a-failed-write-leaves-behind)). A failure to record the session link is logged and swallowed (`recordLink` at `apps/cli/src/operations.ts:201-218`). Entity extraction runs only in `apply`, so `write` calls no extraction model. `reindex` embeds the new chunks when an embedder is bound, and an embedding failure there is logged and doesn't fail the write (`packages/index/src/indexer.ts:577-584`).
+Failure: a usage error or a closed door is refused before anything is opened. An unusable `memhtml.config.json` is refused before anything is opened too, and since the file is read ahead of `validate`, `ERR_STORE_CONFIG` answers even a call that has other usage errors (`apps/cli/src/run.ts:1715-1726`). A gate refusal, a dedupe, a conflict, or a lock wait that runs out leaves the tree byte-identical. A git or storage failure during the write is compensated by the journal (`compensated` at `packages/store/src/store.ts:565-577`). A restore that itself fails is logged and leaves the tree dirty. A failure after the commit landed keeps the commit and removes its new file from the worktree. A `reindex` failure leaves the memory committed and unindexed, and a retry writes a second copy (see [What a failed write leaves behind](#what-a-failed-write-leaves-behind)). A failure to record the session link is logged and swallowed (`recordLink` at `apps/cli/src/operations.ts:201-218`). Entity extraction runs only in `apply`, so `write` calls no extraction model. `reindex` embeds the new chunks when an embedder is bound, and an embedding failure there is logged and doesn't fail the write (`packages/index/src/indexer.ts:577-584`).
 
 ## apply
 
@@ -289,7 +289,7 @@ memhtml apply --file -
 memhtml apply -
 ```
 
-Writes many memories from a JSONL op stream (`batchWrite` at `apps/cli/src/operations.ts:746-893`). It checks the store's `v1Doors` policy first, before the stream is read when the root is known and again in its dispatch arm (`apps/cli/src/run.ts:1701-1712`, `guardV1Door` at `apps/cli/src/run.ts:396`). The whole stream is read and shape-checked before any service is built (`decodeApply` at `apps/cli/src/apply.ts:302-331`, `apps/cli/src/run.ts:2387-2398`). Then the optional assists run, every op is decoded, entities are extracted, and `writeMemories` validates every op before one write, stage, and commit (`writeMemories` at `packages/store/src/store.ts:904-1031`). That store call holds the per-process permit and the checkout lock (`packages/store/src/store.ts:1426`). One `reindex` follows (`apps/cli/src/operations.ts:878`).
+Writes many memories from a JSONL op stream (`batchWrite` at `apps/cli/src/operations.ts:746-893`). It checks the store's `v1Doors` policy first, before the stream is read when the root is known and again in its dispatch arm (`apps/cli/src/run.ts:1715-1726`, `guardV1Door` at `apps/cli/src/run.ts:396`). The whole stream is read and shape-checked before any service is built (`decodeApply` at `apps/cli/src/apply.ts:302-331`, `apps/cli/src/run.ts:2401-2412`). Then the optional assists run, every op is decoded, entities are extracted, and `writeMemories` validates every op before one write, stage, and commit (`writeMemories` at `packages/store/src/store.ts:908-1035`). That store call holds the per-process permit and the checkout lock (`packages/store/src/store.ts:1430`). One `reindex` follows (`apps/cli/src/operations.ts:878`).
 
 Flags:
 
@@ -305,7 +305,7 @@ Response: `batch.applied`.
 
 A caller reads `results`, `summary`, `commit_sha`, and `near_duplicates_degraded` (`applyPayload` at `apps/cli/src/apply.ts:540-545`). Each result carries `index`, `ok`, `path`, `deduped`, `existing_path`, `code`, `error`, `skipped`, `conflict`, and `near_duplicates`, in input order (`opPayload` at `apps/cli/src/apply.ts:496-538`). `summary` counts `total`, `written`, `deduped`, `failed`, and `skipped` (`summarize` at `apps/cli/src/operations.ts:941-953`). `commit_sha` is null when nothing was committed.
 
-A refused op is data inside the payload. By default the first refused op aborts the batch. Nothing is written, the refused op carries its `code` and `error`, and the rest report `skipped: true`, all at exit 0 (`apps/cli/src/operations.ts:810-818`, `packages/store/src/store.ts:964-976`). With `--continue-on-error` the survivors land in the one commit. The per-op codes are `ERR_INVALID_MEMORY` and `ERR_WRITE_CONFLICT`, mapped by the same `codeFor` every envelope uses (`reportFailure` at `apps/cli/src/operations.ts:484-489`).
+A refused op is data inside the payload. By default the first refused op aborts the batch. Nothing is written, the refused op carries its `code` and `error`, and the rest report `skipped: true`, all at exit 0 (`apps/cli/src/operations.ts:810-818`, `packages/store/src/store.ts:968-980`). With `--continue-on-error` the survivors land in the one commit. The per-op codes are `ERR_INVALID_MEMORY` and `ERR_WRITE_CONFLICT`, mapped by the same `codeFor` every envelope uses (`reportFailure` at `apps/cli/src/operations.ts:484-489`).
 
 A model failure never fails a batch. A failed extraction is logged and the batch is written without extracted entities (`extractor.extract` at `apps/cli/src/operations.ts:840-845`). A failed or disabled embedder sets `near_duplicates_degraded` (`embedder.embed` at `apps/cli/src/operations.ts:649-661`).
 
@@ -313,18 +313,18 @@ On a line that carries both `body` and `article_html`, nothing refuses the pair.
 
 Errors:
 
-- `ERR_SESSION_BOUND` (exit 2) when `MEMHTML_SESSION` is set and the store's `v1Doors` is `closed-in-session` (the default) or `closed`, and `ERR_V1_DOOR_CLOSED` (exit 2) when `v1Doors` is `closed` and no session is set. Nothing is opened (`sessionBoundRefusal` at `apps/cli/src/run.ts:989-1002`, `v1DoorState` at `apps/cli/src/store-config.ts:111-118`). See [Run sessions and the v1 doors](#run-sessions-and-the-v1-doors).
-- `ERR_STORE_CONFIG` (exit 1) when the store's `memhtml.config.json` exists and can't be read or doesn't decode (`loadStorePolicy` at `apps/cli/src/store-config.ts:64-93`, `apps/cli/src/run.ts:1705-1706`).
-- `ERR_INVALID_FLAG` (exit 2) for a positional `-` beside a real `--file` (`applyFlags` at `apps/cli/src/run.ts:806-816`), and for a line that isn't a JSON object, an unknown field, an `op` other than `write`, or a field of the wrong type (`lineError` at `apps/cli/src/apply.ts:83-88`).
+- `ERR_SESSION_BOUND` (exit 2) when `MEMHTML_SESSION` is set and the store's `v1Doors` is `closed-in-session` (the default) or `closed`, and `ERR_V1_DOOR_CLOSED` (exit 2) when `v1Doors` is `closed` and no session is set. Nothing is opened (`sessionBoundRefusal` at `apps/cli/src/run.ts:1003-1016`, `v1DoorState` at `apps/cli/src/store-config.ts:111-118`). See [Run sessions and the v1 doors](#run-sessions-and-the-v1-doors).
+- `ERR_STORE_CONFIG` (exit 1) when the store's `memhtml.config.json` exists and can't be read or doesn't decode (`loadStorePolicy` at `apps/cli/src/store-config.ts:64-93`, `apps/cli/src/run.ts:1719-1720`).
+- `ERR_INVALID_FLAG` (exit 2) for a positional `-` beside a real `--file` (`applyFlags` at `apps/cli/src/run.ts:820-830`), and for a line that isn't a JSON object, an unknown field, an `op` other than `write`, or a field of the wrong type (`lineError` at `apps/cli/src/apply.ts:83-88`).
 - `ERR_MISSING_ARGUMENT` (exit 2) for a line without `op`, `title`, or `type`, or a stream with no ops (`apps/cli/src/apply.ts:128-130`, `apps/cli/src/apply.ts:202-208`, `apps/cli/src/apply.ts:316-328`).
 - `ERR_PATH_NOT_FOUND` (exit 2) when `--file` can't be read (`applyText` at `apps/cli/src/apply.ts:450-466`).
 - `ERR_STORAGE` or `ERR_GIT` (exit 1) from the dedupe lookup, placement, write, stage, or commit of the batch.
-- `ERR_STORAGE` (exit 1) with operation `checkout.locked` when another writer of the checkout holds `.memhtml/checkout.lock` past the 15 s wait. Nothing is written (`exclusive` at `packages/store/src/store.ts:1416-1419`).
+- `ERR_STORAGE` (exit 1) with operation `checkout.locked` when another writer of the checkout holds `.memhtml/checkout.lock` past the 15 s wait. Nothing is written (`exclusive` at `packages/store/src/store.ts:1420-1423`).
 - `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` (exit 1) from `reindex`, after the commit landed.
 
-Failure: a bad stream, a closed door, or an unusable policy file is refused before any database or git command runs. When the root is known before the layer, the door and the policy file are judged before the stream is read. An atomic abort writes nothing, and so does a lock wait that runs out. A git or storage failure during the write pass is compensated by one journal over every path the pass reached (`makeJournal` at `packages/store/src/store.ts:994-1010`). A restore that itself fails is logged and leaves the tree dirty. A failure after the commit landed keeps the commit and removes the batch's new files from the worktree. A `reindex` failure after the commit replaces the whole payload with an error envelope, so the caller never sees the per-op paths, and a blind retry writes every op again under `-2` paths.
+Failure: a bad stream, a closed door, or an unusable policy file is refused before any database or git command runs. When the root is known before the layer, the door and the policy file are judged before the stream is read. An atomic abort writes nothing, and so does a lock wait that runs out. A git or storage failure during the write pass is compensated by one journal over every path the pass reached (`makeJournal` at `packages/store/src/store.ts:998-1014`). A restore that itself fails is logged and leaves the tree dirty. A failure after the commit landed keeps the commit and removes the batch's new files from the worktree. A `reindex` failure after the commit replaces the whole payload with an error envelope, so the caller never sees the per-op paths, and a blind retry writes every op again under `-2` paths.
 
-The atomicity covers one call. It's one validation pass, one journal, and one commit, made in one hold of the per-process permit and the checkout lock (`packages/store/src/store.ts:1416-1426`). The assists and the entity extraction run before that hold, and `reindex` runs after it.
+The atomicity covers one call. It's one validation pass, one journal, and one commit, made in one hold of the per-process permit and the checkout lock (`packages/store/src/store.ts:1420-1430`). The assists and the entity extraction run before that hold, and `reindex` runs after it.
 
 ## read
 
@@ -332,7 +332,7 @@ The atomicity covers one call. It's one validation pass, one journal, and one co
 memhtml read <path>
 ```
 
-Reads one memory file from the working tree, parses it, and returns it (`readMemory` at `apps/cli/src/operations.ts:968-975`, `readMemory` at `packages/store/src/store.ts:1033-1039`). It reads uncommitted edits too, and doesn't consult the index.
+Reads one memory file from the working tree, parses it, and returns it (`readMemory` at `apps/cli/src/operations.ts:968-975`, `readMemory` at `packages/store/src/store.ts:1037-1043`). It reads uncommitted edits too, and doesn't consult the index.
 
 Arguments:
 
@@ -440,7 +440,7 @@ memhtml correct <target> --title <title> --claim <sentence>
 memhtml correct <target> --title <title> --article-html <markup>
 ```
 
-Supersedes a memory (`correctMemory` at `apps/cli/src/operations.ts:1062-1090`). The dispatch arm checks the store's `v1Doors` policy first (`guardV1Door` at `apps/cli/src/run.ts:450`). The operation reads the target, defaults the new type to the target's, renders the new article, and places it. The store counts the target's own path as vacated only for an explicit path, and the CLI passes none (`freePathFor` at `packages/store/src/store.ts:428-468`). Then, under one journal, it archives the target with its stamps, writes the new file with a `supersedes` link to the archive path, and makes one commit (`correctMemory` at `packages/store/src/store.ts:1041-1140`). The target's stamps include `memhtml-superseded-by`, and a `memhtml-valid-until` unless it already states an earlier one. The new file gets a `memhtml-valid-from` when it states none (`packages/store/src/store.ts:1090-1123`). The operation then reindexes and records a `corrected` session link.
+Supersedes a memory (`correctMemory` at `apps/cli/src/operations.ts:1062-1090`). The dispatch arm checks the store's `v1Doors` policy first (`guardV1Door` at `apps/cli/src/run.ts:450`). The operation reads the target, defaults the new type to the target's, renders the new article, and places it. The store counts the target's own path as vacated only for an explicit path, and the CLI passes none (`freePathFor` at `packages/store/src/store.ts:432-472`). Then, under one journal, it archives the target with its stamps, writes the new file with a `supersedes` link to the archive path, and makes one commit (`correctMemory` at `packages/store/src/store.ts:1045-1144`). The target's stamps include `memhtml-superseded-by`, and a `memhtml-valid-until` unless it already states an earlier one. The new file gets a `memhtml-valid-from` when it states none (`packages/store/src/store.ts:1094-1127`). The operation then reindexes and records a `corrected` session link.
 
 Arguments:
 
@@ -464,21 +464,21 @@ A caller reads `path`, `archivedPath`, `commitSha`, and `contentHash` (`CorrectR
 
 The correction inherits the type and nothing else. The operation passes no workspace, tags, entities, importance, confidence, task status, due date, or links, so placement comes from the type and the new title (`apps/cli/src/operations.ts:1070-1083`). A correction of a `projects/<ws>/` memory can land in `areas/inbox/`.
 
-`--reason` is accepted and recorded nowhere. The store never reads it, and the commit subject is built from the title (`packages/store/src/store.ts:1127`).
+`--reason` is accepted and recorded nowhere. The store never reads it, and the commit subject is built from the title (`packages/store/src/store.ts:1131`).
 
 There's no dedupe on this path. A correction whose article matches another active memory, tasks aside, commits, and every later reindex fails until one copy is archived (`files_content_hash_active` at `packages/index/migrations/0008_tasks.sql:126-127`). See [What a failed write leaves behind](#what-a-failed-write-leaves-behind).
 
 Errors:
 
-- `ERR_SESSION_BOUND` (exit 2) when `MEMHTML_SESSION` is set and the store's `v1Doors` is `closed-in-session` (the default) or `closed`, and `ERR_V1_DOOR_CLOSED` (exit 2) when `v1Doors` is `closed` and no session is set (`sessionBoundRefusal` at `apps/cli/src/run.ts:989-1002`). Nothing is opened. See [Run sessions and the v1 doors](#run-sessions-and-the-v1-doors).
-- `ERR_STORE_CONFIG` (exit 1) when the store's `memhtml.config.json` exists and can't be read or doesn't decode (`loadStorePolicy` at `apps/cli/src/store-config.ts:64-93`, `apps/cli/src/run.ts:1701-1709`).
+- `ERR_SESSION_BOUND` (exit 2) when `MEMHTML_SESSION` is set and the store's `v1Doors` is `closed-in-session` (the default) or `closed`, and `ERR_V1_DOOR_CLOSED` (exit 2) when `v1Doors` is `closed` and no session is set (`sessionBoundRefusal` at `apps/cli/src/run.ts:1003-1016`). Nothing is opened. See [Run sessions and the v1 doors](#run-sessions-and-the-v1-doors).
+- `ERR_STORE_CONFIG` (exit 1) when the store's `memhtml.config.json` exists and can't be read or doesn't decode (`loadStorePolicy` at `apps/cli/src/store-config.ts:64-93`, `apps/cli/src/run.ts:1715-1723`).
 - `ERR_PATH_NOT_FOUND` (exit 1) when no file is at `<target>`.
-- `ERR_INVALID_MEMORY` (exit 1) when the target doesn't parse, or when the new article fails the render gate or the parse that reads its valid-from (`renderChecked` and `validFromOf` at `packages/store/src/store.ts:1058-1066`).
+- `ERR_INVALID_MEMORY` (exit 1) when the target doesn't parse, or when the new article fails the render gate or the parse that reads its valid-from (`renderChecked` and `validFromOf` at `packages/store/src/store.ts:1062-1070`).
 - `ERR_GIT` (exit 1) when `git mv` finds the archive path taken, which happens when a file at the same path was archived earlier the same year. The journal restores the tree.
-- `ERR_STORAGE` (exit 1) with operation `checkout.locked` when another writer holds the checkout lock through the whole 15-second wait. The store step runs under that lock, so nothing is written (`exclusive` at `packages/store/src/store.ts:1415-1419`).
+- `ERR_STORAGE` (exit 1) with operation `checkout.locked` when another writer holds the checkout lock through the whole 15-second wait. The store step runs under that lock, so nothing is written (`exclusive` at `packages/store/src/store.ts:1419-1423`).
 - `ERR_STORAGE` or `ERR_GIT` (exit 1) during the write, and the three `reindex` codes after the commit.
 
-Failure: a door refusal and everything before the journal leave the tree byte-identical. A failure under the journal restores the target and removes the new file, and an empty archive year directory can remain. The `state.access` row already moved to the archive path isn't restored (`hooks.onMove` at `packages/store/src/store.ts:607`). A restore that itself fails is logged and leaves the tree dirty. A failure after the commit landed keeps the commit, puts the target back at its old path, and removes the archive copy and the new file from the worktree. After the commit, a retry fails with `ERR_PATH_NOT_FOUND` because the target moved, so it can't duplicate.
+Failure: a door refusal and everything before the journal leave the tree byte-identical. A failure under the journal restores the target and removes the new file, and an empty archive year directory can remain. The `state.access` row already moved to the archive path isn't restored (`hooks.onMove` at `packages/store/src/store.ts:611`). A restore that itself fails is logged and leaves the tree dirty. A failure after the commit landed keeps the commit, puts the target back at its old path, and removes the archive copy and the new file from the worktree. After the commit, a retry fails with `ERR_PATH_NOT_FOUND` because the target moved, so it can't duplicate.
 
 ## link
 
@@ -486,7 +486,7 @@ Failure: a door refusal and everything before the journal leave the tree byte-id
 memhtml link <src> <rel> <dst>
 ```
 
-Adds an authored `<link>` to the source file and commits it (`linkMemories` at `apps/cli/src/operations.ts:1099-1109`). The rel is decoded first. The store refuses a self-link, reads both files' types to check the endpoint classes, adds the link, and commits only if the file changed (`linkMemories` at `packages/store/src/store.ts:1319-1354`). It reindexes only after a commit. `link` creates no record, so it isn't one of the v1 record doors, and neither `v1Doors` nor a broken `memhtml.config.json` stops it (`RECORD_CREATING_V1_COMMANDS` at `apps/cli/src/doors.ts:44-76`).
+Adds an authored `<link>` to the source file and commits it (`linkMemories` at `apps/cli/src/operations.ts:1099-1109`). The rel is decoded first. The store refuses a self-link, reads both files' types to check the endpoint classes, adds the link, and commits only if the file changed (`linkMemories` at `packages/store/src/store.ts:1323-1358`). It reindexes only after a commit. `link` creates no record, so it isn't one of the v1 record doors, and neither `v1Doors` nor a broken `memhtml.config.json` stops it (`RECORD_CREATING_V1_COMMANDS` at `apps/cli/src/doors.ts:44-76`).
 
 Arguments:
 
@@ -496,17 +496,17 @@ Arguments:
 
 Response: `memory.linked`.
 
-A caller reads `commitSha`, `srcPath`, `dstPath`, and `rel` (`apps/cli/src/operations.ts:1108`). A null `commitSha` means the same rel and href were already present, or the source had no head to insert into (`addLink` at `packages/html/src/editors.ts:226-238`, `packages/store/src/store.ts:1339`).
+A caller reads `commitSha`, `srcPath`, `dstPath`, and `rel` (`apps/cli/src/operations.ts:1108`). A null `commitSha` means the same rel and href were already present, or the source had no head to insert into (`addLink` at `packages/html/src/editors.ts:226-238`, `packages/store/src/store.ts:1343`).
 
-The rel vocabulary is `AUTHORABLE_RELS`, the nine `MEMORY_RELS` plus the two `TASK_RELS`, `blocks` and `subtask_of` (`AUTHORABLE_RELS` at `apps/cli/src/operations.ts:124`, `TASK_RELS` at `packages/contracts/src/edges.ts:54`). A task rel needs two tasks, and a memory rel refuses a task endpoint (`requireEndpointClasses` at `packages/store/src/store.ts:1275-1307`).
+The rel vocabulary is `AUTHORABLE_RELS`, the nine `MEMORY_RELS` plus the two `TASK_RELS`, `blocks` and `subtask_of` (`AUTHORABLE_RELS` at `apps/cli/src/operations.ts:124`, `TASK_RELS` at `packages/contracts/src/edges.ts:54`). A task rel needs two tasks, and a memory rel refuses a task endpoint (`requireEndpointClasses` at `packages/store/src/store.ts:1279-1311`).
 
-The idempotence is an exact match on rel and href, where href is `/` plus the normalized `<dst>` (`packages/html/src/editors.ts:231-235`). Normalizing strips leading slashes, doubled slashes, and a trailing slash, and nothing else (`normalizePath` at `packages/contracts/src/paths.ts:57-60`). So a `<dst>` spelled with a `./` segment is a different href. It adds a second link, and the source then fails the format check, which refuses a `.` segment in an href (`isRootRelativeHref` at `packages/html/src/constraints.ts:97-105`).
+The idempotence is an exact match on rel and href, where href is `/` plus the normalized `<dst>` (`packages/html/src/editors.ts:231-235`). Normalizing strips leading slashes, doubled slashes, and a trailing slash, and nothing else (`normalizePath` at `packages/contracts/src/paths.ts:57-60`). So a `<dst>` spelled with a `./` segment is a different href. It adds a second link, and the source then fails the format check, which refuses a `.` segment in an href (`isRootRelativeHref` at `packages/html/src/constraints.ts:99-107`).
 
 Errors:
 
-- `ERR_INVALID_MEMORY` (exit 1) for a rel outside the vocabulary, a self-link, or an endpoint class mismatch (`decodeAuthorableRel` at `apps/cli/src/operations.ts:140-147`, `packages/store/src/store.ts:1327-1333`).
+- `ERR_INVALID_MEMORY` (exit 1) for a rel outside the vocabulary, a self-link, or an endpoint class mismatch (`decodeAuthorableRel` at `apps/cli/src/operations.ts:140-147`, `packages/store/src/store.ts:1331-1337`).
 - `ERR_PATH_NOT_FOUND` (exit 1) when either endpoint has no file.
-- `ERR_STORAGE` (exit 1) with operation `checkout.locked` when another writer holds the checkout lock through the whole 15-second wait. Nothing is written (`exclusive` at `packages/store/src/store.ts:1415-1431`).
+- `ERR_STORAGE` (exit 1) with operation `checkout.locked` when another writer holds the checkout lock through the whole 15-second wait. Nothing is written (`exclusive` at `packages/store/src/store.ts:1419-1435`).
 - `ERR_STORAGE` or `ERR_GIT` (exit 1) during the write, and the three `reindex` codes after the commit.
 
 Failure: a refused link writes nothing. A failure under the journal restores the source's bytes. A restore that itself fails is logged and leaves the tree dirty. A failure after the commit landed keeps the commit and puts the pre-link bytes back in the worktree. After a commit followed by a failed `reindex`, a retry finds the link present, returns a null `commitSha`, and skips `reindex`, so the index stays without the edge until the next `index update`.
@@ -533,7 +533,7 @@ Response: `memory.neighbors`.
 
 A caller reads `center`, `depth`, `limit`, `nodes` (each with `path`, `title`, `hop`, `rel`, and `derived`), `edges`, `nodesDropped`, and `scanSaturated` (`apps/cli/src/operations.ts:1364-1383`). `depth` and `limit` echo the clamped values. `edges` is the count of distinct edges the walk enumerated. `nodesDropped` counts the paths the walk reached and the limit turned away. `scanSaturated` is true when the statement hit its own 10000-row cap, which no limit recovers.
 
-`derived` is true when any edge reaching the node is a derived edge, a row with a stored derived provenance. No command in this build writes one, and a rebuild empties `edges`, so `derived` is `false` on any index this build rebuilt (`packages/index/migrations/0008_tasks.sql:184-200`, `MEMORY_TABLES` at `packages/index/src/schema-const.ts:49-58`).
+`derived` is true when any edge reaching the node is a derived edge, a row with a stored derived provenance. No command in this build writes one, and a rebuild empties `edges`, so `derived` is `false` on any index this build rebuilt (`packages/index/migrations/0008_tasks.sql:184-200`, `MEMORY_TABLES` at `packages/index/src/schema-const.ts:51-60`).
 
 `--depth` is clamped to 1 or 2, and `--limit` is clamped to 1 through `NEIGHBORS_LIMIT`, 200 (`apps/cli/src/operations.ts:1166`, `apps/cli/src/operations.ts:1294-1298`). Neither is refused. Archived nodes are included.
 
@@ -561,9 +561,9 @@ A caller reads `requested`, `path`, `hops`, `steps` (each `from`, `to`, and `via
 
 The answer describes the commit named in `indexedCommit`, which can trail HEAD. `unindexed` can mean the path never existed, or that the index hasn't seen the commit holding it, such as a record a session commit landed before the next `index update`.
 
-`hops: 0` with `live` doesn't mean the bytes are unchanged, because several writes edit a file in place at its own path. `link` adds its `<link>` to the source file (`packages/store/src/store.ts:1343-1352`). `task status` to any status but `done` rewrites the task's status and updated metas (`apps/cli/src/operations.ts:2009-2028`). `doctor --fix` rewrites or drops a dangling link in the file that holds it (`apps/cli/src/doctor.ts:484-509`). A session commit's `link`, `unlink`, `label`, and `unlabel` ops rewrite the file they name, and `session exec` harvests an edit to an existing file into those ops (`stage` at `packages/session/src/commit.ts:112-174`, `apps/cli/src/session-exec.ts:305-313`). A path that an archive or a correction vacated can also be taken again by a later write with the same title and placement, and `resolve` then answers that later file at `hops: 0` (`apps/cli/src/operations.ts:1552-1571`).
+`hops: 0` with `live` doesn't mean the bytes are unchanged, because several writes edit a file in place at its own path. `link` adds its `<link>` to the source file (`packages/store/src/store.ts:1347-1356`). `task status` to any status but `done` rewrites the task's status and updated metas (`apps/cli/src/operations.ts:2009-2028`). `doctor --fix` rewrites or drops a dangling link in the file that holds it (`apps/cli/src/doctor.ts:484-509`). A session commit's `link`, `unlink`, `label`, and `unlabel` ops rewrite the file they name, and `session exec` harvests an edit to an existing file into those ops (`stage` at `packages/session/src/commit.ts:112-174`, `apps/cli/src/session-exec.ts:305-313`). A path that an archive or a correction vacated can also be taken again by a later write with the same title and placement, and `resolve` then answers that later file at `hops: 0` (`apps/cli/src/operations.ts:1552-1571`).
 
-A CLI correction always lands at a new path. `correct` passes no path, so the target is still on disk when the slug is chosen, and one that keeps its title and placement takes the next `-N` suffix, such as `-2` (`freePathFor` at `packages/store/src/store.ts:428-468`).
+A CLI correction always lands at a new path. `correct` passes no path, so the target is still on disk when the slug is chosen, and one that keeps its title and placement takes the next `-N` suffix, such as `-2` (`freePathFor` at `packages/store/src/store.ts:432-472`).
 
 Errors:
 
@@ -577,7 +577,7 @@ Failure: `resolve` writes nothing. It reads the watermark and then one or two st
 memhtml archive <path> --reason <reason>
 ```
 
-Soft-evicts a memory (`archiveMemory` at `apps/cli/src/operations.ts:1112-1120`). The store reads the file, then under a journal moves it with `git mv` into `archive/<YYYY>/<path>`, writes the archive stamps, stages it, mirrors the access row, and commits (`archiveMemory` at `packages/store/src/store.ts:1142-1168`). The store step runs under the checkout lock (`exclusive` at `packages/store/src/store.ts:1415-1429`). The operation reindexes after the commit.
+Soft-evicts a memory (`archiveMemory` at `apps/cli/src/operations.ts:1112-1120`). The store reads the file, then under a journal moves it with `git mv` into `archive/<YYYY>/<path>`, writes the archive stamps, stages it, mirrors the access row, and commits (`archiveMemory` at `packages/store/src/store.ts:1146-1172`). The store step runs under the checkout lock (`exclusive` at `packages/store/src/store.ts:1419-1433`). The operation reindexes after the commit.
 
 Arguments:
 
@@ -591,7 +591,7 @@ Response: `memory.archived`.
 
 A caller reads `path`, `archivePath`, and `commitSha` (`ArchiveResult` at `packages/store/src/store.ts:170-174`).
 
-`--reason` appears only in the commit subject, `memhtml(archive): <path> — <reason>` (`packages/store/src/store.ts:1162`). The `<path> — <reason>` part is cut to 72 characters, so a long path can leave no trace of the reason (`commitSubject` at `packages/store/src/plumbing.ts:393-398`). It isn't stamped into the file. The file isn't parsed, so an archived path archives again into a nested `archive/<YYYY>/archive/<YYYY>/`.
+`--reason` appears only in the commit subject, `memhtml(archive): <path> — <reason>` (`packages/store/src/store.ts:1166`). The `<path> — <reason>` part is cut to 72 characters, so a long path can leave no trace of the reason (`commitSubject` at `packages/store/src/plumbing.ts:393-398`). It isn't stamped into the file. The file isn't parsed, so an archived path archives again into a nested `archive/<YYYY>/archive/<YYYY>/`.
 
 Errors:
 
@@ -600,7 +600,7 @@ Errors:
 - `ERR_STORAGE` (exit 1) with operation `checkout.locked` when another writer holds the checkout lock through the whole 15-second wait. Nothing is written.
 - `ERR_STORAGE` or `ERR_GIT` (exit 1) during the move or commit, and the three `reindex` codes after the commit.
 
-Failure: a refusal writes nothing. A failure under the journal puts the file back, but the `state.access` row already moved to the archive path isn't restored (`makeJournal` at `packages/store/src/store.ts:1151-1165`, `hooks.onMove` at `packages/store/src/store.ts:607`). A restore that itself fails is logged and leaves the tree dirty. A failure after the commit landed keeps the commit, puts the file back at its old path, and removes the archive copy from the worktree. A failure to mirror the access row is logged only (`onMove` at `apps/cli/src/api-layer.ts:197-205`). After the commit, a retry fails with `ERR_PATH_NOT_FOUND`.
+Failure: a refusal writes nothing. A failure under the journal puts the file back, but the `state.access` row already moved to the archive path isn't restored (`makeJournal` at `packages/store/src/store.ts:1155-1169`, `hooks.onMove` at `packages/store/src/store.ts:611`). A restore that itself fails is logged and leaves the tree dirty. A failure after the commit landed keeps the commit, puts the file back at its old path, and removes the archive copy from the worktree. A failure to mirror the access row is logged only (`onMove` at `apps/cli/src/api-layer.ts:197-205`). After the commit, a retry fails with `ERR_PATH_NOT_FOUND`.
 
 ## reinforce
 
@@ -694,7 +694,7 @@ Failure: `entity activity` writes nothing, and its one statement is one consiste
 memhtml task add --title <title> [--status todo] [--due <iso>]
 ```
 
-Opens a task. It checks the store's `v1Doors` policy first, once before validation when the root is known and again in the dispatch arm (`apps/cli/src/run.ts:1701-1712`, `guardV1Door` at `apps/cli/src/run.ts:539`). The arm then calls `writeMemory` with type `task` and the claim defaulting to the title, so the store path is the one `write` takes (`apps/cli/src/run.ts:537-570`). The status and due date are decoded only for tasks (`apps/cli/src/operations.ts:306-313`).
+Opens a task. It checks the store's `v1Doors` policy first, once before validation when the root is known and again in the dispatch arm (`apps/cli/src/run.ts:1715-1726`, `guardV1Door` at `apps/cli/src/run.ts:539`). The arm then calls `writeMemory` with type `task` and the claim defaulting to the title, so the store path is the one `write` takes (`apps/cli/src/run.ts:537-570`). The status and due date are decoded only for tasks (`apps/cli/src/operations.ts:306-313`).
 
 Flags:
 
@@ -714,16 +714,16 @@ Response: `task.written`.
 
 A caller reads `path`, `created`, `deduped`, `existingPath`, `taskStatus`, `dueAt`, and `commitSha` (`apps/cli/src/run.ts:556-568`). `taskStatus` and `dueAt` echo the flags. They aren't read back from the file.
 
-Two tasks are never deduped against each other, so every retry opens a new `-N` file. The single-write path still asks the dedupe question, though, and the lookup excludes stored tasks and archived memories (`activePathForHash` at `packages/index/src/traces-persist.ts:196-203`). So a task whose article matches an active non-task memory returns that memory's path with `deduped: true`, and no task is written (`writeMemory` at `packages/store/src/store.ts:718-740`). `--status done` opens a task that isn't archived. `task status <path> done` then reports `unchanged: true` and archives nothing, because the `unchanged` return comes first (`apps/cli/src/operations.ts:1999-2007`). Use `memhtml archive` to close it.
+Two tasks are never deduped against each other, so every retry opens a new `-N` file. The single-write path still asks the dedupe question, though, and the lookup excludes stored tasks and archived memories (`activePathForHash` at `packages/index/src/traces-persist.ts:196-203`). So a task whose article matches an active non-task memory returns that memory's path with `deduped: true`, and no task is written (`writeMemory` at `packages/store/src/store.ts:722-744`). `--status done` opens a task that isn't archived. `task status <path> done` then reports `unchanged: true` and archives nothing, because the `unchanged` return comes first (`apps/cli/src/operations.ts:1999-2007`). Use `memhtml archive` to close it.
 
 Errors:
 
-- `ERR_SESSION_BOUND` (exit 2) when `MEMHTML_SESSION` is set and the store's `v1Doors` is `closed-in-session` (the default) or `closed`, and `ERR_V1_DOOR_CLOSED` (exit 2) when `v1Doors` is `closed` and no session is set (`sessionBoundRefusal` at `apps/cli/src/run.ts:989-1002`, `v1DoorState` at `apps/cli/src/store-config.ts:111-118`). Nothing is opened. See [Run sessions and the v1 doors](#run-sessions-and-the-v1-doors).
-- `ERR_STORE_CONFIG` (exit 1) when the store's `memhtml.config.json` exists and can't be read or doesn't decode (`loadStorePolicy` at `apps/cli/src/store-config.ts:64-93`, `apps/cli/src/run.ts:1705-1706`).
+- `ERR_SESSION_BOUND` (exit 2) when `MEMHTML_SESSION` is set and the store's `v1Doors` is `closed-in-session` (the default) or `closed`, and `ERR_V1_DOOR_CLOSED` (exit 2) when `v1Doors` is `closed` and no session is set (`sessionBoundRefusal` at `apps/cli/src/run.ts:1003-1016`, `v1DoorState` at `apps/cli/src/store-config.ts:111-118`). Nothing is opened. See [Run sessions and the v1 doors](#run-sessions-and-the-v1-doors).
+- `ERR_STORE_CONFIG` (exit 1) when the store's `memhtml.config.json` exists and can't be read or doesn't decode (`loadStorePolicy` at `apps/cli/src/store-config.ts:64-93`, `apps/cli/src/run.ts:1719-1720`).
 - `ERR_INVALID_MEMORY` (exit 1) for a `--due` outside `YYYY-MM-DD` or `YYYY-MM-DDThh:mm:ssZ`, or a render-gate refusal (`decodeDueAt` at `apps/cli/src/operations.ts:167-174`).
-- The other write and `reindex` codes of `write`, except `ERR_WRITE_CONFLICT`, which only an explicit `--path` can raise (`freePathFor` at `packages/store/src/store.ts:428-468`). `task add` has no `--path`.
+- The other write and `reindex` codes of `write`, except `ERR_WRITE_CONFLICT`, which only an explicit `--path` can raise (`freePathFor` at `packages/store/src/store.ts:432-472`). `task add` has no `--path`.
 
-Failure: as `write`. The store write runs inside `exclusive`, so a `checkout.locked` refusal comes before the render and leaves the tree as it was (`packages/store/src/store.ts:1425`).
+Failure: as `write`. The store write runs inside `exclusive`, so a `checkout.locked` refusal comes before the render and leaves the tree as it was (`packages/store/src/store.ts:1429`).
 
 ## task status
 
@@ -731,7 +731,7 @@ Failure: as `write`. The store write runs inside `exclusive`, so a `checkout.loc
 memhtml task status <path> <status> [--reason <reason>]
 ```
 
-Moves a task's status (`setTaskStatus` at `apps/cli/src/operations.ts:1976-2059`). It decodes the status, parses the file, refuses a non-task, and returns early when the status is unchanged. Otherwise it stamps the head metas `memhtml-task-status` and `memhtml-updated`. For `todo`, `doing`, and `blocked` it writes the file, stages it, and commits inside `store.exclusive`, which holds the per-process permit and the checkout lock, and then reindexes (`apps/cli/src/operations.ts:2020-2030`, `exclusive` at `packages/store/src/store.ts:1416-1419`). For `done` it writes the stamped file and then archives the task through `archiveMemory`, which takes the lock for the move and the commit, with the reason `--reason` or `task done`, and then reindexes (`apps/cli/src/operations.ts:2048-2050`). No `v1Doors` mode closes it, because it edits an existing record and creates none (`apps/cli/src/doors.ts:9-13`).
+Moves a task's status (`setTaskStatus` at `apps/cli/src/operations.ts:1976-2059`). It decodes the status, parses the file, refuses a non-task, and returns early when the status is unchanged. Otherwise it stamps the head metas `memhtml-task-status` and `memhtml-updated`. For `todo`, `doing`, and `blocked` it writes the file, stages it, and commits inside `store.exclusive`, which holds the per-process permit and the checkout lock, and then reindexes (`apps/cli/src/operations.ts:2020-2030`, `exclusive` at `packages/store/src/store.ts:1420-1423`). For `done` it writes the stamped file and then archives the task through `archiveMemory`, which takes the lock for the move and the commit, with the reason `--reason` or `task done`, and then reindexes (`apps/cli/src/operations.ts:2048-2050`). No `v1Doors` mode closes it, because it edits an existing record and creates none (`apps/cli/src/doors.ts:9-13`).
 
 Arguments:
 
@@ -749,12 +749,12 @@ A caller reads `path`, `taskStatus`, `archived`, `archivePath`, `commitSha`, and
 Errors:
 
 - `ERR_INVALID_MEMORY` (exit 1) for a status outside `TASK_STATUSES`, a file that isn't a task, or a file that doesn't parse (`decodeTaskStatus` at `apps/cli/src/operations.ts:150-157`, `apps/cli/src/operations.ts:1986-1992`).
-- `ERR_PATH_NOT_FOUND` (exit 1) when no file is at the path (`readRaw` at `packages/store/src/store.ts:479-484`).
+- `ERR_PATH_NOT_FOUND` (exit 1) when no file is at the path (`readRaw` at `packages/store/src/store.ts:483-488`).
 - `ERR_STORAGE` (exit 1) as `task.write:<path>`, and `ERR_GIT` (exit 1) from `add`, `commit`, or the archive move.
 - `ERR_STORAGE` (exit 1) as `checkout.locked` when another writer of the checkout holds `.memhtml/checkout.lock` for the whole 15 s wait (`withCheckoutLock` at `packages/store/src/checkout-lock.ts:39-44`).
 - The three `reindex` codes after the commit.
 
-Failure: for `todo`, `doing`, and `blocked`, a `checkout.locked` failure comes before the write and leaves the file as it was. The stamp write isn't journaled, so a failed stage or commit leaves the file modified and possibly staged (`apps/cli/src/operations.ts:2014-2029`). The next v1 write's commit then includes a staged stamp, because `commit` commits the whole index (`commit` at `packages/store/src/git.ts:403-422`). For `done`, the stamp is written before `archiveMemory` takes the lock, and the archive journal records the already-stamped bytes. A failed archive, `checkout.locked` included, leaves the stamped file in place and unstaged. When the failure comes after the move, the `state.access` row already moved to the archive path isn't restored (`stageArchive` at `packages/store/src/store.ts:580-609`). A retry after a landed commit reports `unchanged: true` for a non-`done` status and `ERR_PATH_NOT_FOUND` for `done`.
+Failure: for `todo`, `doing`, and `blocked`, a `checkout.locked` failure comes before the write and leaves the file as it was. The stamp write isn't journaled, so a failed stage or commit leaves the file modified and possibly staged (`apps/cli/src/operations.ts:2014-2029`). The next v1 write's commit then includes a staged stamp, because `commit` commits the whole index (`commit` at `packages/store/src/git.ts:403-422`). For `done`, the stamp is written before `archiveMemory` takes the lock, and the archive journal records the already-stamped bytes. A failed archive, `checkout.locked` included, leaves the stamped file in place and unstaged. When the failure comes after the move, the `state.access` row already moved to the archive path isn't restored (`stageArchive` at `packages/store/src/store.ts:584-613`). A retry after a landed commit reports `unchanged: true` for a non-`done` status and `ERR_PATH_NOT_FOUND` for `done`.
 
 ## task list
 
@@ -806,7 +806,7 @@ A caller reads `mode: "rebuild"`, `headSha`, `filesIndexed`, `chunksIndexed`, `e
 
 A rebuild keeps its vectors only in the configured space. `truncateForRebuild` stashes the `embeddings` rows of that space in a temporary table and deletes the memory tables in one transaction (`packages/index/src/indexer.ts:398-416`). After the projections land it re-inserts every stashed row whose chunk id exists again (`packages/index/src/indexer.ts:426-437`). On a model change the stash is empty and every old vector is gone.
 
-The truncate deletes every `edges` row, and the reprojection writes back only the authored edges each file's `<link rel="memhtml-*">` elements state, with `derived = 0` (`MEMORY_TABLES` at `packages/index/src/schema-const.ts:49-58`, `authoredEdgesFor` at `packages/index/src/project.ts:352-370`). Derived edges (`derived = 1`) exist only in the index, and no command in this build writes them. So a rebuild drops every derived edge for good. An `index update` keeps them, because a file's reprojection deletes only its own `derived = 0` edges (`packages/index/src/project.ts:241`). A source file that leaves the corpus takes all its edges with it (`deletePath` at `packages/index/src/indexer.ts:740-743`).
+The truncate deletes every `edges` row, and the reprojection writes back only the authored edges each file's `<link rel="memhtml-*">` elements state, with `derived = 0` (`MEMORY_TABLES` at `packages/index/src/schema-const.ts:51-60`, `authoredEdgesFor` at `packages/index/src/project.ts:352-370`). Derived edges (`derived = 1`) exist only in the index, and no command in this build writes them. So a rebuild drops every derived edge for good. An `index update` keeps them, because a file's reprojection deletes only its own `derived = 0` edges (`packages/index/src/project.ts:241`). A source file that leaves the corpus takes all its edges with it (`deletePath` at `packages/index/src/indexer.ts:740-743`).
 
 Errors:
 
@@ -875,7 +875,7 @@ Errors:
 
 `--no-embed` over a store with vectors is allowed. Only `rebuild` has the interlock.
 
-Failure: projection writes go in transactions of 500 statements, and the watermark is written after them (`applyProjectionWrites` and `writeState` at `packages/index/src/indexer.ts:994-995`, `WRITE_BATCH_SIZE` at `packages/index/src/schema-const.ts:87`). An interrupted update leaves its committed batches in place under the old watermark, with no stale marker, until the next update or write re-applies them. The watermark advances before embedding. An embedding failure still advances it. A later update fills those chunks only if it projects them again. `index embed` and `index rebuild --embed` fill them store-wide.
+Failure: projection writes go in transactions of 500 statements, and the watermark is written after them (`applyProjectionWrites` and `writeState` at `packages/index/src/indexer.ts:994-995`, `WRITE_BATCH_SIZE` at `packages/index/src/schema-const.ts:89`). An interrupted update leaves its committed batches in place under the old watermark, with no stale marker, until the next update or write re-applies them. The watermark advances before embedding. An embedding failure still advances it. A later update fills those chunks only if it projects them again. `index embed` and `index rebuild --embed` fill them store-wide.
 
 ## index status
 
@@ -913,7 +913,7 @@ Errors:
 
 - `ERR_STORAGE` (exit 1) for a trace directory that can't be listed, or a database error. A missing trace root succeeds with zeros (`readDirOrEmpty` at `packages/traces/src/discover.ts:67-83`), and an unreadable file counts in `filesFailed` and keeps its watermark (`readFailed` at `packages/traces/src/scan.ts:126-143`).
 
-Failure: nothing is written until the scan finishes. Each file's row, prompts, and watermark then commit in one transaction, so an interruption keeps the files already persisted. Two concurrent runs aren't locked against each other. Trace tables survive `index rebuild` (`TRACE_TABLES` at `packages/index/src/schema-const.ts:61`).
+Failure: nothing is written until the scan finishes. Each file's row, prompts, and watermark then commit in one transaction, so an interruption keeps the files already persisted. Two concurrent runs aren't locked against each other. Trace tables survive `index rebuild` (`TRACE_TABLES` at `packages/index/src/schema-const.ts:63`).
 
 ## trace search
 
@@ -1032,7 +1032,7 @@ A caller reads `healthy` first. The findings are `dangling`, `orphanAccessRows`,
 
 `healthy` (`apps/cli/src/doctor.ts:638-664`) leaves out `overdueTasks`, `staleBlockers`, `untypedEntities`, and `dirty`. `vectorCoverageLow` is true only when a vector exists or an embedder is bound, and coverage is under the floor (`apps/cli/src/doctor.ts:628-629`). `unparseable` also lists indexed paths whose file is gone (`collectWarnings` at `apps/cli/src/doctor.ts:410-432`).
 
-Doctor reads the index and the memory files the index lists. It doesn't read `memhtml.config.json` or any session's state. `dirty` is every path `git status` reports that git doesn't ignore, so an uncommitted `memhtml.config.json` appears there (`dirtyPaths` at `packages/store/src/store.ts:1356-1363`). A session's files under `.memhtml/sessions/` don't, because the store's `.gitignore` ignores them, and a store scaffolded before 0.16 gets the same pattern in `.git/info/exclude` when a session starts (`GITIGNORE` at `packages/store/src/layout.ts:84-89`, `ensureExcludedQuietly` at `packages/session/src/session.ts:256`).
+Doctor reads the index and the memory files the index lists. It doesn't read `memhtml.config.json` or any session's state. `dirty` is every path `git status` reports that git doesn't ignore, so an uncommitted `memhtml.config.json` appears there (`dirtyPaths` at `packages/store/src/store.ts:1360-1367`). A session's files under `.memhtml/sessions/` don't, because the store's `.gitignore` ignores them, and a store scaffolded before 0.16 gets the same pattern in `.git/info/exclude` when a session starts (`GITIGNORE` at `packages/store/src/layout.ts:84-89`, `ensureExcludedQuietly` at `packages/session/src/session.ts:256`).
 
 Errors:
 
@@ -1050,7 +1050,7 @@ memhtml config
 memhtml config --repo ~/memhtml
 ```
 
-Shows the policy the store runs under and the process tuning this environment sets, each value with its source (`configReport` at `apps/cli/src/config-report.ts:83-84`). It reads `memhtml.config.json` from the store root's working tree, asks git whether that file is committed, and reads three environment variables. It builds no app layer, so it answers on a store whose index was never built (`apps/cli/src/run.ts:1990-2003`).
+Shows the policy the store runs under and the process tuning this environment sets, each value with its source (`configReport` at `apps/cli/src/config-report.ts:83-84`). It reads `memhtml.config.json` from the store root's working tree, asks git whether that file is committed, and reads three environment variables. It builds no app layer, so it answers on a store whose index was never built (`apps/cli/src/run.ts:2004-2017`).
 
 This command takes no arguments and no flags (`apps/cli/src/commands.ts:875-883`).
 
@@ -1067,7 +1067,7 @@ The file is read again by every command that needs it, so what `config` shows is
 Errors:
 
 - `ERR_STORE_CONFIG` (exit 1) when the file exists and can't be read or doesn't decode, naming what's wrong. The suggestions are `memhtml config` and an edit of the file (`StoreConfigInvalid` at `apps/cli/src/errors.ts:256-261`).
-- `ERR_REPO_REQUIRED` (exit 2) under `MEMHTML_REFUSE_ENV_ROOT` with no `--repo` (`ROOT_WITHOUT_LAYER` at `apps/cli/src/run.ts:1207`).
+- `ERR_REPO_REQUIRED` (exit 2) under `MEMHTML_REFUSE_ENV_ROOT` with no `--repo` (`ROOT_WITHOUT_LAYER` at `apps/cli/src/run.ts:1221`).
 
 Failure: `config` writes nothing. A root with no git repository answers with `git: unknown`, and a root that doesn't exist answers with every key at its default.
 
@@ -1077,7 +1077,7 @@ Failure: `config` writes nothing. A root with no git repository answers with `gi
 memhtml eval discriminate [--mode fake] [--seed <n>] [--now <ms>] [--size 200] [--probes 36] [--mrr-floor 0.85]
 ```
 
-The refusable retrieval gate. It generates a fixture corpus in a temporary directory with an in-memory database, indexes it through the real ranking stack, and requires every probe's target to outrank each of its wrong-fact controls, with mean reciprocal rank at or above the floor (`runDiscrimination` called at `apps/cli/src/run.ts:1755-1784`, `passed` at `packages/eval/src/discriminate.ts:218`). It builds no app layer and opens no root.
+The refusable retrieval gate. It generates a fixture corpus in a temporary directory with an in-memory database, indexes it through the real ranking stack, and requires every probe's target to outrank each of its wrong-fact controls, with mean reciprocal rank at or above the floor (`runDiscrimination` called at `apps/cli/src/run.ts:1769-1798`, `passed` at `packages/eval/src/discriminate.ts:218`). It builds no app layer and opens no root.
 
 Flags:
 
@@ -1094,8 +1094,8 @@ A caller reads `passed`, `mrr`, `mrrFloor`, `probes`, `discriminated`, `inversio
 
 Errors:
 
-- `ERR_DISCRIMINATION_FAILED` (exit 1) for any inversion, an MRR under the floor, zero probes, or `--mode live` without `AWS_BEARER_TOKEN_BEDROCK` (`DiscriminationFailed` at `apps/cli/src/run.ts:1768-1772`, `packages/eval/src/run.ts:94-123`). The failure envelope has no `data`, so `seed`, `now`, and the inversions aren't in it. The one suggestion is `memhtml eval discriminate` with no flags, which runs the gate again at the default seed and the current clock (the `DiscriminationFailed` entry at `apps/cli/src/errors.ts:237`).
-- `ERR_UNKNOWN` (exit 1) for anything else (`apps/cli/src/run.ts:1773-1777`).
+- `ERR_DISCRIMINATION_FAILED` (exit 1) for any inversion, an MRR under the floor, zero probes, or `--mode live` without `AWS_BEARER_TOKEN_BEDROCK` (`DiscriminationFailed` at `apps/cli/src/run.ts:1782-1786`, `packages/eval/src/run.ts:94-123`). The failure envelope has no `data`, so `seed`, `now`, and the inversions aren't in it. The one suggestion is `memhtml eval discriminate` with no flags, which runs the gate again at the default seed and the current clock (the `DiscriminationFailed` entry at `apps/cli/src/errors.ts:237`).
+- `ERR_UNKNOWN` (exit 1) for anything else (`apps/cli/src/run.ts:1787-1791`).
 
 An unparseable `--seed`, `--size`, `--probes`, or `--mrr-floor` falls back to its default silently (`int` and `num` at `apps/cli/src/run.ts:287-301`).
 
@@ -1110,7 +1110,7 @@ memhtml exec --file -
 cat script.mjs | memhtml exec
 ```
 
-Runs a read-only traversal script over a pinned commit in a sandbox (`execCommand` at `apps/cli/src/exec.ts:503-555`). It resolves the root, resolves `--sha` or HEAD, adds a detached git worktree for that commit in a temporary directory, mounts it read-only at `/mnt/memhtml`, runs the script under QuickJS through `js-exec`, and removes the worktree. The temporary directory is named `memhtml-corpus-snapshot-*` under the OS temp directory (`CORPUS_SNAPSHOT_TMPDIR_PREFIX` at `apps/cli/src/mount.ts:202`, `pinCorpusSnapshot` at `apps/cli/src/mount.ts:253-285`).
+Runs a read-only traversal script over a pinned commit in a sandbox (`execCommand` at `apps/cli/src/exec.ts:532-584`). It resolves the root, resolves `--sha` or HEAD, adds a detached git worktree for that commit in a temporary directory, mounts it read-only at `/mnt/memhtml`, runs the script under QuickJS through `js-exec`, and removes the worktree. The temporary directory is named `memhtml-corpus-snapshot-*` under the OS temp directory (`CORPUS_SNAPSHOT_TMPDIR_PREFIX` at `apps/cli/src/mount.ts:202`, `pinCorpusSnapshot` at `apps/cli/src/mount.ts:253-285`).
 
 Flags:
 
@@ -1121,20 +1121,20 @@ Flags:
 
 Response: `exec.report`.
 
-A caller reads `exitCode`, `stdout`, `stderr`, `timedOut`, `sha`, `corpusMount`, `durationMs`, and `timeoutMs` (`ExecReport` at `apps/cli/src/exec.ts:272-287`). `sha` is `--sha` as given, trimmed, so `--sha HEAD~1` reports `HEAD~1`. Without `--sha` it's the resolved HEAD (`apps/cli/src/exec.ts:512-516`). A script that exits non-zero is a success envelope at exit 0, and a script past `--timeout-ms` is `exitCode: 124` with `timedOut: true` (`apps/cli/src/run.ts:2041`).
+A caller reads `exitCode`, `stdout`, `stderr`, `timedOut`, `sha`, `corpusMount`, `durationMs`, and `timeoutMs` (`ExecReport` at `apps/cli/src/exec.ts:272-287`). `sha` is `--sha` as given, trimmed, so `--sha HEAD~1` reports `HEAD~1`. Without `--sha` it's the resolved HEAD (`apps/cli/src/exec.ts:541-545`). A script that exits non-zero is a success envelope at exit 0, and a script past `--timeout-ms` is `exitCode: 124` with `timedOut: true` (`apps/cli/src/run.ts:2055`).
 
 The bounds are constants. `DEFAULT_TIMEOUT_MS` is 30000 and `MAX_TIMEOUT_MS` is 600000 (`apps/cli/src/exec.ts:51`, `apps/cli/src/exec.ts:61`). The shell's own bound is the script's bound plus `SHELL_TIMEOUT_GRACE_MS`, 2000, so the script's bound fires first and its message names the limit (`apps/cli/src/exec.ts:70`, `apps/cli/src/exec.ts:411-418`). The mount is an `OverlayFs` with `readOnly: true` and `maxFileReadSize` set to `MAX_MOUNTED_FILE_READ_BYTES`, which is `Number.MAX_SAFE_INTEGER`, so a file over just-bash's 10 MB default reads in full (`mountReadOnlyRoots` at `apps/cli/src/mount.ts:172-192`, `apps/cli/src/mount.ts:45`). The sandbox is a `Bash` instance built with no network and no Python option, so no flag can turn either on (`apps/cli/src/exec.ts:411-418`). A gitignored `.memhtml/index.db` is absent from a worktree, so the script can't reach the ranked planes.
 
 Errors:
 
-- `ERR_INVALID_FLAG` (exit 2) for two script doors, an explicit `-` beside a door, or a `--timeout-ms` that isn't a positive integer up to the cap (`execFlags` at `apps/cli/src/run.ts:755-797`). Piped stdin beside a door is ignored, and the door's script runs (`apps/cli/src/run.ts:2010-2011`).
-- `ERR_MISSING_ARGUMENT` (exit 2) for a blank script (`apps/cli/src/run.ts:2013-2026`).
+- `ERR_INVALID_FLAG` (exit 2) for two script doors, an explicit `-` beside a door, or a `--timeout-ms` that isn't a positive integer up to the cap (`execFlags` at `apps/cli/src/run.ts:755-811`). Piped stdin beside a door is ignored, and the door's script runs (`apps/cli/src/run.ts:2024-2025`).
+- `ERR_MISSING_ARGUMENT` (exit 2) for a blank script (`apps/cli/src/run.ts:2027-2040`).
 - `ERR_PATH_NOT_FOUND` (exit 2) when `--file` can't be read (`readScript` at `apps/cli/src/exec.ts:466-476`).
-- `ERR_INVALID_MEMORY` (exit 1) when the commit can't be materialized, such as a bad `--sha` or an unborn HEAD (`InvalidMemory` at `apps/cli/src/exec.ts:517-547`), and when the read-only mount fails (`apps/cli/src/exec.ts:382-389`).
-- `ERR_GIT` (exit 1) when the root isn't a git repository and `--sha` is omitted, from the HEAD read (`revParseHead` at `apps/cli/src/exec.ts:512-516`). With `--sha` the same root answers `ERR_INVALID_MEMORY` and leaves a temporary directory behind.
+- `ERR_INVALID_MEMORY` (exit 1) when the commit can't be materialized, such as a bad `--sha` or an unborn HEAD (`InvalidMemory` at `apps/cli/src/exec.ts:546-576`), and when the read-only mount fails (`apps/cli/src/exec.ts:382-389`).
+- `ERR_GIT` (exit 1) when the root isn't a git repository and `--sha` is omitted, from the HEAD read (`revParseHead` at `apps/cli/src/exec.ts:541-545`). With `--sha` the same root answers `ERR_INVALID_MEMORY` and leaves a temporary directory behind.
 - `ERR_STORAGE` (exit 1) when a module fails to load, when the sandbox fails to seed or run, or when the bridge faults on all 3 attempts. A bridge fault reruns the script, so one call can run it up to 3 times (`BRIDGE_ATTEMPTS` at `apps/cli/src/exec.ts:234`, `withBridgeRetry` at `apps/cli/src/exec.ts:249-269`).
 
-Failure: the worktree is released by a scope finalizer, so a script failure, a timeout, and a typed failure all run the release (`apps/cli/src/exec.ts:538-547`). The release ignores a failed `git worktree remove`, so the `.git/worktrees` entry can remain, and it then removes the temporary directory (`release` at `apps/cli/src/mount.ts:266-283`). A bad `--sha` leaves an empty temporary directory, because the directory is made before the failing `git worktree add` (`apps/cli/src/mount.ts:257-261`). A killed process skips the finalizer and leaves the worktree and its `.git/worktrees` entry. `exec` never runs `git worktree prune`.
+Failure: the worktree is released by a scope finalizer, so a script failure, a timeout, and a typed failure all run the release (`apps/cli/src/exec.ts:567-576`). The release ignores a failed `git worktree remove`, so the `.git/worktrees` entry can remain, and it then removes the temporary directory (`release` at `apps/cli/src/mount.ts:266-283`). A bad `--sha` leaves an empty temporary directory, because the directory is made before the failing `git worktree add` (`apps/cli/src/mount.ts:257-261`). A killed process skips the finalizer and leaves the worktree and its `.git/worktrees` entry. `exec` never runs `git worktree prune`.
 
 ## state export
 
@@ -1187,7 +1187,7 @@ Failure: the upsert is one SQLite transaction, so a failure restores nothing and
 memhtml agents-doc [--check] [--out AGENTS.md]
 ```
 
-Renders `AGENTS.md` from the command table and writes it when it differs, or with `--check` compares without writing (`runAgentsDoc` at `apps/cli/src/agents-doc.ts:242-278`). It builds no app layer, so it scaffolds no root (`apps/cli/src/run.ts:1731-1739`).
+Renders `AGENTS.md` from the command table and writes it when it differs, or with `--check` compares without writing (`runAgentsDoc` at `apps/cli/src/agents-doc.ts:242-278`). It builds no app layer, so it scaffolds no root (`apps/cli/src/run.ts:1745-1753`).
 
 Flags:
 
@@ -1211,7 +1211,7 @@ Failure: `--check` never writes. Without it, an in-sync file isn't rewritten. An
 memhtml serve mcp
 ```
 
-Supervises the `memhtml-mcp` stdio server, 15 tools and 2 resource templates over the same root (`serveMcp` at `apps/cli/src/serve.ts:82-111`, `MemhtmlToolkit` at `apps/mcp/src/tools.ts:1041-1057`, `Resources` at `apps/mcp/src/resources.ts:323`). The templates are `memhtml://file/{path}` and `memhtml://at/{commit}/{path}` (`RESOURCE_TEMPLATES` at `apps/mcp/src/resources.ts:326`). It resolves the root, finds the server entry, spawns it with stdio inherited, and waits. It builds no app layer, so the parent holds no database handle (`apps/cli/src/run.ts:1946-1965`).
+Supervises the `memhtml-mcp` stdio server, 15 tools and 2 resource templates over the same root (`serveMcp` at `apps/cli/src/serve.ts:82-111`, `MemhtmlToolkit` at `apps/mcp/src/tools.ts:1041-1057`, `Resources` at `apps/mcp/src/resources.ts:323`). The templates are `memhtml://file/{path}` and `memhtml://at/{commit}/{path}` (`RESOURCE_TEMPLATES` at `apps/mcp/src/resources.ts:326`). It resolves the root, finds the server entry, spawns it with stdio inherited, and waits. It builds no app layer, so the parent holds no database handle (`apps/cli/src/run.ts:1960-1979`).
 
 This command takes no arguments and no command-specific flags (`apps/cli/src/commands.ts:1018-1024`).
 
@@ -1253,7 +1253,7 @@ A caller reads `id`, `baseSha`, `ref`, `ops` (always 0), and `head` (`apps/cli/s
 
 Errors:
 
-- `ERR_INVALID_FLAG` (exit 2) for an `--id` or a `MEMHTML_SESSION` that isn't a session id, and `ERR_MISSING_ARGUMENT` (exit 2) with neither (`sessionIdFlag` at `apps/cli/src/run.ts:922-957`).
+- `ERR_INVALID_FLAG` (exit 2) for an `--id` or a `MEMHTML_SESSION` that isn't a session id, and `ERR_MISSING_ARGUMENT` (exit 2) with neither (`sessionIdFlag` at `apps/cli/src/run.ts:936-971`).
 - `ERR_STORAGE` (exit 1) as `session.exists` when the id has a log and `--force` is absent, and as `session.locked` when another writer holds the id (`packages/session/src/session.ts:248-253`, `packages/session/src/session.ts:177-184`).
 - `ERR_INVALID_MEMORY` (exit 1) for a root with no commit (`baseShaFor` at `apps/cli/src/v2.ts:260-271`).
 - `ERR_GIT` (exit 1) when the root isn't a git repository, or the base names no commit (`packages/session/src/session.ts:257-260`).
@@ -1268,7 +1268,7 @@ memhtml session put --id s1 --file ops.jsonl --no-server
 printf '%s\n' '{"op":"label","path":"areas/inbox/x.html","entity":"system:memhtml"}' | memhtml session put --id s1 --file -
 ```
 
-Appends write ops, and `label` or `unlabel` ops on existing records, to a session's overlay log (`sessionPut` at `apps/cli/src/v2.ts:611-699`). The whole op stream is read and decoded before anything opens. A `write` line goes through the same decoder `apply` uses, and a `label` or `unlabel` line names a `path` and an `entity` (`decodeSessionPut` at `apps/cli/src/apply.ts:391-441`, `apps/cli/src/run.ts:2113-2121`). Under `MEMHTML_SESSION` with no log yet, the session is started first (`ensureSession` at `apps/cli/src/v2.ts:442-469`).
+Appends write ops, and `label` or `unlabel` ops on existing records, to a session's overlay log (`sessionPut` at `apps/cli/src/v2.ts:611-699`). The whole op stream is read and decoded before anything opens. A `write` line goes through the same decoder `apply` uses, and a `label` or `unlabel` line names a `path` and an `entity` (`decodeSessionPut` at `apps/cli/src/apply.ts:391-441`, `apps/cli/src/run.ts:2127-2135`). Under `MEMHTML_SESSION` with no log yet, the session is started first (`ensureSession` at `apps/cli/src/v2.ts:442-469`).
 
 Then it asks the head server's `/v1/neighbors` route to place, judge, and rank the new ops over the version at the session's base. A session on a `refs/heads/curate/` branch is judged here under the `curate` scope, and so is any call the server doesn't answer within 100 ms to accept or 10 s to answer (`apps/cli/src/v2.ts:630-647`, `askHead` at `apps/cli/src/head-client.ts:226-229`). The local path reads the store policy, loads the base, and runs `preparePuts` (`apps/cli/src/v2.ts:650-668`):
 
@@ -1285,7 +1285,7 @@ Flags:
 - `--file` (string, required): "JSONL, one object per line. A `write` line takes the same fields `memhtml apply` accepts; each is rendered to the file the store would write and lands at the path the store would choose. A `label` line, `{"op":"label","path":"areas/inbox/x.html","entity":"system:memhtml"}`, adds one `memhtml-entity` to an existing record's head, and an `unlabel` line with the same fields removes one; neither touches the article, so the record keeps its content hash. A label value is a lowercase `type:name` (`service:memhtml`, `project:agent-runtime`, `person:laura`) the record does not carry yet; an unlabel names a value the record carries, exactly as written. `-` reads stdin. A malformed op, a reserved path, a label that is malformed or already carried, an unlabel of a value the record lacks, an unlabel that leaves a record with no entity outside `projects/<slug>/` while the store requires an anchor, or a record below the write bar refuses the whole call and appends nothing. The bar is the store's policy, `writeBar` in `memhtml.config.json` at the store root (`memhtml config` shows the effective values): `refusedTypes` names the types no writer may put, each refused with the reason the file gives, and `requireAnchor` makes every record name the system, project, or person it is about (an `entities` value, or a `workspace`; a task is anchored by either). With no file the bar refuses no type and requires no anchor; the format and integrity refusals hold either way, and a file that does not decode refuses the call with ERR_STORE_CONFIG. The bar holds for every writer and every type, the curator and tasks included. The response lists each put's nearest existing records under `neighbors`, so a near-duplicate can be skipped and the related records linked before the commit. `neighbors` is ranked the way `head search` ranks, the vector arm included when the store has a vector cache (`memhtml head embed`) and an embedder is configured: each put's own text is embedded as a document, one call per batch. When the arm cannot run the neighbors come from the lexical arm alone and `vector` says why (`used: false` with a `reason`); the put itself never fails for it."
 - `--server` (boolean, default `true`): "Ask the head server on `.memhtml/head.sock` first (`memhtml head serve`), falling back to loading the head here when no server accepts within 100 ms or answers within 10 s; `--no-server` always loads here. The placements, violations, and neighbors (label lines included, the vector arm run with the server's cache and embedder) are then computed by the server over the version at the session's base; the append always happens here. The payload's `head.source` is `server` when the server answered."
 
-`--file` is required in the table, so a bare `session put` reading stdin is refused. `--file -` reads stdin, and so does a positional `-`, which wins over a `--file` path given beside it (`apps/cli/src/run.ts:2114-2116`).
+`--file` is required in the table, so a bare `session put` reading stdin is refused. `--file -` reads stdin, and so does a positional `-`, which wins over a `--file` path given beside it (`apps/cli/src/run.ts:2128-2130`).
 
 Response: `session.appended`.
 
@@ -1311,7 +1311,7 @@ memhtml session exec --id s1 --lang js --file curate.mjs
 memhtml session exec --id s1 --script 'grep -c memhtml /mnt/memhtml/projects/memhtml/*.html' --timeout-ms 5000
 ```
 
-Runs a script over the session's view, the base version plus its overlay, in a writable sandbox, and harvests what it wrote into overlay ops (`sessionExec` at `apps/cli/src/v2.ts:853-929`). The script arrives through one of three doors, as on `exec`, and `run` reads it before anything opens. A blank script, and a request body over 1,048,576 bytes, are refused at exit 2 (`apps/cli/src/run.ts:2069-2111`, `EXEC_BODY_MAX_BYTES` at `apps/cli/src/head-protocol.ts:292`). Under `MEMHTML_SESSION` with no log yet, the session is started first.
+Runs a script over the session's view, the base version plus its overlay, in a writable sandbox, and harvests what it wrote into overlay ops (`sessionExec` at `apps/cli/src/v2.ts:853-929`). The script arrives through one of three doors, as on `exec`, and `run` reads it before anything opens. A blank script, and a request body over 1,048,576 bytes, are refused at exit 2 (`apps/cli/src/run.ts:2083-2125`, `EXEC_BODY_MAX_BYTES` at `apps/cli/src/head-protocol.ts:292`). Under `MEMHTML_SESSION` with no log yet, the session is started first.
 
 Then it asks the head server's `/v1/exec` route to run it. The server reads the log, takes the version at the session's base when that's its tip or an ancestor of it, runs the script in a worker, harvests, validates, and appends, one exec per session at a time. The client waits for the server's two 30 s queues, the run's own deadline, and 10 s more before it calls the answer lost (`execAnswerTimeoutMs` at `apps/cli/src/v2.ts:835-836`, `EXEC_QUEUE_WAIT_MS` at `apps/cli/src/head-protocol.ts:315`). The script runs here when the server isn't reachable, answers any status but 200, or declines with `base-unservable` or `busy`. When the server took the script and its answer was lost, the call fails instead, because the server may have appended the harvest (`apps/cli/src/v2.ts:874-915`).
 
@@ -1340,8 +1340,8 @@ A script that fails is a success envelope at exit 0, like `exec`. Read `appended
 
 Errors:
 
-- `ERR_INVALID_FLAG` (exit 2) for two script doors, a `-` beside one, a `--timeout-ms` that isn't a positive integer up to 600000, or a request body over 1,048,576 bytes (`execFlags` at `apps/cli/src/run.ts:755-797`, `apps/cli/src/run.ts:2101-2109`).
-- `ERR_MISSING_ARGUMENT` (exit 2) for a blank script, and `ERR_PATH_NOT_FOUND` (exit 2) when `--file` can't be read (`apps/cli/src/run.ts:2073-2088`).
+- `ERR_INVALID_FLAG` (exit 2) for two script doors, a `-` beside one, a `--timeout-ms` that isn't a positive integer up to 600000, or a request body over 1,048,576 bytes (`execFlags` at `apps/cli/src/run.ts:755-811`, `apps/cli/src/run.ts:2115-2123`).
+- `ERR_MISSING_ARGUMENT` (exit 2) for a blank script, and `ERR_PATH_NOT_FOUND` (exit 2) when `--file` can't be read (`apps/cli/src/run.ts:2087-2102`).
 - `ERR_STORAGE` (exit 1) when the server took the script and gave no usable answer, naming `session status` (`apps/cli/src/v2.ts:908-913`). Also as `session.read` or `session.decode` for the log, and when the guest helper can't be read or every bridge attempt faults.
 - `ERR_STORE_CONFIG` (exit 1) on the local path when `memhtml.config.json` doesn't decode (`apps/cli/src/v2.ts:916`).
 - `ERR_GIT`, `ERR_INVALID_MEMORY`, or `ERR_STORAGE` (exit 1) from loading the base.
@@ -1376,7 +1376,7 @@ Flags:
 - `--drop-refused` (boolean): "On a `refused` outcome, drop every op that touches a path a violation names, record each in `.memhtml/sessions/<id>.dropped.jsonl`, and commit the rest; repeat until the commit is clean or nothing is left. `dropped` lists each removed op with its reasons. A batch-cap refusal names no path, so it is never dropped. Meant for a runtime's end-of-run commit, where there is no agent turn left to fix a line: an agent in a turn should read the refusal and rewrite the line instead."
 - `--server` (boolean, default `true`): "Ask the head server on `.memhtml/head.sock` to commit (`memhtml head serve`); `--no-server` always commits here. The server reads the session's log, judges it against the version at the session's base from what it holds (its tip, an ancestor built from it, or a load for a base off its ref's history), runs the same commit this process would, one commit at a time, then holds the new commit and writes its snapshot; the payload is the same either way, with `via` `server` or `local` and `server` saying why (`used`, `base`, `reason`, `detail`). The commit runs here when no server accepts within 100 ms, when the server answers a 4xx (an older server without the route), or when it declines (`server.reason` `other-ref` for a session on a ref the server does not follow, `session-unreadable`, `base-unservable`, or `busy` after 20000 ms behind another commit). When the server took the commit and answered 5xx, or gave no answer within `MEMHTML_COMMIT_DEADLINE_MS` (60000 ms by default), the call fails with ERR_STORAGE naming `session status` and does not commit here, because the server may have moved the ref."
 
-`--drop-refused` declares no default in the table, and an absent flag reads as false (`apps/cli/src/run.ts:2337`). Each round drops the ops at the paths the refusal names, rewrites the log without them, appends them to the `.dropped.jsonl` trail, and commits again. A round ends at a clean commit, an empty log, or a refusal no op carries, such as the batch cap (`apps/cli/src/v2.ts:965-982`, `opsToDrop` at `apps/cli/src/v2.ts:1165-1184`).
+`--drop-refused` declares no default in the table, and an absent flag reads as false (`apps/cli/src/run.ts:2351`). Each round drops the ops at the paths the refusal names, rewrites the log without them, appends them to the `.dropped.jsonl` trail, and commits again. A round ends at a clean commit, an empty log, or a refusal no op carries, such as the batch cap (`apps/cli/src/v2.ts:965-982`, `opsToDrop` at `apps/cli/src/v2.ts:1165-1184`).
 
 Response: `session.committed`.
 
@@ -1396,7 +1396,7 @@ Every outcome exits 0. Only a failure to run the commit at all is an error envel
 
 Errors:
 
-- `ERR_INVALID_FLAG` (exit 2) for a malformed `MEMHTML_COMMIT_DEADLINE_MS`, which has to be a whole number of milliseconds (`apps/cli/src/run.ts:2190-2195`, `parseDeadlineMs` at `apps/cli/src/head-vectors.ts:57-68`).
+- `ERR_INVALID_FLAG` (exit 2) for a malformed `MEMHTML_COMMIT_DEADLINE_MS`, which has to be a whole number of milliseconds (`apps/cli/src/run.ts:2204-2209`, `parseDeadlineMs` at `apps/cli/src/head-vectors.ts:57-68`).
 - `ERR_STORE_CONFIG` (exit 1) when `memhtml.config.json` exists and doesn't decode, on either path.
 - `ERR_STORAGE` (exit 1) when the server took the commit and failed or didn't answer in time, naming `session status`. Also as `checkout.locked` after 15 s behind another writer, `session.locked` when another call holds the id, `session.moved` when the log changed after this call read it, `session.read` for an id with no log, and `session.index` when no temporary index directory could be made (`requireLogUnmoved` at `packages/session/src/session.ts:311-319`, `packages/session/src/commit.ts:242`).
 - `ERR_GIT` (exit 1) from a git step of the commit.
@@ -1459,7 +1459,7 @@ memhtml session prune --older-than 7d --dry-run
 memhtml session prune --older-than 48h
 ```
 
-Removes session state that nothing reads again and that's older than the cutoff (`sessionPrune` at `apps/cli/src/v2.ts:1328-1346`, `pruneSessions` at `packages/session/src/prune.ts:174-276`). It names no session, so `--id` and `MEMHTML_SESSION` don't apply (`apps/cli/src/run.ts:923-924`). Under `.memhtml/sessions/` it removes `<id>.idx` index files, stale `<id>.lock` directories, and `<id>.json` logs that hold zero ops, and it deletes refs under `refs/memhtml/sessions/`, which no commit of this build writes (`SESSION_REFS_PREFIX` at `packages/session/src/session.ts:80`). A log that still holds ops is never removed. It's listed under `unlanded` so an operator can land it.
+Removes session state that nothing reads again and that's older than the cutoff (`sessionPrune` at `apps/cli/src/v2.ts:1328-1346`, `pruneSessions` at `packages/session/src/prune.ts:174-276`). It names no session, so `--id` and `MEMHTML_SESSION` don't apply (`apps/cli/src/run.ts:937-938`). Under `.memhtml/sessions/` it removes `<id>.idx` index files, stale `<id>.lock` directories, and `<id>.json` logs that hold zero ops, and it deletes refs under `refs/memhtml/sessions/`, which no commit of this build writes (`SESSION_REFS_PREFIX` at `packages/session/src/session.ts:80`). A log that still holds ops is never removed. It's listed under `unlanded` so an operator can land it.
 
 Each id is handled under its own session lock, at most 16 at once. An id whose lock was refreshed inside the cutoff, or inside the 30 s stale window, is listed under `busy` and left alone, and so is one whose lock another writer takes first (`packages/session/src/prune.ts:227-249`, `SESSION_LOCK_STALE_MS` at `packages/session/src/session.ts:67`). A file counts by its mtime, and a ref by its commit's committer time. The refs go in one `update-ref --stdin` transaction after the files (`packages/session/src/prune.ts:251-255`).
 
@@ -1476,7 +1476,7 @@ A caller reads `dryRun`, `cutoff` (an ISO instant), `olderThanMs`, `olderThan` (
 
 Errors:
 
-- `ERR_INVALID_FLAG` (exit 2) for an `--older-than` that isn't a duration with a unit (`sessionPruneFlags` at `apps/cli/src/run.ts:1005-1016`).
+- `ERR_INVALID_FLAG` (exit 2) for an `--older-than` that isn't a duration with a unit (`sessionPruneFlags` at `apps/cli/src/run.ts:1019-1030`).
 - `ERR_GIT` (exit 1) when the refs can't be listed or deleted, such as on a root that isn't a git repository.
 
 Failure: a file that can't be removed is skipped and left out of the counts (`removeQuietly` at `packages/session/src/prune.ts:118-125`). The files go before the refs, so a ref failure leaves the files already removed. `--dry-run` takes no lock, so its lists can differ from what a real run removes a moment later.
@@ -1488,7 +1488,7 @@ memhtml head status
 memhtml head status --no-server
 ```
 
-Reports the corpus version and where it came from (`headStatus` at `apps/cli/src/v2.ts:1353-1380`). With `--server` on, the default, it asks the head server's `GET /v1/status` first, and an answer becomes the payload with nothing loaded in this process (`apps/cli/src/v2.ts:1361-1376`). Otherwise it resolves HEAD and builds the version there the cheapest way that exists (`headSha` at `apps/cli/src/v2.ts:284-294`, `loadVersion` at `apps/cli/src/head-cache.ts:177-224`). That's HEAD's own snapshot at `.memhtml/snapshots/<sha>.arrow`, else the snapshot of an ancestor commit advanced over the memory paths that differ, else a full tree read from git. Ancestor snapshots are tried best first, by fewest changed paths and then the newer file (`ancestorSnapshots` at `apps/cli/src/head-cache.ts:94-119`). The command builds no app layer, so it opens no `index.db` and scaffolds nothing under the root (`isV2Command` at `apps/cli/src/run.ts:1214-1215`, `apps/cli/src/run.ts:2067`).
+Reports the corpus version and where it came from (`headStatus` at `apps/cli/src/v2.ts:1353-1380`). With `--server` on, the default, it asks the head server's `GET /v1/status` first, and an answer becomes the payload with nothing loaded in this process (`apps/cli/src/v2.ts:1361-1376`). Otherwise it resolves HEAD and builds the version there the cheapest way that exists (`headSha` at `apps/cli/src/v2.ts:284-294`, `loadVersion` at `apps/cli/src/head-cache.ts:177-224`). That's HEAD's own snapshot at `.memhtml/snapshots/<sha>.arrow`, else the snapshot of an ancestor commit advanced over the memory paths that differ, else a full tree read from git. Ancestor snapshots are tried best first, by fewest changed paths and then the newer file (`ancestorSnapshots` at `apps/cli/src/head-cache.ts:94-119`). The command builds no app layer, so it opens no `index.db` and scaffolds nothing under the root (`isV2Command` at `apps/cli/src/run.ts:1228-1229`, `apps/cli/src/run.ts:2081`).
 
 The ask treats every way of not getting a usable answer as no server (`askHeadFor` at `apps/cli/src/head-client.ts:148-219`, `askHead` at `apps/cli/src/head-client.ts:226-229`). That covers no socket file, a socket nobody listens on, any connect error, a connect that doesn't complete within 100 ms (`CONNECT_TIMEOUT_MS` at `apps/cli/src/head-client.ts:44`), an answer that doesn't arrive within 10 s (`ANSWER_TIMEOUT_MS` at `apps/cli/src/head-client.ts:51`), a status other than 200, and a body the schema refuses. A socket path past the platform's limit is never dialed (`apps/cli/src/head-client.ts:151-158`). In each case the command loads locally, so a server can speed the call up and can't make it fail.
 
@@ -1533,7 +1533,7 @@ Response: `head.search`.
 
 A caller reads `query`, `hits`, `vector`, `searchMs`, and `head` (`apps/cli/src/v2.ts:1423-1447`). A hit carries `path`, `score`, `arms`, and `claim` (`SearchHit` at `packages/head/src/search.ts:46-55`). `score` is the fused reciprocal-rank sum, so a hit that one arm alone ranked first scores 1/61. `arms` names `lexical` and `vector` for the arms that ranked the hit, plus `recency` when its fused score equals the hit beside it, which is when recency or path placed it (`packages/head/src/search.ts:243-263`). `vector` reports the arm (`VectorUse` at `apps/cli/src/head-vectors.ts:93-109`). It holds `used`, and `reason`, which is `null` when the arm ran and otherwise one of `embedder-off`, `no-cache`, `cache-unreadable`, `embed-failed`, and `embed-timeout` (`VectorSkipReason` at `apps/cli/src/head-vectors.ts:40-51`). `detail` gives the failure's words for the last three. `cached` is the number of vectors in the cache, `coverage` is the share of the version's active records whose content hash has a vector, `loadMs` is the cache read (0 from a server, which holds the cache), and `embedMs` is the query embed. `searchMs` times the fold alone, in hundredths of a millisecond (`apps/cli/src/v2.ts:1443-1446`). `head` has the fields `head status` reports, without `server`, and with `source: "server"` and the round trip as `loadMs` when a server answered.
 
-The query embed waits at most `MEMHTML_EMBED_DEADLINE_MS`, else 450 ms (`EMBED_DEADLINE_DEFAULT_MS` at `apps/cli/src/head-protocol.ts:123`), and `0` waits as long as the embed takes. Past the deadline the search answers from BM25 with `reason: "embed-timeout"`, and a local search stops the late embed (`stopLateEmbed` at `apps/cli/src/head-vectors.ts:83-87`). With the variable unset, a search through a server gets the server's deadline. Only `head search` and `head serve` read the variable (`apps/cli/src/run.ts:2147-2153`). The vector arm never fails the call. Every reason it can't run degrades `vector` and leaves the BM25 answer.
+The query embed waits at most `MEMHTML_EMBED_DEADLINE_MS`, else 450 ms (`EMBED_DEADLINE_DEFAULT_MS` at `apps/cli/src/head-protocol.ts:123`), and `0` waits as long as the embed takes. Past the deadline the search answers from BM25 with `reason: "embed-timeout"`, and a local search stops the late embed (`stopLateEmbed` at `apps/cli/src/head-vectors.ts:83-87`). With the variable unset, a search through a server gets the server's deadline. Only `head search` and `head serve` read the variable (`apps/cli/src/run.ts:2161-2167`). The vector arm never fails the call. Every reason it can't run degrades `vector` and leaves the BM25 answer.
 
 A cache file whose format key names another format reads as absent and reports `no-cache` (`readVectorCache` at `packages/snapshot/src/vectors.ts:203-249`). A file of another vector space, a corrupt file, or one with other columns reports `cache-unreadable` with the reader's refusal as `detail`.
 
@@ -1541,7 +1541,7 @@ A cache file whose format key names another format reads as absent and reports `
 
 Errors:
 
-- `ERR_INVALID_FLAG` (exit 2) when `MEMHTML_EMBED_DEADLINE_MS` isn't a whole number of milliseconds. The refusal names the variable, and nothing is opened (`msFromEnv` at `apps/cli/src/run.ts:2130-2146`, `parseDeadlineMs` at `apps/cli/src/head-vectors.ts:57-68`).
+- `ERR_INVALID_FLAG` (exit 2) when `MEMHTML_EMBED_DEADLINE_MS` isn't a whole number of milliseconds. The refusal names the variable, and nothing is opened (`msFromEnv` at `apps/cli/src/run.ts:2144-2160`, `parseDeadlineMs` at `apps/cli/src/head-vectors.ts:57-68`).
 - `ERR_INVALID_MEMORY` (exit 1) when HEAD is unborn, on the local path (`headSha` at `apps/cli/src/v2.ts:284-294`).
 - `ERR_GIT` (exit 1) when the root isn't a git repository, or a git read during the load fails.
 
@@ -1577,11 +1577,11 @@ Flags:
 
 Response: `head.served`.
 
-The envelope is written once, after the signal, at exit 0 (`apps/cli/src/run.ts:2271-2283`, `apps/cli/src/run.ts:2361`). A caller reads `socket`, `ref` (the full ref followed), `sha` (the held version's commit at the stop), `records`, `signal`, `loadSource` and `loadMs` (the first load), `advances` (one per observed ref move), `requests`, and `uptimeMs` (`HeadServed` at `apps/cli/src/head-server.ts:1592-1605`). While it serves, stderr carries the listening line, every advance, and every warning.
+The envelope is written once, after the signal, at exit 0 (`apps/cli/src/run.ts:2285-2297`, `apps/cli/src/run.ts:2375`). A caller reads `socket`, `ref` (the full ref followed), `sha` (the held version's commit at the stop), `records`, `signal`, `loadSource` and `loadMs` (the first load), `advances` (one per observed ref move), `requests`, and `uptimeMs` (`HeadServed` at `apps/cli/src/head-server.ts:1592-1605`). While it serves, stderr carries the listening line, every advance, and every warning.
 
 Errors:
 
-- `ERR_INVALID_FLAG` (exit 2) for a negative or non-integer `--poll-ms` or a blank `--ref` (`headServeFlags` at `apps/cli/src/run.ts:1043-1061`). The same code answers a malformed `MEMHTML_EMBED_DEADLINE_MS` or `MEMHTML_EMBED_WARM_IDLE_MS`, a `MEMHTML_EXEC_POOL_SIZE` outside 1 to 64, and a `MEMHTML_EXEC_WORKER_HEAP_MB` outside 64 to 65536, each naming the variable (`apps/cli/src/run.ts:2147-2153`, `apps/cli/src/run.ts:2177-2189`, `parsePoolSetting` at `apps/cli/src/exec-pool.ts:83-95`). Nothing is opened.
+- `ERR_INVALID_FLAG` (exit 2) for a negative or non-integer `--poll-ms` or a blank `--ref` (`headServeFlags` at `apps/cli/src/run.ts:1057-1075`). The same code answers a malformed `MEMHTML_EMBED_DEADLINE_MS` or `MEMHTML_EMBED_WARM_IDLE_MS`, a `MEMHTML_EXEC_POOL_SIZE` outside 1 to 64, and a `MEMHTML_EXEC_WORKER_HEAP_MB` outside 64 to 65536, each naming the variable (`apps/cli/src/run.ts:2161-2167`, `apps/cli/src/run.ts:2191-2203`, `parsePoolSetting` at `apps/cli/src/exec-pool.ts:83-95`). Nothing is opened.
 - `ERR_HEAD_SERVER_RUNNING` (exit 1) when a live server holds the socket. The message names its pid, ref, and sha from that server's own status, and the suggestion is `memhtml head status` (`claimSocket` at `apps/cli/src/head-server.ts:497-519`, `apps/cli/src/errors.ts:85-86`). The claim runs after the load, so the second process pays for a full load before it refuses.
 - `ERR_STORAGE` (exit 1) for a socket path past the limit, as `HeadSocketPathTooLong` with `socket`, `bytes`, `max`, and `platform`, raised before anything loads (`HeadSocketPathTooLong` at `apps/cli/src/head-protocol.ts:852-860`, `apps/cli/src/errors.ts:89-90`). The suggestions are `memhtml head status --no-server` and a shorter store path, and every client on that store loads locally.
 - `ERR_STORAGE` (exit 1) as `head.serve.ref` when the ref doesn't resolve, which includes an unborn HEAD (`apps/cli/src/head-server.ts:590-594`). It's also `head.serve.notSocket` when another kind of file holds the socket path, `head.serve.probe` for a probe error other than `ECONNREFUSED` and `ENOENT`, and `head.serve.listen` when the bind fails.
@@ -1636,7 +1636,7 @@ A caller reads `mode`, `sha`, `path`, and `rows` in both modes, plus `bytes`, `m
 
 Errors:
 
-- `ERR_INVALID_FLAG` (exit 2) for both `--write` and `--read`, and `ERR_MISSING_ARGUMENT` (exit 2) for neither (`headSnapshotFlags` at `apps/cli/src/run.ts:1018-1035`).
+- `ERR_INVALID_FLAG` (exit 2) for both `--write` and `--read`, and `ERR_MISSING_ARGUMENT` (exit 2) for neither (`headSnapshotFlags` at `apps/cli/src/run.ts:1032-1049`).
 - `ERR_STORAGE` (exit 1) from `--read` when HEAD's file is missing (`snapshot.read.file`) or isn't a snapshot this build reads. That's `snapshot.read.decode` for a file that isn't Arrow IPC or is truncated, `snapshot.read.format` for another format, `snapshot.read.sha` for no sha, `snapshot.read.schema` for other columns, and `snapshot.read.rows` for a null where the schema allows none (`packages/snapshot/src/snapshot.ts:495-509`). A head load treats the same file as a miss and deletes it, and `--read` leaves it in place.
 - `ERR_STORAGE` (exit 1) from `--write` when the encode, the directory, the file write, or the prune fails.
 - `ERR_INVALID_MEMORY` (exit 1) when HEAD is unborn, in both modes (`headSha` at `apps/cli/src/v2.ts:284-294`).
@@ -1678,7 +1678,7 @@ A caller reads `moved` first, then `ref`, `into`, `from` (the target before), `t
 
 Errors:
 
-- `ERR_INVALID_FLAG` (exit 2) for a blank `--into`, or a ref and target that qualify to the same name (`curateMergeFlags` at `apps/cli/src/run.ts:829-846`).
+- `ERR_INVALID_FLAG` (exit 2) for a blank `--into`, or a ref and target that qualify to the same name (`curateMergeFlags` at `apps/cli/src/run.ts:843-860`).
 - `ERR_INVALID_MEMORY` (exit 1) when the branch or the target doesn't exist, the two share no history, the branch carries a change that isn't an operation, the replayed ops are refused, the target moved during a fast-forward, or the target moved 8 times during a replay (`apps/cli/src/v2.ts:1640-1655`, `apps/cli/src/v2.ts:1744-1750`, `apps/cli/src/v2.ts:1847-1851`).
 - `ERR_DISCRIMINATION_FAILED` (exit 1) when the head gate refuses. The suggestions are a `head search` for a probe that fell out and the `--skip-gate` form (`HeadGateFailed` at `apps/cli/src/errors.ts:79-80`, `apps/cli/src/errors.ts:239-242`). The failure envelope carries no `data`, so the gate's numbers are only in its message and on stderr.
 - `ERR_DIRTY_TREE` (exit 1) when `HEAD` is the target and an uncommitted edit sits at a path the landing changes (`apps/cli/src/v2.ts:1741-1743`).
@@ -1697,12 +1697,12 @@ memhtml curate run --ref curate/2026-09-23 --model proxy:global.anthropic.claude
 
 Runs the curator. A model works through a briefing inside one session on a `curate/` branch, and what it proposes is committed to that branch (`curateRun` at `apps/cli/src/curate-run.ts:529-679`). `@memhtml/curator` owns the loop, the charter, the budget, and the model factory, and this command binds the loop's tools to the head, the session, and the sandbox. `docs/design.md` §23 covers the design. A run goes through these steps.
 
-1. `run` judges the argv before anything opens. `curateRunFlags` checks `--ref`, the shape of `--model`, and the two budgets (`apps/cli/src/run.ts:865-906`). The v2 branch then resolves the model from `--model`, else `MEMHTML_CURATOR_MODEL`, else `proxy:global.anthropic.claude-opus-5` when `MEMHTML_LLM_BASE_URL` is set, still at exit 2 and before any repo opens (`apps/cli/src/run.ts:2197-2249`, `DEFAULT_CURATOR_MODEL_ID` at `packages/curator/src/model.ts:31`). The command builds no app layer and never opens `index.db` (`isV2Command` at `apps/cli/src/run.ts:1214-1215`). It doesn't read `MEMHTML_SESSION`, because its session is always the one its ref names.
+1. `run` judges the argv before anything opens. `curateRunFlags` checks `--ref`, the shape of `--model`, and the two budgets (`apps/cli/src/run.ts:879-920`). The v2 branch then resolves the model from `--model`, else `MEMHTML_CURATOR_MODEL`, else `proxy:global.anthropic.claude-opus-5` when `MEMHTML_LLM_BASE_URL` is set, still at exit 2 and before any repo opens (`apps/cli/src/run.ts:2211-2263`, `DEFAULT_CURATOR_MODEL_ID` at `packages/curator/src/model.ts:31`). The command builds no app layer and never opens `index.db` (`isV2Command` at `apps/cli/src/run.ts:1228-1229`). It doesn't read `MEMHTML_SESSION`, because its session is always the one its ref names.
 2. The ref and the session id come from `--ref`. A name that doesn't start with `refs/` gets `refs/heads/` in front (`qualifyRef` at `apps/cli/src/v2.ts:278-281`). An absent or blank `--ref` is `curate/<UTC date>` from the clock (`defaultCurateRef` at `apps/cli/src/curate-run.ts:130-131`, `apps/cli/src/curate-run.ts:543-545`). The session id is the ref without `refs/heads/`, with slashes as dashes, so `refs/heads/curate/2026-09-23` is session `curate-2026-09-23` (`curateSessionId` at `apps/cli/src/curate-run.ts:137-140`).
 3. `curateRun` judges the ref again. A ref outside `refs/heads/curate/` is refused a second time for a caller that skips the CLI, and the branch `HEAD` points at is refused because a commit there would move the working tree (`curateRefProblem` at `apps/cli/src/curate-run.ts:121-127`, `headRefOf` at `apps/cli/src/curate-run.ts:276-285`, `apps/cli/src/curate-run.ts:550-561`).
 4. The store's policy is read once for the run from `memhtml.config.json`, or the library defaults when the file is absent (`loadStorePolicy` at `apps/cli/src/store-config.ts:64-93`, `apps/cli/src/curate-run.ts:565`).
 5. The charter is a template. The command reads the shipped `packages/curator/prompts/charter.md`, fresh on every run, or the `--charter` file in its place (`CURATOR_CHARTER` at `packages/curator/src/charter.ts:40-43`, `charterFor` at `apps/cli/src/curate-run.ts:165-177`). `renderCharter` fills `{{placementQuota}}` with `curator.placementQuota`, and fills `{{refusedTypesRule}}` and `{{refusedTypesClause}}` with a sentence and a clause naming `writeBar.refusedTypes`, or with nothing when the store refuses no type (`packages/curator/src/charter.ts:100-109`). Any other text, another `{{...}}` included, is used as written.
-6. The model is built, and nothing is called yet (`curatorModel` at `packages/curator/src/model.ts:138-152`). `fake` is a scripted model that needs no credentials. `bedrock:<id>` goes through `@ai-sdk/amazon-bedrock` with the region from `AWS_REGION` (`us-east-1` when unset) and the default AWS credential chain, unless `AWS_BEARER_TOKEN_BEDROCK` is set (`bedrockModel` at `packages/curator/src/model.ts:86-92`). `AWS_REGION` isn't one of the CLI's `CONFIG_VARS`, and the CLI's own `MEMHTML_AWS_REGION` doesn't reach this client (`CONFIG_VARS` at `apps/cli/src/config.ts:107-270`, `MEMHTML_AWS_REGION` at `apps/cli/src/config.ts:136-140`). `proxy:<model>` goes through an OpenAI-compatible client at `MEMHTML_LLM_BASE_URL/v1`, with the model named by the `MEMHTML_LLM_MODEL_MAP` and `MEMHTML_LLM_MODEL_PREFIX` rules (`proxyModel` at `packages/curator/src/model.ts:94-121`). Every call carries an output ceiling of 32,000 tokens (`withOutputCeiling` at `packages/curator/src/model.ts:128-135`).
+6. The model is built, and nothing is called yet (`curatorModel` at `packages/curator/src/model.ts:138-152`). `fake` is a scripted model that needs no credentials. `bedrock:<id>` goes through `@ai-sdk/amazon-bedrock` with the region from `AWS_REGION` (`us-east-1` when unset) and the default AWS credential chain, unless `AWS_BEARER_TOKEN_BEDROCK` is set (`bedrockModel` at `packages/curator/src/model.ts:86-92`). `AWS_REGION` isn't one of the CLI's `CONFIG_VARS`, and the CLI's own `MEMHTML_AWS_REGION` doesn't reach this client (`CONFIG_VARS` at `apps/cli/src/config.ts:107-275`, `MEMHTML_AWS_REGION` at `apps/cli/src/config.ts:141-145`). `proxy:<model>` goes through an OpenAI-compatible client at `MEMHTML_LLM_BASE_URL/v1`, with the model named by the `MEMHTML_LLM_MODEL_MAP` and `MEMHTML_LLM_MODEL_PREFIX` rules (`proxyModel` at `packages/curator/src/model.ts:94-121`). Every call carries an output ceiling of 32,000 tokens (`withOutputCeiling` at `packages/curator/src/model.ts:128-135`).
 7. The head is loaded in this process. Without `--resume`, the base is `main`'s tip, else `HEAD`'s commit, and a repository with no commit is refused (`apps/cli/src/curate-run.ts:582-593`). With `--resume`, the base is the session log's own `baseSha` (`apps/cli/src/curate-run.ts:578-581`). `loadHeadAt` reads that commit's snapshot, else an ancestor's snapshot advanced over the changed paths, else git (`loadHeadAt` at `apps/cli/src/v2.ts:217-237`, `loadVersion` at `apps/cli/src/head-cache.ts:177-225`). The curate commands never ask the head server (`apps/cli/src/v2.ts:141`).
 8. The session opens. Without `--resume` or `--dry-run`, `startSession` writes an empty log at `.memhtml/sessions/<id>.json` naming the curate ref, and refuses an id that already has a log (`startSession` at `packages/session/src/session.ts:230-261`, `apps/cli/src/curate-run.ts:594-598`). `--resume` reopens the log (`resumeSession` at `packages/session/src/session.ts:290-301`). `--dry-run` keeps the ops in memory, seeded from the log under `--resume` (`memoryOverlay` at `apps/cli/src/curate-run.ts:323-333`, `apps/cli/src/curate-run.ts:581`).
 9. Code computes a briefing over the base plus the session's ops, with no model call (`briefingFromView` at `packages/curator/src/briefing.ts:240-401`). It counts active, archived, and inbox records, splits every shared frame key into `duplicates` and `contradictions` by the value the claims state, lists the lowest-confidence records, and names five work lists by path (`recent`, `unlabeled`, `supersededActive`, `danglingEdges`, and `inbox`), each capped and carrying its total. `recent` holds the records created since the newest other `refs/heads/curate/*` ref's commit, each with its three nearest records by the head's lexical search (`lastCurateRef` at `apps/cli/src/curate-run.ts:253-273`, `apps/cli/src/curate-run.ts:601-612`). The inbox list reads `curator.writerBuckets` and `curator.placementQuota` from the policy. The model receives the briefing as one user message, with the numbers in a fenced JSON block (`renderBriefing` at `packages/curator/src/briefing.ts:410-423`).
@@ -1732,9 +1732,9 @@ The session log stays on disk after every run that opened one. After a commit it
 
 Errors:
 
-- `ERR_INVALID_FLAG` (exit 2) for a `--ref` outside `refs/heads/curate/` (`main`, `refs/heads/main`, another branch, `curate/` with nothing after it, or a tag such as `refs/tags/curate/x`), for a `--model` that isn't `fake`, `bedrock:<id>`, or `proxy:<id>` (a blank id after the colon included), and for a `--max-steps` or `--wall-clock-ms` that isn't a positive integer (`curateRunFlags` at `apps/cli/src/run.ts:865-906`). A blank `--ref` is the default ref.
-- `ERR_INVALID_FLAG` (exit 2) when the spec comes from `MEMHTML_CURATOR_MODEL` and has the wrong shape, naming the variable, and when the resolved spec is `proxy:` and `MEMHTML_LLM_BASE_URL` is unset or blank (`apps/cli/src/run.ts:2224-2247`). These two are judged after `validate`, so they carry no `memhtml help` pointer.
-- `ERR_MISSING_ARGUMENT` (exit 2) when there's no `--model`, `MEMHTML_CURATOR_MODEL` is unset, and `MEMHTML_LLM_BASE_URL` is unset (`apps/cli/src/run.ts:2211-2223`).
+- `ERR_INVALID_FLAG` (exit 2) for a `--ref` outside `refs/heads/curate/` (`main`, `refs/heads/main`, another branch, `curate/` with nothing after it, or a tag such as `refs/tags/curate/x`), for a `--model` that isn't `fake`, `bedrock:<id>`, or `proxy:<id>` (a blank id after the colon included), and for a `--max-steps` or `--wall-clock-ms` that isn't a positive integer (`curateRunFlags` at `apps/cli/src/run.ts:879-920`). A blank `--ref` is the default ref.
+- `ERR_INVALID_FLAG` (exit 2) when the spec comes from `MEMHTML_CURATOR_MODEL` and has the wrong shape, naming the variable, and when the resolved spec is `proxy:` and `MEMHTML_LLM_BASE_URL` is unset or blank (`apps/cli/src/run.ts:2238-2261`). These two are judged after `validate`, so they carry no `memhtml help` pointer.
+- `ERR_MISSING_ARGUMENT` (exit 2) when there's no `--model`, `MEMHTML_CURATOR_MODEL` is unset, and `MEMHTML_LLM_BASE_URL` is unset (`apps/cli/src/run.ts:2225-2237`).
 - `ERR_INVALID_MEMORY` (exit 1) when the ref is the branch `HEAD` points at (`apps/cli/src/curate-run.ts:554-561`), when the repository has no commit (`apps/cli/src/curate-run.ts:586-592`), when the commit refuses the session's ops as `refused`, and when the ref moved on all 8 attempts (`apps/cli/src/curate-run.ts:505-519`). The last two keep the log for `--resume`.
 - `ERR_STORAGE` (exit 1) as `session.exists` when the ref's session already has a log and `--resume` is absent (`packages/session/src/session.ts:247-253`), and as `session.read` when `--resume` finds no log (`resumeSession` at `packages/session/src/session.ts:290-301`).
 - `ERR_STORAGE` (exit 1) as `curator.charter-file <path>: ...` when the `--charter` file can't be read or holds only whitespace. It's read after the policy and before the model is built (`readCharterFile` at `packages/curator/src/charter.ts:51-64`, `apps/cli/src/curate-run.ts:565-571`).
@@ -1757,8 +1757,8 @@ memhtml curate collapse --model fake --plan plan.json --only theme-loop-guard,ar
 
 Plans a collapse of the corpus with no model call, then carries it out on one `curate/` branch (`curateCollapse` at `apps/cli/src/curate-collapse.ts:857-1002`). Archive clusters are archived with no model. Each fold cluster becomes one canonical record through a curator session, and the driver archives every member behind it. Keep clusters are reported and left alone. `docs/design.md` §23 covers the design. A collapse goes through these steps.
 
-1. `run` judges the argv as it does for `curate run`, with `--concurrency` and `--limit` added to the positive integers (`curateRunFlags` at `apps/cli/src/run.ts:865-906`). The model is resolved in the same block, and every call needs one, `--dry-run` included (`apps/cli/src/run.ts:2197-2249`).
-2. The `--plan` and `--rulings` files are read before the command starts (`apps/cli/src/run.ts:2297-2306`, `readPlanFile` and `readRulingsFile` at `apps/cli/src/curate-collapse.ts:839-855`). A plan must be a JSON object with a `clusters` array (`readPlan` at `apps/cli/src/curate-collapse.ts:825-836`). A rulings file is JSONL with blank lines skipped. Each line is an object with a `path` and a `verdict` of `keep`, `fold`, `trace`, or `archive`, and the last ruling for a path wins (`parseRulings` at `packages/curator/src/planner/rulings.ts:15-47`, `rulingsByPath` at `packages/curator/src/planner/rulings.ts:50-54`).
+1. `run` judges the argv as it does for `curate run`, with `--concurrency` and `--limit` added to the positive integers (`curateRunFlags` at `apps/cli/src/run.ts:879-920`). The model is resolved in the same block, and every call needs one, `--dry-run` included (`apps/cli/src/run.ts:2211-2263`).
+2. The `--plan` and `--rulings` files are read before the command starts (`apps/cli/src/run.ts:2311-2320`, `readPlanFile` and `readRulingsFile` at `apps/cli/src/curate-collapse.ts:839-855`). A plan must be a JSON object with a `clusters` array (`readPlan` at `apps/cli/src/curate-collapse.ts:825-836`). A rulings file is JSONL with blank lines skipped. Each line is an object with a `path` and a `verdict` of `keep`, `fold`, `trace`, or `archive`, and the last ruling for a path wins (`parseRulings` at `packages/curator/src/planner/rulings.ts:15-47`, `rulingsByPath` at `packages/curator/src/planner/rulings.ts:50-54`).
 3. The ref defaults to `curate/<UTC date>-collapse`, so it never shares a session id with `curate run`'s ref (`defaultCollapseRef` at `apps/cli/src/curate-collapse.ts:103-104`). A ref outside `refs/heads/curate/` and the branch `HEAD` points at are refused here as well (`apps/cli/src/curate-collapse.ts:871-884`).
 4. The command reads the store's policy, builds the model, and then reads the charter, the shipped `packages/curator/prompts/collapse.md` or the `--charter` file, filled from the policy as `curate run` fills its own (`apps/cli/src/curate-collapse.ts:893-895`, `COLLAPSE_CHARTER` at `packages/curator/src/charter.ts:119-122`). A `bedrock:` spec takes its region from `AWS_REGION`, `us-east-1` when unset, as in `curate run` (`packages/curator/src/model.ts:88`).
 5. The base is the ref's tip, else `main`'s tip, else `HEAD`'s commit, so a second collapse on the same ref plans over what the first one landed (`tipOf` at `apps/cli/src/curate-collapse.ts:349-361`). The head is loaded once in this process through the snapshot cache and held for the run, and every later tip is that version advanced by delta (`makeHeadCache` at `apps/cli/src/curate-collapse.ts:276-346`). The head server is never asked (`apps/cli/src/v2.ts:141`).
@@ -1798,8 +1798,8 @@ The held head loads in the command's own fiber, one load at a time (`makeHeadCac
 
 Errors:
 
-- `ERR_INVALID_FLAG` (exit 2) for a `--ref` outside `refs/heads/curate/`, a `--model` of the wrong shape, and a `--max-steps`, `--wall-clock-ms`, `--concurrency`, or `--limit` that isn't a positive integer (`curateRunFlags` at `apps/cli/src/run.ts:865-906`).
-- `ERR_INVALID_FLAG` (exit 2) for a `MEMHTML_CURATOR_MODEL` of the wrong shape and for a `proxy:` spec with no `MEMHTML_LLM_BASE_URL`, and `ERR_MISSING_ARGUMENT` (exit 2) when no model is named anywhere (`apps/cli/src/run.ts:2211-2247`).
+- `ERR_INVALID_FLAG` (exit 2) for a `--ref` outside `refs/heads/curate/`, a `--model` of the wrong shape, and a `--max-steps`, `--wall-clock-ms`, `--concurrency`, or `--limit` that isn't a positive integer (`curateRunFlags` at `apps/cli/src/run.ts:879-920`).
+- `ERR_INVALID_FLAG` (exit 2) for a `MEMHTML_CURATOR_MODEL` of the wrong shape and for a `proxy:` spec with no `MEMHTML_LLM_BASE_URL`, and `ERR_MISSING_ARGUMENT` (exit 2) when no model is named anywhere (`apps/cli/src/run.ts:2225-2261`).
 - `ERR_STORAGE` (exit 1) when `--plan` can't be read, isn't JSON, or has no `clusters` array, and when `--rulings` can't be read or has a line that isn't an object with a `path` and a known verdict, naming the line. Both are read before the ref is checked (`readPlanFile` and `readRulingsFile` at `apps/cli/src/curate-collapse.ts:839-855`, `parseRulings` at `packages/curator/src/planner/rulings.ts:15-47`).
 - `ERR_INVALID_MEMORY` (exit 1) when the ref is the branch `HEAD` points at (`apps/cli/src/curate-collapse.ts:878-884`), when the repository has no commit (`tipOf` at `apps/cli/src/curate-collapse.ts:349-361`), and when `--only` names no archive or fold cluster in the plan (`apps/cli/src/curate-collapse.ts:915-925`). A failure to load or advance the held head is reported as `ERR_INVALID_MEMORY` too (`apps/cli/src/curate-collapse.ts:342-343`).
 - `ERR_STORE_CONFIG` (exit 1) when the store's `memhtml.config.json` exists and can't be read or doesn't decode (`apps/cli/src/curate-collapse.ts:893`).
@@ -1813,7 +1813,7 @@ Failure: a usage error, an unreadable `--plan` or `--rulings`, and every refusal
 
 Branch on `code`, never on `error`. `ERROR_CODES` is append-only, so a shipped code keeps its meaning and is never removed (`apps/cli/src/envelope.ts:110-161`). It holds 25 codes.
 
-Exit 2 codes come from `validate`, `help`, `envRootRefusal` (`ERR_REPO_REQUIRED`, `envRootRefusal` at `apps/cli/src/run.ts:1281-1294`), the `integrations` `--project` check (`ERR_INVALID_FLAG`, `projectRootOf` at `apps/cli/src/integrations.ts:171-178`), the input readers of `apply`, `exec`, `session put`, and `session exec`, and the checks `run` makes on the v2 environment variables and the curator's model. All of those answer before a service is built. A closed v1 record door is exit 2 as well, wherever it's found (`apps/cli/src/run.ts:2400-2408`). Exit 1 codes come from `codeFor`, which maps a typed failure's `_tag` to a code and maps every other tag, and every untagged value, to `ERR_UNKNOWN` (`codeFor` at `apps/cli/src/errors.ts:42-102`). Only `ERR_PATH_NOT_FOUND` appears at both exits.
+Exit 2 codes come from `validate`, `help`, `envRootRefusal` (`ERR_REPO_REQUIRED`, `envRootRefusal` at `apps/cli/src/run.ts:1295-1308`), the `integrations` `--project` check (`ERR_INVALID_FLAG`, `projectRootOf` at `apps/cli/src/integrations.ts:171-178`), the input readers of `apply`, `exec`, `session put`, and `session exec`, and the checks `run` makes on the v2 environment variables and the curator's model. All of those answer before a service is built. A closed v1 record door is exit 2 as well, wherever it's found (`apps/cli/src/run.ts:2414-2422`). Exit 1 codes come from `codeFor`, which maps a typed failure's `_tag` to a code and maps every other tag, and every untagged value, to `ERR_UNKNOWN` (`codeFor` at `apps/cli/src/errors.ts:42-102`). Only `ERR_PATH_NOT_FOUND` appears at both exits.
 
 - `ERR_UNKNOWN_COMMAND` (exit 2): no command by that name. The suggestions are the nearest names (`unknownCommand` at `apps/cli/src/run.ts:712-723`).
 - `ERR_MISSING_ARGUMENT` (exit 2): a required positional or flag is absent, `write` or `correct` has neither `--claim` nor `--article-html`, `exec` or `session exec` got a blank script, `apply` or `session put` got no ops, a `session` command has neither `--id` nor `MEMHTML_SESSION`, or `curate run` or `curate collapse` has no model to run.
@@ -1834,7 +1834,7 @@ Exit 2 codes come from `validate`, `help`, `envRootRefusal` (`ERR_REPO_REQUIRED`
 - `ERR_UNKNOWN` (exit 1): a defect, or a tag `codeFor` doesn't know, such as `LlmContractViolation` (`messageFor` at `apps/cli/src/errors.ts:113-164`).
 - `ERR_REBUILD_NO_EMBED_REFUSED` (exit 1): `index rebuild` that can't embed over a store with vectors, without `--force`. The suggestions are `memhtml index rebuild --embed`, `memhtml index rebuild --no-embed --force`, and `memhtml index embed` (`RebuildNoEmbedRefused` at `apps/cli/src/errors.ts:224-228`).
 - `ERR_UNKNOWN_HOST` (exit 2): an `integrations` host outside the vocabulary.
-- `ERR_UNKNOWN_HOOK_EVENT` (exit 2): a `hook` event outside the vocabulary (`vocabularyPositionals` at `apps/cli/src/run.ts:1327-1347`).
+- `ERR_UNKNOWN_HOOK_EVENT` (exit 2): a `hook` event outside the vocabulary (`vocabularyPositionals` at `apps/cli/src/run.ts:1341-1361`).
 - `ERR_INTEGRATION_MODIFIED` (exit 1): an `integrations` install or uninstall found a managed file changed since the receipt.
 - `ERR_HEAD_SERVER_RUNNING` (exit 1): `head serve` found a live server on the store's socket. The message names its pid, and the suggestion is `memhtml head status` (`apps/cli/src/head-server.ts:505-512`, `HeadServerRunning` at `apps/cli/src/errors.ts:244`).
 - `ERR_SESSION_BOUND` (exit 2): `write`, `apply`, `correct`, or `task add` with `MEMHTML_SESSION` set, while the store's `v1Doors` is `closed-in-session` (the default) or `closed`. The suggestions are the session doors that do the same job (`sessionDoorRefusal` at `apps/cli/src/doors.ts:97-106`). See [Run sessions and the v1 doors](#run-sessions-and-the-v1-doors).
@@ -1845,33 +1845,33 @@ A suggestion has to be a call that moves the failure. `SUGGESTIONS` is a record 
 
 ## Environment variables
 
-Every variable is one entry in `CONFIG_VARS`, which `memhtml manifest` reads to describe them (`apps/cli/src/config.ts:107-270`). There are 25.
+Every variable is one entry in `CONFIG_VARS`, which `memhtml manifest` reads to describe them (`apps/cli/src/config.ts:107-275`). There are 25.
 
-- `MEMHTML_ROOT`: the root, default `~/memhtml`, with a leading `~` expanded (`apps/cli/src/config.ts:108-112`, `MemhtmlRoot` at `apps/cli/src/config.ts:277-280`). `--repo` wins over it.
-- `MEMHTML_REFUSE_ENV_ROOT`: any value but `0`, `false`, `no`, or `off` (blank is off) makes a call that opens a root require `--repo`, refusing with `ERR_REPO_REQUIRED` at exit 2 (`apps/cli/src/config.ts:113-122`, `refusesEnvRoot` at `apps/cli/src/config.ts:80-81`). `manifest`, `help`, `agents-doc`, `eval discriminate`, and the `integrations` family are unaffected, and `hook` warns and stays silent instead.
-- `MEMHTML_SESSION`: the v2 session a process writes through, trimmed, with blank read as unset (`SESSION_VAR` entry at `apps/cli/src/config.ts:123-129`, `sessionFromEnv` at `apps/cli/src/config.ts:102-105`). It's the default `--id` for every `session` command but `session prune`, it starts the session on first use from `session put` and `session exec`, and under the store's `v1Doors` it closes the record-creating v1 doors and MCP tools. See [Run sessions and the v1 doors](#run-sessions-and-the-v1-doors).
-- `MEMHTML_TRACE_ROOT`: where `trace index` reads transcripts, default `~/.claude`, read only (`apps/cli/src/config.ts:130-135`, `TraceRoot` at `apps/cli/src/config.ts:288-291`).
-- `MEMHTML_AWS_REGION`: the Bedrock region for embeddings and the entity extractor's model calls, default `us-east-1` (`apps/cli/src/config.ts:136-140`, `LlmConfig` at `packages/llm/src/client.ts:162-163`).
-- `AWS_BEARER_TOKEN_BEDROCK`: the Bedrock bearer token, read by the AWS SDK. Absent means the default credential chain (`apps/cli/src/config.ts:141-146`). The curator's `bedrock:` model takes the credential chain only when it's absent or blank (`bedrockModel` at `packages/curator/src/model.ts:86-92`).
-- `MEMHTML_LLM_BASE_URL`: an OpenAI- and Anthropic-compatible proxy origin. Set, every model and embedding call goes through it, and `curate run` and `curate collapse` default their model to `proxy:` with the default curator model. A malformed value fails at startup (`PROXY_BASE_URL_VAR` entry at `apps/cli/src/config.ts:147-156`, `apps/cli/src/run.ts:2205-2210`).
-- `MEMHTML_LLM_API_KEY`: the proxy's bearer token, read only with `MEMHTML_LLM_BASE_URL` (`apps/cli/src/config.ts:157-162`).
-- `MEMHTML_LLM_MODEL_PREFIX`: the prefix on every proxied Bedrock model id, default `bedrock/`. `none` sends bare ids (`apps/cli/src/config.ts:163-168`).
-- `MEMHTML_LLM_MODEL_MAP`: comma-separated `from=to` pairs that rename single models for the proxy (`PROXY_MODEL_MAP_VAR` entry at `apps/cli/src/config.ts:169-174`).
-- `MEMHTML_CURATOR_MODEL`: the default `--model` for `curate run` and `curate collapse`, as `fake`, `bedrock:<modelId>`, or `proxy:<model>`. With neither the flag nor the variable, the default is `proxy:` with the default curator model when `MEMHTML_LLM_BASE_URL` is set, and otherwise the call is `ERR_MISSING_ARGUMENT` at exit 2. A spec that doesn't parse, and a `proxy:` spec with no proxy, are `ERR_INVALID_FLAG` at exit 2 (`CURATOR_MODEL_VAR` entry at `apps/cli/src/config.ts:175-180`, `apps/cli/src/run.ts:2204-2249`).
-- `MEMHTML_OPENAI_PROMPT_CACHE`: `off` (default) or `implicit`, for the OpenAI entity extractor's prompt caching. Any other value fails at startup (`apps/cli/src/config.ts:181-186`).
-- `MEMHTML_EMBED`: `off` disables the embedder. Only `off`, trimmed and case-insensitive, does (`apps/cli/src/config.ts:187-192`, `layerEmbedder` at `apps/cli/src/api-layer.ts:232-243`). `head search`, `head embed`, `session put`, and `head serve` bind the same embedder, so `off` also drops the vector arm from the head's searches and placements, and `head embed` fails (`V2_EMBEDDING_COMMANDS` at `apps/cli/src/run.ts:1222-1227`).
-- `MEMHTML_EMBED_DEADLINE_MS`: how long `head search` waits for its query embed, in whole milliseconds, default 450, with `0` for no bound. Past it the search answers without the vector arm, reporting `embed-timeout`. `head serve` reads it as the deadline for a request that names none, and `head search` sends it to the server when it's set (`EMBED_DEADLINE_VAR` entry at `apps/cli/src/config.ts:193-197`, `EMBED_DEADLINE_DEFAULT_MS` at `apps/cli/src/head-protocol.ts:123`).
-- `MEMHTML_EMBED_WARM_IDLE_MS`: read by `head serve` only, default 0, which leaves warmup off. Set to a whole number of milliseconds, the server issues one one-token query embed after that long with no embed, so a proxy that drops idle connections stays warm. It runs only with an embedder bound and a vector cache held (`EMBED_WARM_IDLE_VAR` entry at `apps/cli/src/config.ts:198-202`, `EMBED_WARM_IDLE_DEFAULT_MS` at `apps/cli/src/head-protocol.ts:140`).
-- `MEMHTML_COMMIT_DEADLINE_MS`: how long `session commit` and `session rebase` wait for the head server's answer, in whole milliseconds, default 60000, with `0` for no bound. Past it the call fails with `ERR_STORAGE` naming `session status` and doesn't commit here (`COMMIT_DEADLINE_VAR` entry at `apps/cli/src/config.ts:203-207`, `COMMIT_DEADLINE_DEFAULT_MS` at `apps/cli/src/head-protocol.ts:373`).
-- `MEMHTML_EXEC_POOL_SIZE`: read by `head serve` only, the number of `/v1/exec` sandbox workers that run at once, a whole number from 1 to 64. Unset, it's the cores the process may use less one, at least 1 and at most 4 (`EXEC_POOL_SIZE_VAR` entry at `apps/cli/src/config.ts:208-212`, `defaultExecPoolSize` at `apps/cli/src/exec-pool.ts:60-61`).
-- `MEMHTML_EXEC_WORKER_HEAP_MB`: read by `head serve` only, each sandbox worker's old-generation heap limit in whole MB, from 64 to 65536, default 2048. A worker past it is stopped, and its job fails with `ERR_STORAGE` (`EXEC_WORKER_HEAP_VAR` entry at `apps/cli/src/config.ts:213-217`, `WORKER_HEAP_MB` at `apps/cli/src/exec-pool.ts:67-71`).
-- `MEMHTML_MCP_HEAD`: read by the MCP server on every `memory_search` and `memory_recall`. By default both ask the head server first and answer from the index when no server answers within 2 s, or when the call names `include_archived`, `as_of`, a double-quoted phrase, or no term the head indexes. `off` sends every call to the index (`MCP_HEAD_VAR` entry at `apps/cli/src/config.ts:218-223`, `routeFor` at `apps/cli/src/head-retrieval.ts:68-80`, `HEAD_RETRIEVAL_TIMEOUT_MS` at `apps/cli/src/head-retrieval.ts:42`).
-- `MEMHTML_VECTOR_COVERAGE_FLOOR`: the coverage share below which `search` and `recall` drop the vector arm, default `0.95` (`apps/cli/src/config.ts:224-229`). The range check accepts values above 0 up to 1, and a value outside it fails the layer build with no envelope (`layerRetrievalPolicy` at `apps/cli/src/api-layer.ts:294-305`).
-- `MEMHTML_LLM`: `off` unbinds the write-time entity extractor, so a batch writes exactly what it was given (`apps/cli/src/config.ts:230-235`, `layerExtractorPort` at `apps/cli/src/api-layer.ts:362-376`). The curate commands take their model from `--model` and don't read it.
-- `MEMHTML_EXTRACT_ENTITIES`: `off` removes the entity-extraction model call that `apply` makes per batch. `MEMHTML_LLM=off` removes it too (`apps/cli/src/config.ts:236-246`).
-- `OTEL_EXPORTER_OTLP_ENDPOINT`: an OTLP collector base URL. Set, spans export to `<endpoint>/v1/traces` (`apps/cli/src/config.ts:247-252`).
-- `OTEL_SERVICE_NAME`: overrides `service.name` on exported traces, read only with the endpoint set (`apps/cli/src/config.ts:253-258`).
-- `MEMHTML_MCP_BIN`: an explicit path to the `memhtml-mcp` entry for `serve mcp` (`MCP_BIN_VAR` entry at `apps/cli/src/config.ts:259-269`). The `integrations` family reads it too.
+- `MEMHTML_ROOT`: the root, default `~/memhtml`, with a leading `~` expanded (`apps/cli/src/config.ts:108-117`, `MemhtmlRoot` at `apps/cli/src/config.ts:282-286`). `--repo` wins over it.
+- `MEMHTML_REFUSE_ENV_ROOT`: any value but `0`, `false`, `no`, or `off` (blank is off) makes a call that opens a root require `--repo`, refusing with `ERR_REPO_REQUIRED` at exit 2 (`apps/cli/src/config.ts:118-127`, `refusesEnvRoot` at `apps/cli/src/config.ts:80-81`). `manifest`, `help`, `agents-doc`, `eval discriminate`, and the `integrations` family are unaffected, and `hook` warns and stays silent instead.
+- `MEMHTML_SESSION`: the v2 session a process writes through, trimmed, with blank read as unset (`SESSION_VAR` entry at `apps/cli/src/config.ts:128-134`, `sessionFromEnv` at `apps/cli/src/config.ts:102-105`). It's the default `--id` for every `session` command but `session prune`, it starts the session on first use from `session put` and `session exec`, and under the store's `v1Doors` it closes the record-creating v1 doors and MCP tools. See [Run sessions and the v1 doors](#run-sessions-and-the-v1-doors).
+- `MEMHTML_TRACE_ROOT`: where `trace index` reads transcripts, default `~/.claude`, read only (`apps/cli/src/config.ts:135-140`, `TraceRoot` at `apps/cli/src/config.ts:294-297`).
+- `MEMHTML_AWS_REGION`: the Bedrock region for embeddings and the entity extractor's model calls, default `us-east-1` (`apps/cli/src/config.ts:141-145`, `LlmConfig` at `packages/llm/src/client.ts:162-163`).
+- `AWS_BEARER_TOKEN_BEDROCK`: the Bedrock bearer token, read by the AWS SDK. Absent means the default credential chain (`apps/cli/src/config.ts:146-151`). The curator's `bedrock:` model takes the credential chain only when it's absent or blank (`bedrockModel` at `packages/curator/src/model.ts:86-92`).
+- `MEMHTML_LLM_BASE_URL`: an OpenAI- and Anthropic-compatible proxy origin. Set, every model and embedding call goes through it, and `curate run` and `curate collapse` default their model to `proxy:` with the default curator model. A malformed value fails at startup (`PROXY_BASE_URL_VAR` entry at `apps/cli/src/config.ts:152-161`, `apps/cli/src/run.ts:2219-2224`).
+- `MEMHTML_LLM_API_KEY`: the proxy's bearer token, read only with `MEMHTML_LLM_BASE_URL` (`apps/cli/src/config.ts:162-167`).
+- `MEMHTML_LLM_MODEL_PREFIX`: the prefix on every proxied Bedrock model id, default `bedrock/`. `none` sends bare ids (`apps/cli/src/config.ts:168-173`).
+- `MEMHTML_LLM_MODEL_MAP`: comma-separated `from=to` pairs that rename single models for the proxy (`PROXY_MODEL_MAP_VAR` entry at `apps/cli/src/config.ts:174-179`).
+- `MEMHTML_CURATOR_MODEL`: the default `--model` for `curate run` and `curate collapse`, as `fake`, `bedrock:<modelId>`, or `proxy:<model>`. With neither the flag nor the variable, the default is `proxy:` with the default curator model when `MEMHTML_LLM_BASE_URL` is set, and otherwise the call is `ERR_MISSING_ARGUMENT` at exit 2. A spec that doesn't parse, and a `proxy:` spec with no proxy, are `ERR_INVALID_FLAG` at exit 2 (`CURATOR_MODEL_VAR` entry at `apps/cli/src/config.ts:180-185`, `apps/cli/src/run.ts:2218-2263`).
+- `MEMHTML_OPENAI_PROMPT_CACHE`: `off` (default) or `implicit`, for the OpenAI entity extractor's prompt caching. Any other value fails at startup (`apps/cli/src/config.ts:186-191`).
+- `MEMHTML_EMBED`: `off` disables the embedder. Only `off`, trimmed and case-insensitive, does (`apps/cli/src/config.ts:192-197`, `layerEmbedder` at `apps/cli/src/api-layer.ts:232-243`). `head search`, `head embed`, `session put`, and `head serve` bind the same embedder, so `off` also drops the vector arm from the head's searches and placements, and `head embed` fails (`V2_EMBEDDING_COMMANDS` at `apps/cli/src/run.ts:1236-1241`).
+- `MEMHTML_EMBED_DEADLINE_MS`: how long `head search` waits for its query embed, in whole milliseconds, default 450, with `0` for no bound. Past it the search answers without the vector arm, reporting `embed-timeout`. `head serve` reads it as the deadline for a request that names none, and `head search` sends it to the server when it's set (`EMBED_DEADLINE_VAR` entry at `apps/cli/src/config.ts:198-202`, `EMBED_DEADLINE_DEFAULT_MS` at `apps/cli/src/head-protocol.ts:123`).
+- `MEMHTML_EMBED_WARM_IDLE_MS`: read by `head serve` only, default 0, which leaves warmup off. Set to a whole number of milliseconds, the server issues one one-token query embed after that long with no embed, so a proxy that drops idle connections stays warm. It runs only with an embedder bound and a vector cache held (`EMBED_WARM_IDLE_VAR` entry at `apps/cli/src/config.ts:203-207`, `EMBED_WARM_IDLE_DEFAULT_MS` at `apps/cli/src/head-protocol.ts:140`).
+- `MEMHTML_COMMIT_DEADLINE_MS`: how long `session commit` and `session rebase` wait for the head server's answer, in whole milliseconds, default 60000, with `0` for no bound. Past it the call fails with `ERR_STORAGE` naming `session status` and doesn't commit here (`COMMIT_DEADLINE_VAR` entry at `apps/cli/src/config.ts:208-212`, `COMMIT_DEADLINE_DEFAULT_MS` at `apps/cli/src/head-protocol.ts:373`).
+- `MEMHTML_EXEC_POOL_SIZE`: read by `head serve` only, the number of `/v1/exec` sandbox workers that run at once, a whole number from 1 to 64. Unset, it's the cores the process may use less one, at least 1 and at most 4 (`EXEC_POOL_SIZE_VAR` entry at `apps/cli/src/config.ts:213-217`, `defaultExecPoolSize` at `apps/cli/src/exec-pool.ts:60-61`).
+- `MEMHTML_EXEC_WORKER_HEAP_MB`: read by `head serve` only, each sandbox worker's old-generation heap limit in whole MB, from 64 to 65536, default 2048. A worker past it is stopped, and its job fails with `ERR_STORAGE` (`EXEC_WORKER_HEAP_VAR` entry at `apps/cli/src/config.ts:218-222`, `WORKER_HEAP_MB` at `apps/cli/src/exec-pool.ts:67-71`).
+- `MEMHTML_MCP_HEAD`: read by the MCP server on every `memory_search` and `memory_recall`. By default both ask the head server first and answer from the index when no server answers within 2 s, or when the call names `include_archived`, `as_of`, a double-quoted phrase, or no term the head indexes. `off` sends every call to the index (`MCP_HEAD_VAR` entry at `apps/cli/src/config.ts:223-228`, `routeFor` at `apps/cli/src/head-retrieval.ts:68-80`, `HEAD_RETRIEVAL_TIMEOUT_MS` at `apps/cli/src/head-retrieval.ts:42`).
+- `MEMHTML_VECTOR_COVERAGE_FLOOR`: the coverage share below which `search` and `recall` drop the vector arm, default `0.95` (`apps/cli/src/config.ts:229-234`). The range check accepts values above 0 up to 1, and a value outside it fails the layer build with no envelope (`layerRetrievalPolicy` at `apps/cli/src/api-layer.ts:294-305`).
+- `MEMHTML_LLM`: `off` unbinds the write-time entity extractor, so a batch writes exactly what it was given (`apps/cli/src/config.ts:235-240`, `layerExtractorPort` at `apps/cli/src/api-layer.ts:362-376`). The curate commands take their model from `--model` and don't read it.
+- `MEMHTML_EXTRACT_ENTITIES`: `off` removes the entity-extraction model call that `apply` makes per batch. `MEMHTML_LLM=off` removes it too (`apps/cli/src/config.ts:241-251`).
+- `OTEL_EXPORTER_OTLP_ENDPOINT`: an OTLP collector base URL. Set, spans export to `<endpoint>/v1/traces` (`apps/cli/src/config.ts:252-257`).
+- `OTEL_SERVICE_NAME`: overrides `service.name` on exported traces, read only with the endpoint set (`apps/cli/src/config.ts:258-263`).
+- `MEMHTML_MCP_BIN`: an explicit path to the `memhtml-mcp` entry for `serve mcp` (`MCP_BIN_VAR` entry at `apps/cli/src/config.ts:264-274`). The `integrations` family reads it too.
 
 One variable outside the table changes a v2 command. The curator's `bedrock:` model takes its region from `AWS_REGION`, default `us-east-1`, and doesn't read `MEMHTML_AWS_REGION` (`bedrockModel` at `packages/curator/src/model.ts:86-92`).
 

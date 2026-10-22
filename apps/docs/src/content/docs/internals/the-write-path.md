@@ -7,7 +7,7 @@ This chapter covers the v1 doors: `memhtml write`, `apply`, `correct`, and the M
 
 ## 1. Singular write
 
-`writeMemory` (`packages/store/src/store.ts:530`) does six things in order. It renders the memory and checks the result, hashes the article text, asks whether that content already exists, claims a free path, writes the file, then stages and commits it.
+`writeMemory` (`packages/store/src/store.ts:534`) does six things in order. It renders the memory and checks the result, hashes the article text, asks whether that content already exists, claims a free path, writes the file, then stages and commits it.
 
 Asking the duplicate question before writing means a duplicate leaves the tree byte-identical, with nothing for the next `git status` to report. Writing first and checking afterwards would need a rollback, and rolling back a git operation introduces a second way to fail.
 
@@ -27,7 +27,7 @@ Duplicate detection skips tasks in both directions (`packages/store/src/store.ts
 
 ## 3. Batch write is one commit and one index pass
 
-`writeMemories` (`packages/store/src/store.ts:699`, surfaced as `batchWrite` at `apps/cli/src/operations.ts:641`) exists as a primitive rather than as a loop in the caller for one reason: N singular writes are N commits, and because the indexer diffs one commit at a time, they are also N index passes.
+`writeMemories` (`packages/store/src/store.ts:703`, surfaced as `batchWrite` at `apps/cli/src/operations.ts:641`) exists as a primitive rather than as a loop in the caller for one reason: N singular writes are N commits, and because the indexer diffs one commit at a time, they are also N index passes.
 
 The reindex takes the whole COMMIT and never a list of paths the caller happens to know about (`apps/cli/src/operations.ts:228`). Two properties of the index rest on that. **A rename is only expressible as a diff:** every correction and every archive is a `git mv`, and `update()` reads `diff --name-status -M`, sees the `R`, and re-points the row, which keeps the embedding — where indexing the destination alone would leave the source row live, so the archived memory stays in `memhtml list`, `files` carries a row the tree does not have, and the chunk rows the move exists to preserve end up duplicated under two paths. **And the watermark is what makes freshness answerable:** `update()` records `index_state.head_sha`, without which `memhtml status` reports `index_fresh: false` forever while `index update` re-derives from a stale base.
 
@@ -42,15 +42,15 @@ Figure 1 draws the fold and its four exits. Every exit produces the same envelop
 
 **Figure 1: two phases, four exits, one envelope.** Phase 1 writes nothing, so an atomic abort has no file to undo. The `git reset -- <paths>` exit exists because `git rm --cached` exits 128 as soon as one listed path was never staged, and that is exactly the state a partly-failed `git.add` leaves behind. The single index pass on the success exit is why the batch primitive exists at all.
 
-Phase 1 validates every operation and writes nothing (`packages/store/src/store.ts:662-685`), so an atomic abort has nothing to roll back. The failing operation is reported with its own code, and every other operation reports `skipped: true`, including the ones that already validated (`packages/store/src/store.ts:687-705`). Reporting a validated-but-unwritten operation as `ok` with a path would hand the caller a path with no file behind it.
+Phase 1 validates every operation and writes nothing (`packages/store/src/store.ts:666-689`), so an atomic abort has nothing to roll back. The failing operation is reported with its own code, and every other operation reports `skipped: true`, including the ones that already validated (`packages/store/src/store.ts:691-709`). Reporting a validated-but-unwritten operation as `ok` with a path would hand the caller a path with no file behind it.
 
-Phase 2 writes, stages, and commits once. A failure there triggers `rollbackBatch` (`packages/store/src/store.ts:590`), which clears the staged paths with `git reset -- <paths>`, because `git rm --cached` exits 128 on a path that was never staged.
+Phase 2 writes, stages, and commits once. A failure there triggers `rollbackBatch` (`packages/store/src/store.ts:594`), which clears the staged paths with `git reset -- <paths>`, because `git rm --cached` exits 128 on a path that was never staged.
 
 Three more choices inside the fold each prevent a specific loss:
 
-- The batch's duplicate oracle consults itself first and the store second (`packages/store/src/store.ts:565-599`), because the store's lookup reads the index and the index does not yet know about anything this batch wrote.
-- A `claimed` set does the same job for path collisions (`packages/store/src/store.ts:352-374`). Without it, two operations sharing a title would both be handed the unsuffixed path, and the second write would silently overwrite the first.
-- One instant is read for the whole batch (`packages/store/src/store.ts:642-646`). Otherwise two episodic operations written either side of midnight would get different date prefixes, and the timestamps inside one indivisible operation would disagree about when it happened.
+- The batch's duplicate oracle consults itself first and the store second (`packages/store/src/store.ts:569-603`), because the store's lookup reads the index and the index does not yet know about anything this batch wrote.
+- A `claimed` set does the same job for path collisions (`packages/store/src/store.ts:356-378`). Without it, two operations sharing a title would both be handed the unsuffixed path, and the second write would silently overwrite the first.
+- One instant is read for the whole batch (`packages/store/src/store.ts:646-650`). Otherwise two episodic operations written either side of midnight would get different date prefixes, and the timestamps inside one indivisible operation would disagree about when it happened.
 
 ## 5. The conflict assist only reports
 
@@ -84,9 +84,9 @@ Its degradation differs from the frame assist's in one deliberate way: it is tot
 
 ## 6. Correction and archive
 
-Correction (`packages/store/src/store.ts:764`) reads the target first, or the tree gains a superseding file with nothing to supersede. Its `memhtml-supersedes` points at the target's archive path, where the file lives only after this commit lands. Pointing at the pre-archive path would create a dangling href in the same commit that made it dangle. Both files land in one commit.
+Correction (`packages/store/src/store.ts:768`) reads the target first, or the tree gains a superseding file with nothing to supersede. Its `memhtml-supersedes` points at the target's archive path, where the file lives only after this commit lands. Pointing at the pre-archive path would create a dangling href in the same commit that made it dangle. Both files land in one commit.
 
-Archive (`packages/store/src/store.ts:888`) is a `git mv` plus the metadata stamps. `stageArchive` (`packages/store/src/store.ts:429`) creates the destination's parent directory first, because `git mv` refuses a destination whose parent does not exist and the year partition is new every January.
+Archive (`packages/store/src/store.ts:892`) is a `git mv` plus the metadata stamps. `stageArchive` (`packages/store/src/store.ts:433`) creates the destination's parent directory first, because `git mv` refuses a destination whose parent does not exist and the year partition is new every January.
 
 ## 7. The writer records provenance in both planes
 

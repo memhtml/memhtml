@@ -9,7 +9,7 @@ The index is a projection of the git tree, meaning every row in it is computed f
 
 `state.db` is attached to the same connection under the schema name `state` (`packages/index/src/database.ts:287`), which lets the salience ranker `LEFT JOIN state.access` in the same statement that reads `main.files`, with no join performed in application code. Attaching twice is an error, so it happens once per connection in `makeDatabase` (`packages/index/src/database.ts:319`).
 
-Each plane keeps its own migration ledger (`packages/index/src/database.ts:195`, `packages/index/src/schema-const.ts:10-15`). Rebuilding `index.db` must not mark the state plane's migrations unapplied.
+Each plane keeps its own migration ledger (`packages/index/src/database.ts:195`, `packages/index/src/schema-const.ts:12-17`). Rebuilding `index.db` must not mark the state plane's migrations unapplied.
 
 Both planes are plain SQLite reached through node's built-in `node:sqlite`, so the only database dependency is node itself, with no driver feature flags to keep in step, and `sqlite3` or a GUI browser opens either file directly.
 
@@ -26,7 +26,7 @@ Each child table (`packages/index/migrations/0001_files.sql:73-110`) declares `O
 ### 2.1. Three text columns, three jobs
 
 - `body_text` is the full search surface.
-- `fts_text` is the title, gist, and body joined by newlines (`packages/index/src/project.ts:48`). One denormalized column, because a multi-column full-text index on this driver returns rowid order rather than relevance order, and it scopes MATCH to the named column alone (`packages/index/src/schema-const.ts:28-38`). The join uses newlines rather than spaces, so a term ending the title cannot fuse with one starting the gist into a phrase neither states.
+- `fts_text` is the title, gist, and body joined by newlines (`packages/index/src/project.ts:48`). One denormalized column, because a multi-column full-text index on this driver returns rowid order rather than relevance order, and it scopes MATCH to the named column alone (`packages/index/src/schema-const.ts:30-40`). The join uses newlines rather than spaces, so a term ending the title cannot fuse with one starting the gist into a phrase neither states.
 - `disclosure_text` is what recall may quote, as opposed to what it may search (`packages/index/src/project.ts:51-83`): the `<mark>` claim, `<summary>` headlines, `<dl>` facets, and citations. `<details>` bodies never appear, so that tier of provenance reaches an agent only through `memory_read`. `<aside>` texts never appear either, because an aside is a scope caveat and a disclosure line has no room to say "this is the exception". The column is composed from the parser's separated extraction fields rather than re-derived from markup.
 
 ### 2.2. Chunks, embeddings, edges, watermark
@@ -89,9 +89,9 @@ Rebuild (`packages/index/src/indexer.ts:396`) runs `rev-parse HEAD`, one `ls-tre
 
 Generated `index.html` and `sitemap.xml` files are excluded by name (`packages/index/src/indexer.ts:130-137`). Indexing them would feed every directory listing back into retrieval as a memory whose body is the titles of other memories, and the corpus would rank its own table of contents above its content.
 
-The full-text index is dropped for the bulk load and rebuilt afterwards (`packages/index/src/indexer.ts:406`, `packages/index/src/indexer.ts:426`). Writing through a live full-text index costs 10-25 ms per row and gets worse faster than linearly as the table grows, while building the index over a finished table is linear at roughly 6.6 µs per row (`packages/index/src/schema-const.ts:20-26`). Keeping it live during a rebuild would make a 10k-memory corpus unindexable in practice.
+The full-text index is dropped for the bulk load and rebuilt afterwards (`packages/index/src/indexer.ts:406`, `packages/index/src/indexer.ts:426`). Writing through a live full-text index costs 10-25 ms per row and gets worse faster than linearly as the table grows, while building the index over a finished table is linear at roughly 6.6 µs per row (`packages/index/src/schema-const.ts:22-28`). Keeping it live during a rebuild would make a 10k-memory corpus unindexable in practice.
 
-Tables are emptied children-first (`packages/index/src/schema-const.ts:47-56`), so the statements are correct with foreign keys enforced rather than relying on the cascade. A parse failure is a counted skip (`packages/index/src/indexer.ts:209-226`): one bad hand-authored file should be reported by `memhtml doctor` and should not stop the indexing of every other file in the tree.
+Tables are emptied children-first (`packages/index/src/schema-const.ts:49-58`), so the statements are correct with foreign keys enforced rather than relying on the cascade. A parse failure is a counted skip (`packages/index/src/indexer.ts:209-226`): one bad hand-authored file should be reported by `memhtml doctor` and should not stop the indexing of every other file in the tree.
 
 ## 5. Incremental update
 

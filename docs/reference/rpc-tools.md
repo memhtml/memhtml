@@ -72,15 +72,15 @@ Two suggestion texts don't fit every case they reach. The `ERR_INVALID_MEMORY` t
 
 The five write tools are `memory_write`, `memory_write_batch`, `memory_correct`, `memory_link`, and `memory_archive`. The first three create a record, and each of them runs the store-policy guard before anything else. A refusal there reads one file and touches nothing (see [The store policy and the record-creating tools](#the-store-policy-and-the-record-creating-tools)). Past the guard, each write fails in one of three phases, and the phase decides what's left behind.
 
-1. Validation runs before anything touches disk. For a new memory, that's the strict-path gate, the render gate, the dedupe lookup, and the path claim (`packages/store/src/store.ts:718-750`). For a correction, a link, or an archive, it's the check that the target or both endpoints exist. A refusal here leaves the tree byte-identical.
-2. The write, the stage, and the commit run under a journal. On a failure or an interruption, the store unstages every path it touched and puts back each one's earlier bytes (`packages/store/src/store.ts:486-573`). If that restore fails too, the failure is logged and the tree is left dirty.
+1. Validation runs before anything touches disk. For a new memory, that's the strict-path gate, the render gate, the dedupe lookup, and the path claim (`packages/store/src/store.ts:722-754`). For a correction, a link, or an archive, it's the check that the target or both endpoints exist. A refusal here leaves the tree byte-identical.
+2. The write, the stage, and the commit run under a journal. On a failure or an interruption, the store unstages every path it touched and puts back each one's earlier bytes (`packages/store/src/store.ts:490-577`). If that restore fails too, the failure is logged and the tree is left dirty.
 3. After the commit, the operation calls `reindex` (`apps/cli/src/operations.ts:267-271`). That step can fail with `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` after the commit has landed. The call reports a failure, but the memory is in git.
 
 A blind retry after a phase-3 failure can store the memory twice. Dedupe reads the index through `activePathForHash`, and the index hasn't caught up with the commit (`packages/index/src/traces-persist.ts:196-203`). `memory_status` shows the gap as `index_fresh: false`.
 
 The commit is a plain `git commit -m`, so it also commits any path that was already staged in the root (`packages/store/src/git.ts:403-422`).
 
-Writes in one process take turns behind one permit, `oneWriterAtATime`, and reads don't wait for it. Inside the permit, each write holds the checkout lock, the directory `.memhtml/checkout.lock`, for the whole operation (`packages/store/src/store.ts:1393-1420`). `git commit` takes the same lock as a backstop (`packages/store/src/git.ts:403-406`). The lock is shared across processes, so a CLI command beside the server and a session commit in any process take turns with the server's writes. A write that waits 15 s for the lock fails with `ERR_STORAGE` (`checkout.locked`) before anything is written (`packages/store/src/checkout-lock.ts:31-44`). `docs/design.md` §17 gives the lock's timings.
+Writes in one process take turns behind one permit, `oneWriterAtATime`, and reads don't wait for it. Inside the permit, each write holds the checkout lock, the directory `.memhtml/checkout.lock`, for the whole operation (`packages/store/src/store.ts:1397-1424`). `git commit` takes the same lock as a backstop (`packages/store/src/git.ts:403-406`). The lock is shared across processes, so a CLI command beside the server and a session commit in any process take turns with the server's writes. A write that waits 15 s for the lock fails with `ERR_STORAGE` (`checkout.locked`) before anything is written (`packages/store/src/checkout-lock.ts:31-44`). `docs/design.md` §17 gives the lock's timings.
 
 ### The store policy and the record-creating tools
 
@@ -140,8 +140,8 @@ The server reads its configuration from its own environment at startup. `bin.ts`
 
 | Variable                                                                                           | Effect on the server                                                                                                                                                                                  | Default                    |
 | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
-| `MEMHTML_ROOT`                                                                                     | The memory repo's root; a leading `~` is expanded (`apps/cli/src/config.ts:277-280`)                                                                                                                  | `~/memhtml`                |
-| `MEMHTML_TRACE_ROOT`                                                                               | Read at startup; no tool reads the directory (`apps/cli/src/config.ts:288-291`)                                                                                                                       | `~/.claude`                |
+| `MEMHTML_ROOT`                                                                                     | The memory repo's root; a leading `~` is expanded (`apps/cli/src/config.ts:282-286`)                                                                                                                  | `~/memhtml`                |
+| `MEMHTML_TRACE_ROOT`                                                                               | Read at startup; no tool reads the directory (`apps/cli/src/config.ts:294-297`)                                                                                                                       | `~/.claude`                |
 | `MEMHTML_SESSION`                                                                                  | Read on every record-creating call; set, it closes `memory_write`, `memory_write_batch`, and `memory_correct` unless `v1Doors` is `open` (`apps/cli/src/store-config.ts:125-133`)                     | unset                      |
 | `MEMHTML_MCP_HEAD`                                                                                 | Read on every `memory_search` and `memory_recall`; `off` sends each call to the index (`apps/cli/src/head-retrieval.ts:68-73`)                                                                        | `on`                       |
 | `MEMHTML_EMBED`                                                                                    | `off` binds no embedder, so search and recall on the index path report `degraded`, and a batch that asks for near-duplicates reports `near_duplicates_degraded` (`apps/cli/src/api-layer.ts:232-244`) | `on`                       |
@@ -151,11 +151,11 @@ The server reads its configuration from its own environment at startup. `bin.ts`
 | `MEMHTML_LLM_BASE_URL`, `MEMHTML_LLM_API_KEY`, `MEMHTML_LLM_MODEL_PREFIX`, `MEMHTML_LLM_MODEL_MAP` | Route model and embedding calls through an LLM proxy; `normalizeProxyBaseUrl` or `parseProxyModelMap` stops startup on a malformed value (`packages/llm/src/client.ts:174-192`)                       | unset                      |
 | `MEMHTML_OPENAI_PROMPT_CACHE`                                                                      | Read with the model client; a value other than `off` or `implicit` stops startup (`packages/llm/src/wire.ts:76`)                                                                                      | `off`                      |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`                                                                      | Exports one trace per tool call, as service `memhtml-mcp` (`apps/mcp/src/server.ts:54-61`)                                                                                                            | unset                      |
-| `OTEL_SERVICE_NAME`                                                                                | Overrides that service name (`apps/cli/src/config.ts:253-258`)                                                                                                                                        | unset                      |
+| `OTEL_SERVICE_NAME`                                                                                | Overrides that service name (`apps/cli/src/config.ts:258-263`)                                                                                                                                        | unset                      |
 
 A value that stops startup is logged on stdout, and the process exits with status 1. `NodeRuntime.runMain` reports the failure outside the layer that routes logs to stderr (`apps/mcp/src/bin.ts:15`).
 
-Some variables in the CLI's manifest aren't read by the server. `MEMHTML_REFUSE_ENV_ROOT` is read by `memhtml` only (`apps/cli/src/config.ts:118-122`). `MEMHTML_MCP_BIN` only locates the server for `memhtml serve mcp` (`apps/cli/src/serve.ts:56-59`). `MEMHTML_CURATOR_MODEL` belongs to `curate run`. `MEMHTML_COMMIT_DEADLINE_MS` belongs to `session commit` and `session rebase`. `MEMHTML_EMBED_DEADLINE_MS`, `MEMHTML_EMBED_WARM_IDLE_MS`, `MEMHTML_EXEC_POOL_SIZE`, and `MEMHTML_EXEC_WORKER_HEAP_MB` belong to the head commands (`apps/cli/src/config.ts:175-180`, `apps/cli/src/config.ts:193-217`). The head server reads its own environment, so its embedder and its embed deadline are set where it runs.
+Some variables in the CLI's manifest aren't read by the server. `MEMHTML_REFUSE_ENV_ROOT` is read by `memhtml` only (`apps/cli/src/config.ts:123-127`). `MEMHTML_MCP_BIN` only locates the server for `memhtml serve mcp` (`apps/cli/src/serve.ts:56-59`). `MEMHTML_CURATOR_MODEL` belongs to `curate run`. `MEMHTML_COMMIT_DEADLINE_MS` belongs to `session commit` and `session rebase`. `MEMHTML_EMBED_DEADLINE_MS`, `MEMHTML_EMBED_WARM_IDLE_MS`, `MEMHTML_EXEC_POOL_SIZE`, and `MEMHTML_EXEC_WORKER_HEAP_MB` belong to the head commands (`apps/cli/src/config.ts:180-185`, `apps/cli/src/config.ts:198-222`). The head server reads its own environment, so its embedder and its embed deadline are set where it runs.
 
 ### How the resources route
 
@@ -301,7 +301,7 @@ const MemoryArchive = Tool.make("memory_archive", {
 
 Soft-evicts a memory with a `git mv` into `archive/<YYYY>/` and the archive stamps. Nothing is deleted, and `git log --follow` reads straight through the move.
 
-**Input:** `path`, the memory to evict, and `reason`, both required. `reason` is recorded only in the commit subject, after the path (`packages/store/src/store.ts:1162`). An archive path isn't refused. Archiving one again nests it under a second `archive/<YYYY>/`.
+**Input:** `path`, the memory to evict, and `reason`, both required. `reason` is recorded only in the commit subject, after the path (`packages/store/src/store.ts:1166`). An archive path isn't refused. Archiving one again nests it under a second `archive/<YYYY>/`.
 
 No store policy closes this tool, because it edits a record that already exists.
 
@@ -309,8 +309,8 @@ No store policy closes this tool, because it edits a record that already exists.
 
 **Failure:**
 
-- `ERR_PATH_NOT_FOUND` when no file is at `path`, found before anything is written (`packages/store/src/store.ts:1147-1149`).
-- `ERR_GIT` or `ERR_STORAGE` from the move or the commit. The journal, `compensated`, puts the file back at its original path (`packages/store/src/store.ts:1151-1165`).
+- `ERR_PATH_NOT_FOUND` when no file is at `path`, found before anything is written (`packages/store/src/store.ts:1151-1153`).
+- `ERR_GIT` or `ERR_STORAGE` from the move or the commit. The journal, `compensated`, puts the file back at its original path (`packages/store/src/store.ts:1155-1169`).
 - `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` from `reindex`, after the archive commit has landed (`apps/cli/src/operations.ts:1118`).
 
 Source: `MemoryArchive` at `apps/mcp/src/tools.ts:877-890`, its handler at `apps/mcp/src/handlers.ts:761-767`, and `archiveMemory` at `apps/cli/src/operations.ts:1112-1120`.
@@ -346,11 +346,11 @@ Supersedes a memory. It writes the corrected version and archives the target in 
 
 The correction inherits the target's type, `memoryType`, and nothing else (`apps/cli/src/operations.ts:1065-1067`). It doesn't inherit the workspace, tags, entities, importance, or confidence. `memory_correct` takes no `path`, and the operation passes no placement fields, so placement comes from the type and the new title alone (`apps/cli/src/operations.ts:1070-1083`). A correction of `projects/oncall/x.html` can therefore land in `areas/inbox/`.
 
-A correction never lands at the target's own path. The target is still on disk when `freePathFor` chooses the new path, so a same-title correction in the same directory takes the `-2` suffix (`packages/store/src/store.ts:428-468`). The store's `vacating` exemption covers only an explicit path, and `CorrectParams` has no path to pass (`apps/cli/src/operations.ts:1037-1046`, `packages/store/src/store.ts:1068-1086`).
+A correction never lands at the target's own path. The target is still on disk when `freePathFor` chooses the new path, so a same-title correction in the same directory takes the `-2` suffix (`packages/store/src/store.ts:432-472`). The store's `vacating` exemption covers only an explicit path, and `CorrectParams` has no path to pass (`apps/cli/src/operations.ts:1037-1046`, `packages/store/src/store.ts:1072-1090`).
 
-`reason` is required but not recorded. The store accepts it and uses it nowhere, and `commitSubject` builds the commit subject from the title (`packages/store/src/store.ts:1127`).
+`reason` is required but not recorded. The store accepts it and uses it nowhere, and `commitSubject` builds the commit subject from the title (`packages/store/src/store.ts:1131`).
 
-The new file gets `memhtml-valid-from` and a `supersedes` link to the target's archive path. The archived target gets `memhtml-superseded-by`, a valid-until stamp, and the archive stamps (`packages/store/src/store.ts:1087-1123`).
+The new file gets `memhtml-valid-from` and a `supersedes` link to the target's archive path. The archived target gets `memhtml-superseded-by`, a valid-until stamp, and the archive stamps (`packages/store/src/store.ts:1091-1127`).
 
 The store policy can close this tool, because it creates a record (see [The store policy and the record-creating tools](#the-store-policy-and-the-record-creating-tools)).
 
@@ -359,9 +359,9 @@ The store policy can close this tool, because it creates a record (see [The stor
 **Failure:**
 
 - `ERR_SESSION_BOUND`, `ERR_V1_DOOR_CLOSED`, or `ERR_STORE_CONFIG` from `guardV1Door`, before anything else runs (`apps/mcp/src/handlers.ts:658`).
-- `ERR_INVALID_MEMORY` before anything is written, for both or neither of `body` and `article_html`, a target that doesn't parse, or markup the render gate, `renderChecked`, refuses (`packages/store/src/store.ts:1058`).
+- `ERR_INVALID_MEMORY` before anything is written, for both or neither of `body` and `article_html`, a target that doesn't parse, or markup the render gate, `renderChecked`, refuses (`packages/store/src/store.ts:1062`).
 - `ERR_PATH_NOT_FOUND` before anything is written, when the first `readMemory` finds no file at `target_path` (`apps/cli/src/operations.ts:1065`).
-- `ERR_GIT` or `ERR_STORAGE` from the move, the write, or the commit. The journal, `compensated`, puts the target back and removes the new file (`packages/store/src/store.ts:1096-1132`).
+- `ERR_GIT` or `ERR_STORAGE` from the move, the write, or the commit. The journal, `compensated`, puts the target back and removes the new file (`packages/store/src/store.ts:1100-1136`).
 - `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` from `reindex`, after the commit has landed (`apps/cli/src/operations.ts:1087`).
 
 Source: `MemoryCorrect` at `apps/mcp/src/tools.ts:685-706`, its handler at `apps/mcp/src/handlers.ts:655-680`, and `correctMemory` at `apps/cli/src/operations.ts:1062-1090`.
@@ -400,9 +400,9 @@ No store policy closes this tool, because it edits a record that already exists.
 
 **Failure:**
 
-- `ERR_INVALID_MEMORY` when `src_path` and `dst_path` are the same, or when `requireEndpointClasses` finds a task at either end, before anything is written (`packages/store/src/store.ts:1275-1307`, `packages/store/src/store.ts:1327-1331`).
-- `ERR_PATH_NOT_FOUND` when `typeOf` finds no file at either endpoint, before anything is written (`packages/store/src/store.ts:1316-1317`).
-- `ERR_GIT` or `ERR_STORAGE` from the write or the commit. The journal, `compensated`, restores the source file's earlier bytes (`packages/store/src/store.ts:1341-1352`).
+- `ERR_INVALID_MEMORY` when `src_path` and `dst_path` are the same, or when `requireEndpointClasses` finds a task at either end, before anything is written (`packages/store/src/store.ts:1279-1311`, `packages/store/src/store.ts:1331-1335`).
+- `ERR_PATH_NOT_FOUND` when `typeOf` finds no file at either endpoint, before anything is written (`packages/store/src/store.ts:1320-1321`).
+- `ERR_GIT` or `ERR_STORAGE` from the write or the commit. The journal, `compensated`, restores the source file's earlier bytes (`packages/store/src/store.ts:1345-1356`).
 - `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` from `reindex`, after the commit has landed. A re-link makes no commit and skips the reindex (`apps/cli/src/operations.ts:1105-1107`).
 
 Source: `MemoryLink` at `apps/mcp/src/tools.ts:708-725`, its handler at `apps/mcp/src/handlers.ts:682-696`, and `linkMemories` at `apps/cli/src/operations.ts:1099-1109`.
@@ -517,7 +517,7 @@ Returns the memory graph around one path, to at most two hops, in both direction
 
 `derived` is true when a machine-mined edge reaches the node and false when only authored `<link>` edges do. It's the max over every edge that reached the node, and `rel` doesn't pair with it. The question a caller asks of it is whether the connection may be a machine's suspicion, and one mined route is enough for yes (`apps/mcp/src/tools.ts:756-768`).
 
-Nothing in this tree mines an edge. A mined edge lives only in the index, as an `edges` row with `derived = 1` (`packages/index/migrations/0004_edges.sql:1-4`). An index rebuild deletes every `edges` row (`packages/index/src/schema-const.ts:49-58`), and reindexing a file deletes the edges it sources (`packages/index/src/indexer.ts:741`). So `derived` is false on an index built at this tree. It's true only for a mined row that an older build left in an index nobody has rebuilt since.
+Nothing in this tree mines an edge. A mined edge lives only in the index, as an `edges` row with `derived = 1` (`packages/index/migrations/0004_edges.sql:1-4`). An index rebuild deletes every `edges` row (`packages/index/src/schema-const.ts:51-60`), and reindexing a file deletes the edges it sources (`packages/index/src/indexer.ts:741`). So `derived` is false on an index built at this tree. It's true only for a mined row that an older build left in an index nobody has rebuilt since.
 
 **`edges` counts edges, and nodes are a separate count.** It counts the distinct edges the walk enumerated, keyed on `(src, rel, dst)`, over both hops and both directions. Two memories joined by two rels are one node and two edges. An edge to a path the node clamp dropped is counted here and absent from `nodes`. Its scope is this call's walk. `memory_status.edges` is the corpus total.
 
@@ -571,7 +571,7 @@ An explicit open counts as salience. `readMemory` reaches the state plane throug
 - `archived` is true when the head's status is `archived` (`apps/mcp/src/handlers.ts:551`).
 - `warnings` carries the parser's warnings.
 
-**Failure:** `ERR_PATH_NOT_FOUND` when no file is at `path`, `ERR_INVALID_MEMORY` when the file doesn't parse as a memory, and `ERR_STORAGE` on another read error, from `readRaw`, `parseMemory`, and `readFileOrNull` (`packages/store/src/store.ts:1033-1039`, `packages/store/src/layout.ts:161-176`). Nothing is written. The access bump and the session link swallow their own failures (`apps/cli/src/operations.ts:1017-1035`).
+**Failure:** `ERR_PATH_NOT_FOUND` when no file is at `path`, `ERR_INVALID_MEMORY` when the file doesn't parse as a memory, and `ERR_STORAGE` on another read error, from `readRaw`, `parseMemory`, and `readFileOrNull` (`packages/store/src/store.ts:1037-1043`, `packages/store/src/layout.ts:161-176`). Nothing is written. The access bump and the session link swallow their own failures (`apps/cli/src/operations.ts:1017-1035`).
 
 Source: `MemoryRead` at `apps/mcp/src/tools.ts:517-543`, its handler at `apps/mcp/src/handlers.ts:539-555`, and `readMemory` at `apps/cli/src/operations.ts:968-975`.
 
@@ -919,10 +919,10 @@ The write commits straight to the store and skips the session write bar, so the 
 **Failure:**
 
 - `ERR_SESSION_BOUND`, `ERR_V1_DOOR_CLOSED`, or `ERR_STORE_CONFIG` from `guardV1Door`, before anything else runs (`apps/mcp/src/handlers.ts:338`).
-- `ERR_INVALID_MEMORY` before anything is written, for both or neither of `body` and `article_html`, a `strict_path` refusal from `strictPathRefusal`, or markup `renderChecked` refuses (`packages/store/src/store.ts:718-723`).
-- `ERR_WRITE_CONFLICT` before anything is written, when an explicit `path` is taken. The message reads `ours , theirs <sha>`. `ours` is empty because the write had no base, and `theirs` is the blob now at the path (`packages/store/src/store.ts:441-452`). Its suggestions say to retry, but a retry at the same path conflicts again.
-- `ERR_STORAGE` before anything is written, when the checkout lock stays held for 15 s, the dedupe lookup fails, or a title has used up 1,000 filename ordinals, reported as `write.pathExhausted` (`packages/store/src/store.ts:458-467`).
-- `ERR_GIT` or `ERR_STORAGE` from the write, the stage, or the commit. The journal, `compensated`, removes the file (`packages/store/src/store.ts:752-769`).
+- `ERR_INVALID_MEMORY` before anything is written, for both or neither of `body` and `article_html`, a `strict_path` refusal from `strictPathRefusal`, or markup `renderChecked` refuses (`packages/store/src/store.ts:722-727`).
+- `ERR_WRITE_CONFLICT` before anything is written, when an explicit `path` is taken. The message reads `ours , theirs <sha>`. `ours` is empty because the write had no base, and `theirs` is the blob now at the path (`packages/store/src/store.ts:445-456`). Its suggestions say to retry, but a retry at the same path conflicts again.
+- `ERR_STORAGE` before anything is written, when the checkout lock stays held for 15 s, the dedupe lookup fails, or a title has used up 1,000 filename ordinals, reported as `write.pathExhausted` (`packages/store/src/store.ts:462-471`).
+- `ERR_GIT` or `ERR_STORAGE` from the write, the stage, or the commit. The journal, `compensated`, removes the file (`packages/store/src/store.ts:756-773`).
 - `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` from `reindex`, after the commit has landed (`apps/cli/src/operations.ts:350`). A blind retry can then write a second copy. See [What a failed write leaves behind](#what-a-failed-write-leaves-behind).
 
 Source: `MemoryWrite` at `apps/mcp/src/tools.ts:340-357`, its handler at `apps/mcp/src/handlers.ts:335-364`, and `writeMemory` at `apps/cli/src/operations.ts:344-353`.
@@ -974,7 +974,7 @@ Writes many memories in one commit. It validates every op first, stages every su
 - `detect_near_duplicates` adds a per-op `near_duplicates` list, the vector sibling of the conflict rule, which catches rewordings that rule can't key. It also changes nothing written, and it costs one embedding call per batch (`apps/mcp/src/tools.ts:261-267`).
 - `session_id`, `prompt_id`, and `turn_uuid` are batch-level provenance.
 
-Provenance has two homes. In `provenanceOf`, an op's own values win for its file's head, and the commit trailers come from the first op that carries provenance (`apps/cli/src/operations.ts:902-907`, `packages/store/src/store.ts:1003-1008`). The `wrote` session link uses only the batch-level `session_id`, so an op's own `session_id` never reaches `trace_links` (`apps/cli/src/operations.ts:879`).
+Provenance has two homes. In `provenanceOf`, an op's own values win for its file's head, and the commit trailers come from the first op that carries provenance (`apps/cli/src/operations.ts:902-907`, `packages/store/src/store.ts:1007-1012`). The `wrote` session link uses only the batch-level `session_id`, so an op's own `session_id` never reaches `trace_links` (`apps/cli/src/operations.ts:879`).
 
 When entity extraction is on, one model call per batch extracts entities the ops didn't declare. They land in the files as if authored. A failed extraction is a logged warning, and the batch is written without them (`apps/cli/src/operations.ts:820-854`).
 
@@ -993,9 +993,9 @@ The batch commits straight to the store and skips the session write bar, so the 
 **Failure:** an atomic batch aborts on its first refused op and reaches the caller through the error channel, and `results` never carries it. The message names the op: `ERR_<CODE>: ops[N]: <reason>. The batch is atomic, so nothing was written and no commit was made. Try: fix ops[N] and call memory_write_batch again; set continue_on_error to true to write the ops that would have succeeded` (`apps/mcp/src/failure.ts:298-311`). The code is the op's own, so the batch and the singular report one refusal under one code.
 
 - `ERR_SESSION_BOUND`, `ERR_V1_DOOR_CLOSED`, or `ERR_STORE_CONFIG` from `guardV1Door`, before any op is read. These carry no `ops[N]`.
-- `ERR_INVALID_MEMORY` for a one-of violation, a `strict_path` refusal, or markup the render gate refuses. `ERR_WRITE_CONFLICT` for a taken explicit path, including one an earlier op in the same batch claimed. All are found before anything is written, by the handler and by `validateOp` (`apps/mcp/src/handlers.ts:413-471`, `packages/store/src/store.ts:933-976`).
+- `ERR_INVALID_MEMORY` for a one-of violation, a `strict_path` refusal, or markup the render gate refuses. `ERR_WRITE_CONFLICT` for a taken explicit path, including one an earlier op in the same batch claimed. All are found before anything is written, by the handler and by `validateOp` (`apps/mcp/src/handlers.ts:413-471`, `packages/store/src/store.ts:937-980`).
 - In continue mode, the same refusals become failed results carrying their own `code` and `error`, and the survivors land in the one commit.
-- `ERR_GIT` or `ERR_STORAGE` from the write pass, the stage, or the commit fails the whole call in either mode. The journal, `compensated`, restores every path the pass reached (`packages/store/src/store.ts:987-1010`).
+- `ERR_GIT` or `ERR_STORAGE` from the write pass, the stage, or the commit fails the whole call in either mode. The journal, `compensated`, restores every path the pass reached (`packages/store/src/store.ts:991-1014`).
 - `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` from `reindex`, after the batch commit has landed (`apps/cli/src/operations.ts:878`).
 
 Source: `MemoryWriteBatch` at `apps/mcp/src/tools.ts:446-515`, its handler at `apps/mcp/src/handlers.ts:402-537`, and `batchWrite` at `apps/cli/src/operations.ts:746-893`.

@@ -6,9 +6,9 @@ These diagrams show the call order of six commands. `memhtml write` and `memhtml
 
 Every flow acts on the memhtml root, the separate memory tree that `--repo` or `MEMHTML_ROOT` names (`apps/cli/src/api-layer.ts:96-109`). `DatabaseService` is one connection to that root's `.memhtml/index.db` with `state.db` attached (`apps/cli/src/api-layer.ts:119-129`). `Git` runs `git` subprocesses in that root (`packages/store/src/git.ts:222-231`).
 
-The two v1 commands run their dispatch arm over `layerApp`, the one production composition (`apps/cli/src/run.ts:2400-2417`, `apps/cli/src/api-layer.ts:409-419`). A handler in the MCP server reaches the same operations through the same layer. For example, `memory_write` calls `writeMemory` at `apps/mcp/src/handlers.ts:340`, and `memory_search` asks the head server first and calls `searchMemories` when it gets no answer (`apps/mcp/src/handlers.ts:581`). The MCP door itself is drawn in `architecture/data-flow.md`.
+The two v1 commands run their dispatch arm over `layerApp`, the one production composition (`apps/cli/src/run.ts:2414-2431`, `apps/cli/src/api-layer.ts:409-419`). A handler in the MCP server reaches the same operations through the same layer. For example, `memory_write` calls `writeMemory` at `apps/mcp/src/handlers.ts:340`, and `memory_search` asks the head server first and calls `searchMemories` when it gets no answer (`apps/mcp/src/handlers.ts:581`). The MCP door itself is drawn in `architecture/data-flow.md`.
 
-The v2 commands build no `layerApp`. `run` hands them to `runV2`, which calls the session, head, snapshot, and curator packages as plain functions (`apps/cli/src/run.ts:2331-2359`, `apps/cli/src/v2.ts:122-128`).
+The v2 commands build no `layerApp`. `run` hands them to `runV2`, which calls the session, head, snapshot, and curator packages as plain functions (`apps/cli/src/run.ts:2345-2373`, `apps/cli/src/v2.ts:122-128`).
 
 ## memhtml write
 
@@ -66,23 +66,23 @@ sequenceDiagram
 
 `Agent->>Bin` and `Bin->>Run`: the binary calls `run(process.argv.slice(2))`, and the envelope it returns is the only thing written to stdout (`apps/cli/src/bin.ts:5`).
 
-The first `Run->>Run`: `run` parses argv with `parseArgv` (`apps/cli/src/run.ts:1677`, `apps/cli/src/run.ts:187-264`). Help and the bare manifest answer first (`apps/cli/src/run.ts:1685-1691`). For a record-creating door, `run` reads the store's `v1Doors` mode before it validates (`apps/cli/src/run.ts:1693-1709`). `validate` then refuses a bad call at exit 2 before any service is built (`apps/cli/src/run.ts:1711-1712`). `envRootRefusal` refuses a root taken from the environment when `MEMHTML_REFUSE_ENV_ROOT` is set (`apps/cli/src/run.ts:1930-1931`).
+The first `Run->>Run`: `run` parses argv with `parseArgv` (`apps/cli/src/run.ts:1691`, `apps/cli/src/run.ts:187-264`). Help and the bare manifest answer first (`apps/cli/src/run.ts:1699-1705`). For a record-creating door, `run` reads the store's `v1Doors` mode before it validates (`apps/cli/src/run.ts:1707-1723`). `validate` then refuses a bad call at exit 2 before any service is built (`apps/cli/src/run.ts:1725-1726`). `envRootRefusal` refuses a root taken from the environment when `MEMHTML_REFUSE_ENV_ROOT` is set (`apps/cli/src/run.ts:1944-1945`).
 
 The second `Run->>Run` and `Run->>Ops`: the `write` dispatch arm runs `guardV1Door`, calls `ops.writeMemory`, and names the response type `memory.written` (`apps/cli/src/run.ts:364-386`). The guard reads the policy at the layer's root and refuses with `V1DoorClosed` when the mode closes the door (`apps/cli/src/store-config.ts:120-133`).
 
 `Ops->>Store`: `writeMemory` decodes the parameters with `toWriteInput` and calls `store.writeMemory` (`apps/cli/src/operations.ts:344-353`). The decode checks the type against the operator vocabulary and checks a task's status and due date before any file is rendered (`apps/cli/src/operations.ts:299-336`).
 
-The note on `Store`: the store's `writeMemory` runs inside `exclusive`, which takes one in-process permit and then the cross-process checkout lock (`packages/store/src/store.ts:1414-1418`, `packages/store/src/store.ts:1425`). A waiter for the lock retries for up to 15 s (`packages/contracts/src/checkout-lock.ts:47-54`). Its first gate is `strictPathRefusal` (`packages/store/src/store.ts:720`, `packages/store/src/store.ts:703-716`).
+The note on `Store`: the store's `writeMemory` runs inside `exclusive`, which takes one in-process permit and then the cross-process checkout lock (`packages/store/src/store.ts:1418-1422`, `packages/store/src/store.ts:1429`). A waiter for the lock retries for up to 15 s (`packages/contracts/src/checkout-lock.ts:47-54`). Its first gate is `strictPathRefusal` (`packages/store/src/store.ts:724`, `packages/store/src/store.ts:707-720`).
 
-`Store->>Html`: `renderFor` calls `renderTemplate` (`packages/store/src/store.ts:653`), and `renderChecked` fails with `InvalidMemory` on any `checkMemory` violation before the file is written (`packages/store/src/store.ts:672-679`). Both functions are imported from `@memhtml/html` (`packages/store/src/store.ts:22-31`).
+`Store->>Html`: `renderFor` calls `renderTemplate` (`packages/store/src/store.ts:657`), and `renderChecked` fails with `InvalidMemory` on any `checkMemory` violation before the file is written (`packages/store/src/store.ts:676-683`). Both functions are imported from `@memhtml/html` (`packages/store/src/store.ts:22-31`).
 
-`Store->>Recorder` and `Recorder->>Db`: the store hashes the rendered bytes and calls its injected `dedupeLookup` (`packages/store/src/store.ts:724-730`). The composition injects the recorder's `activePathForHash` (`apps/cli/src/api-layer.ts:196`), which is one query for a live, non-archived, non-task row with that hash (`packages/index/src/traces-persist.ts:196-203`). A match returns `deduped: true` with no file and no commit (`packages/store/src/store.ts:731-740`).
+`Store->>Recorder` and `Recorder->>Db`: the store hashes the rendered bytes and calls its injected `dedupeLookup` (`packages/store/src/store.ts:728-734`). The composition injects the recorder's `activePathForHash` (`apps/cli/src/api-layer.ts:196`), which is one query for a live, non-archived, non-task row with that hash (`packages/index/src/traces-persist.ts:196-203`). A match returns `deduped: true` with no file and no commit (`packages/store/src/store.ts:735-744`).
 
-`Store->>Store`: `freePathFor` picks a free path (`packages/store/src/store.ts:742-750`), and `writeFileAt` writes the file with `node:fs` (`packages/store/src/store.ts:763`, `packages/store/src/store.ts:471-477`).
+`Store->>Store`: `freePathFor` picks a free path (`packages/store/src/store.ts:746-754`), and `writeFileAt` writes the file with `node:fs` (`packages/store/src/store.ts:767`, `packages/store/src/store.ts:475-481`).
 
-`Store->>Git` and `Git-->>Store`: the store calls `git.add` and `git.commit` with provenance trailers (`packages/store/src/store.ts:764-767`). The `add` member of `Git` runs `git add` (`packages/store/src/git.ts:396-399`). Its `commit` member takes the checkout lock again, which the fiber already holds, then runs `git commit` and `git rev-parse HEAD` for the sha (`packages/store/src/git.ts:403-422`). The write, the stage, and the commit run under a journal that compensates a failure (`makeJournal`, `packages/store/src/store.ts:758-769`).
+`Store->>Git` and `Git-->>Store`: the store calls `git.add` and `git.commit` with provenance trailers (`packages/store/src/store.ts:768-771`). The `add` member of `Git` runs `git add` (`packages/store/src/git.ts:396-399`). Its `commit` member takes the checkout lock again, which the fiber already holds, then runs `git commit` and `git rev-parse HEAD` for the sha (`packages/store/src/git.ts:403-422`). The write, the stage, and the commit run under a journal that compensates a failure (`makeJournal`, `packages/store/src/store.ts:762-773`).
 
-`Store-->>Ops`: the result carries the path, `created`, `deduped`, the commit sha, and the content hash (`packages/store/src/store.ts:771-777`).
+`Store-->>Ops`: the result carries the path, `created`, `deduped`, the commit sha, and the content hash (`packages/store/src/store.ts:775-781`).
 
 `Ops->>Indexer`: only a created file triggers `reindex` (`apps/cli/src/operations.ts:350`), which calls `indexer.update({ embed: true })` (`apps/cli/src/operations.ts:267-271`).
 
@@ -96,7 +96,7 @@ The note on `Store`: the store's `writeMemory` runs inside `exclusive`, which ta
 
 `Ops->>Recorder`: `recordLink` writes a `wrote` session link when the call carries a session id, and logs a failure instead of raising it (`apps/cli/src/operations.ts:351`, `apps/cli/src/operations.ts:201-218`).
 
-`Run-->>Bin` and `Bin-->>Agent`: a success becomes an envelope at exit 0. A typed failure goes through `failureFor` at exit 1, and a closed door raised inside the layer exits 2 (`apps/cli/src/run.ts:2400-2408`, `apps/cli/src/errors.ts:277-279`). The codes are `EXIT_OK`, `EXIT_USAGE`, and `EXIT_RUNTIME` (`apps/cli/src/envelope.ts:166-168`). The binary calls `process.exit` from the write callback, so a slow pipe reader still gets the whole envelope (`apps/cli/src/bin.ts:22`).
+`Run-->>Bin` and `Bin-->>Agent`: a success becomes an envelope at exit 0. A typed failure goes through `failureFor` at exit 1, and a closed door raised inside the layer exits 2 (`apps/cli/src/run.ts:2414-2422`, `apps/cli/src/errors.ts:277-279`). The codes are `EXIT_OK`, `EXIT_USAGE`, and `EXIT_RUNTIME` (`apps/cli/src/envelope.ts:166-168`). The binary calls `process.exit` from the write callback, so a slow pipe reader still gets the whole envelope (`apps/cli/src/bin.ts:22`).
 
 The diagram leaves out the indexer's two early exits. With no watermark row from `readState`, `update` reprojects the whole tree (`packages/index/src/indexer.ts:812`, `packages/index/src/indexer.ts:821-822`). With a watermark a rebuild left empty, it fails with `IndexStale` (`packages/index/src/indexer.ts:842-846`). The batch door, `memhtml apply`, calls `ops.batchWrite` instead (`apps/cli/src/run.ts:394-405`), and `architecture/data-flow.md` covers the rest of the write steps.
 
@@ -242,7 +242,7 @@ sequenceDiagram
 
 ### Session commit call sites
 
-`Agent->>Run` and `Run->>V2`: `run` takes the v2 branch for `session commit` and hands it to `runV2` (`apps/cli/src/run.ts:2331-2359`), which calls `sessionCommit` (`apps/cli/src/v2.ts:1927-1928`).
+`Agent->>Run` and `Run->>V2`: `run` takes the v2 branch for `session commit` and hands it to `runV2` (`apps/cli/src/run.ts:2345-2373`), which calls `sessionCommit` (`apps/cli/src/v2.ts:1927-1928`).
 
 `V2->>V2`, policy: `sessionCommit` reads `memhtml.config.json` before it asks the server, so a malformed file fails with `ERR_STORE_CONFIG` on either path (`apps/cli/src/v2.ts:1114-1116`).
 
@@ -314,7 +314,7 @@ sequenceDiagram
 
 ### Head search call sites
 
-`Run->>Run`: `head search` reads `MEMHTML_EMBED_DEADLINE_MS` and binds an embedder, one of four v2 commands that do (`apps/cli/src/run.ts:2147-2153`, `apps/cli/src/run.ts:1217-1227`, `apps/cli/src/run.ts:2257-2264`).
+`Run->>Run`: `head search` reads `MEMHTML_EMBED_DEADLINE_MS` and binds an embedder, one of four v2 commands that do (`apps/cli/src/run.ts:2161-2167`, `apps/cli/src/run.ts:1231-1241`, `apps/cli/src/run.ts:2271-2278`).
 
 `Run->>V2`: `runV2` calls `headSearch` and names the response type `head.search` (`apps/cli/src/v2.ts:1935-1936`).
 

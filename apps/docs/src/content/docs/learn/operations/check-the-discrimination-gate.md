@@ -11,7 +11,7 @@ memhtml eval discriminate --seed 20260802 --size 200 --probes 36 --mrr-floor 0.8
 
 The gate builds a small corpus of facts, queries it with one probe per fact, and requires every probe to rank its own target above every wrong-fact twin of that target. Those twins are the controls, and they are derived mechanically from the target: a negation flip, a numeric flip, a qualifier flip. That construction makes them high-similarity adversaries by design rather than by luck. Embeddings are weakest on exactly the tokens that carry a fact's polarity, so "drain the VIP before reverting" and "do NOT drain the VIP before reverting" sit above 0.99 cosine similarity while asserting opposite things.
 
-This command never touches your store. It builds its own fixture corpus in a temp directory with an in-memory database and never constructs the application layer (`apps/cli/src/run.ts:834`), so it is safe to run with a server up and with no credentials.
+This command never touches your store. It builds its own fixture corpus in a temp directory with an in-memory database and never constructs the application layer (`apps/cli/src/run.ts:848`), so it is safe to run with a server up and with no credentials.
 
 ## Read the report
 
