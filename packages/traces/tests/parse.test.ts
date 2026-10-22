@@ -1,6 +1,7 @@
 import { chmod, mkdtemp, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
@@ -9,7 +10,7 @@ import { PROJECTS_DIR, SUBAGENTS_DIR } from "../src/discover.js"
 import { parseSessionFile, slugFromPath } from "../src/parse.js"
 import { advanceWatermark, watermarkPlan } from "../src/watermark.js"
 
-const FIXTURE_ROOT = new URL("./fixtures", import.meta.url).pathname
+const FIXTURE_ROOT = fileURLToPath(new URL("./fixtures", import.meta.url))
 const ALPHA = "11111111-1111-4111-8111-111111111111"
 const ALPHA_FILE = join(FIXTURE_ROOT, PROJECTS_DIR, "-tmp-fixture-alpha", `${ALPHA}.jsonl`)
 const SIDECAR_FILE = join(

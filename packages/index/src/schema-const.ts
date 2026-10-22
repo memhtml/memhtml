@@ -5,15 +5,17 @@
  * not a rebuild.
  */
 
+import { fileURLToPath } from "node:url"
+
 /** Where the rebuildable index's migrations live, applied in filename order. */
-export const MIGRATIONS_DIR = new URL("../migrations", import.meta.url).pathname
+export const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations", import.meta.url))
 
 /**
  * The state plane's own migration ledger. A separate directory because these statements are applied
  * to the ATTACHed `state` database, which has its own `schema_migrations` table. The two planes have
  * independent lifetimes, and `index.db` is deleted and rebuilt without touching `state.db`.
  */
-export const STATE_MIGRATIONS_DIR = new URL("../state-migrations", import.meta.url).pathname
+export const STATE_MIGRATIONS_DIR = fileURLToPath(new URL("../state-migrations", import.meta.url))
 
 /** The schema name `state.db` is ATTACHed under. Every cross-plane query qualifies with it. */
 export const STATE_SCHEMA = "state"

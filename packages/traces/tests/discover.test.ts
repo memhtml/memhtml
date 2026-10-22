@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 
 import { Effect, Result } from "effect"
 import { describe, expect, it } from "vitest"
@@ -13,7 +14,7 @@ import {
 } from "../src/discover.js"
 
 /** The checked-in fixture tree: two slugs, one main session each, one sidecar under the first. */
-const FIXTURE_ROOT = new URL("./fixtures", import.meta.url).pathname
+const FIXTURE_ROOT = fileURLToPath(new URL("./fixtures", import.meta.url))
 
 const ALPHA = "11111111-1111-4111-8111-111111111111"
 const BETA = "22222222-2222-4222-8222-222222222222"

@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
 import type { AstroIntegration } from "astro"
 
 /**
@@ -141,7 +142,7 @@ export const removedPageTwins = (base: string): AstroIntegration => ({
   hooks: {
     "astro:build:done": async ({ dir, logger }) => {
       for (const page of REMOVED_PAGES) {
-        const file = join(dir.pathname, `${trimSlashes(page.from)}.md`)
+        const file = join(fileURLToPath(dir), `${trimSlashes(page.from)}.md`)
         await mkdir(dirname(file), { recursive: true })
         await writeFile(file, removedPageTwin(page, base))
       }

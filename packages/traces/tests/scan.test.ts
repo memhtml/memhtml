@@ -1,6 +1,7 @@
 import { appendFile, chmod, mkdir, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
@@ -10,7 +11,7 @@ import { extractFromText } from "../src/extract.js"
 import { mergePrompts, mergeTailExtract, scanTraceRoot, type WatermarkReader } from "../src/scan.js"
 import type { Watermark } from "../src/watermark.js"
 
-const FIXTURE_ROOT = new URL("./fixtures", import.meta.url).pathname
+const FIXTURE_ROOT = fileURLToPath(new URL("./fixtures", import.meta.url))
 const ALPHA = "11111111-1111-4111-8111-111111111111"
 
 /** Fails the test on an unexpected `StorageFailure`, which is what a rejected promise does. */
