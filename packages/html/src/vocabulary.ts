@@ -283,5 +283,19 @@ export const FORBIDDEN_ELEMENTS: ReadonlySet<string> = new Set([
   "form"
 ])
 
+/**
+ * URL schemes a browser runs or renders as a document when a reader follows the link:
+ * `javascript:` and `vbscript:` execute, and `data:` opens an inline document under the reader's
+ * origin. An `href` or `cite` carrying one is a constraint-3 violation.
+ */
+export const SCRIPT_SCHEMES: ReadonlySet<string> = new Set(["javascript", "vbscript", "data"])
+
+/**
+ * URL schemes that name an ordinary document or mailbox. Any other scheme (`wiki:`, `slack:`,
+ * `file:`) is a constraint-6 warning: the browser hands it to whatever app registered for it, and
+ * stores already hold such links, so refusing them would drop those files from the index.
+ */
+export const DOCUMENT_SCHEMES: ReadonlySet<string> = new Set(["http", "https", "mailto"])
+
 /** The prefix every DOM event-handler attribute carries. */
 export const EVENT_HANDLER_PREFIX = "on"

@@ -285,6 +285,37 @@ describe("constraint 3 — no presentation, no execution", () => {
     ).toContain('uses the "javascript:" scheme')
   })
 
+  it("rejects a vbscript: link target, which executes in the browsers that still read it", () => {
+    expect(
+      parseErr(fileWith('<p><mark>A claim.</mark> <a href="vbscript:msgbox(1)">x</a></p>'))
+    ).toContain('uses the "vbscript:" scheme')
+  })
+
+  /**
+   * A scheme outside both sets names an app, not a document: stores already carry `wiki://` and
+   * `slack://` links, so the file still parses and indexes, and the warning names the scheme once.
+   */
+  it("warns on an app scheme and still parses the file", () => {
+    const doc = parseOk(
+      fileWith(
+        '<p><mark>A claim.</mark> <a href="wiki://notes/page-1">a</a> <a href="wiki://notes/page-2">b</a> <q cite="slack://channel?id=C1">q</q></p>'
+      )
+    )
+    expect(doc.warnings).toEqual([
+      '<a href> uses the "wiki:" scheme, which a browser hands to whatever app registered for it',
+      '<q cite> uses the "slack:" scheme, which a browser hands to whatever app registered for it'
+    ])
+  })
+
+  it("leaves a document scheme or a schemeless target without a warning", () => {
+    const doc = parseOk(
+      fileWith(
+        '<p><mark>A claim.</mark> <a href="https://example.test/a">a</a> <a href="/areas/x.html">b</a> <a href="mailto:someone@example.test">c</a></p>'
+      )
+    )
+    expect(doc.warnings).toEqual([])
+  })
+
   it("accepts an http, https, or mailto scheme on an article anchor", () => {
     for (const href of [
       "https://example.test/a",

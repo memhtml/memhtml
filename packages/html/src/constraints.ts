@@ -14,6 +14,7 @@ import {
   isWithin
 } from "./tree.js"
 import {
+  DOCUMENT_SCHEMES,
   EVENT_HANDLER_PREFIX,
   FORBIDDEN_ATTRIBUTES,
   FORBIDDEN_ELEMENTS,
@@ -22,7 +23,8 @@ import {
   isRepeatableMeta,
   KNOWN_ELEMENTS,
   META_PREFIX,
-  REQUIRED_META
+  REQUIRED_META,
+  SCRIPT_SCHEMES
 } from "./vocabulary.js"
 
 /**
@@ -227,11 +229,14 @@ const textOf = (element: Element): string =>
     .trim()
     .slice(0, 40)
 
+/** The attributes whose value constraint 3 reads as a URL. */
+const URL_ATTRIBUTES = ["href", "cite"] as const
+
 /**
  * Constraint 3: no `class`, no `style`, no `<script>`/`<style>`, no `on*` handler, no
- * `http-equiv`, and no URL with a scheme beyond `http`/`https`/`mailto`. A memory file is
- * data; presentation belongs to a stylesheet, behavior belongs nowhere, and a link target
- * belongs to the repo (root-relative), the page (fragment), or a named-document protocol.
+ * `http-equiv`, and no `href` or `cite` whose scheme runs script or opens an inline document
+ * (`SCRIPT_SCHEMES`). A memory file is data; presentation belongs to a stylesheet and behavior
+ * belongs nowhere. Any other scheme outside `DOCUMENT_SCHEMES` warns (`collectWarnings`).
  */
 const checkNoPresentationOrScript = (document: Document): ReadonlyArray<string> => {
   const violations: Array<string> = []
@@ -255,14 +260,13 @@ const checkNoPresentationOrScript = (document: Document): ReadonlyArray<string> 
     if (element.tagName === "meta" && attr(element, "http-equiv") !== undefined) {
       violations.push("http-equiv on <meta>: a memory file does not redirect or set browser policy")
     }
-    for (const urlAttr of ["href", "cite"] as const) {
+    for (const urlAttr of URL_ATTRIBUTES) {
       const value = attr(element, urlAttr)
       if (value === undefined) continue
       const scheme = urlSchemeOf(value)
-      if (scheme === undefined) continue
-      if (scheme === "http" || scheme === "https" || scheme === "mailto") continue
+      if (scheme === undefined || !SCRIPT_SCHEMES.has(scheme)) continue
       violations.push(
-        `<${element.tagName} ${urlAttr}="${value}"> uses the "${scheme}:" scheme: only http, https, and mailto may carry one`
+        `<${element.tagName} ${urlAttr}="${value}"> uses the "${scheme}:" scheme: a memory file does not run script or open an inline document`
       )
     }
   }
@@ -282,7 +286,8 @@ const checkNoPresentationOrScript = (document: Document): ReadonlyArray<string> 
  * `&colon;` spellings are already unfolded.
  *
  * A scheme-bearing URL is exactly the case that can leave the corpus's own origin on click, so
- * this is the predicate the constraint allows `http`/`https`/`mailto` through and nothing else.
+ * constraint 3 refuses the `SCRIPT_SCHEMES` and constraint 6 warns on any scheme outside
+ * `DOCUMENT_SCHEMES`.
  */
 const urlSchemeOf = (value: string): string | undefined => {
   // Strip the leading and trailing U+0000-U+0020 runs — the exact set the URL specification
@@ -369,6 +374,10 @@ const checkHead = (document: Document): ReadonlyArray<string> => {
  * tag is retrieval convenience (it promotes to a `lang:` entity), and refusing the whole file
  * over a decoration would violate the degrade-gracefully rule hand-authored files rely on.
  *
+ * An `href` or `cite` whose scheme is neither a document scheme nor a script scheme (`wiki:`,
+ * `slack:`, `file:`) warns for the same reason: stores already hold such links, and the warning
+ * names them without dropping the file from the index. Deduplicated by scheme.
+ *
  * Warnings are deduplicated by element name: a file with forty stray `<div>`s should produce
  * one actionable line, not forty identical ones.
  */
@@ -385,6 +394,17 @@ const collectWarnings = (document: Document): ReadonlyArray<string> => {
     const lang = attr(element, "data-lang")
     if (lang !== undefined && !LANG_TOKEN.test(lang)) {
       push(`lang:${lang}`, `data-lang="${lang}" is not a language token`)
+    }
+    for (const urlAttr of URL_ATTRIBUTES) {
+      const value = attr(element, urlAttr)
+      const scheme = value === undefined ? undefined : urlSchemeOf(value)
+      if (scheme === undefined || DOCUMENT_SCHEMES.has(scheme) || SCRIPT_SCHEMES.has(scheme)) {
+        continue
+      }
+      push(
+        `scheme:${scheme}`,
+        `<${tagName} ${urlAttr}> uses the "${scheme}:" scheme, which a browser hands to whatever app registered for it`
+      )
     }
     if (isFigureScopedElement(tagName)) {
       if (!hasAncestor(element, "figure")) {
