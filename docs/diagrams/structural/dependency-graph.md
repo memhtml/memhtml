@@ -166,7 +166,7 @@ Four declared external dependencies have no import site either.
 - `@aws/bedrock-token-generator` `1.1.0` (`packages/llm/package.json:34`). No file under `packages/llm/src` imports it.
 - `@effect/platform-node-shared` `4.0.5` (`apps/cli/package.json:40`, `apps/mcp/package.json:43`). It's `@effect/platform-node`'s own dependency, pinned in the catalog so the published manifest carries the whole Effect set (`pnpm-workspace.yaml:55-59`).
 - `graphology-types` `0.24.8` (`packages/curator/package.json:43`). It's the type package that `graphology` 0.26.0 names as a peer dependency.
-- `node-html-parser` `9.0.4` (`apps/cli/package.json:58`). The host never loads it. `exec.ts` resolves its path with `createRequire` and reads it as text for the sandbox (`apps/cli/src/exec.ts:144-152`).
+- `node-html-parser` `9.0.5` (`apps/cli/package.json:58`). The host never loads it. `exec.ts` resolves its path with `createRequire` and reads it as text for the sandbox (`apps/cli/src/exec.ts:144-152`).
 
 ## Legend (overflow)
 

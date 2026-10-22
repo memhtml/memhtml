@@ -108,8 +108,8 @@ importers:
         specifier: 2.1.3
         version: 2.1.3
       node-html-parser:
-        specifier: 9.0.4
-        version: 9.0.4
+        specifier: 9.0.5
+        version: 9.0.5
     devDependencies:
       '@biomejs/biome':
         specifier: 2.5.15
@@ -3943,8 +3943,8 @@ packages:
     resolution: {integrity: sha512-LA4ZjwlnUblHVgq0oBF3Jl/6h/Nvs5fzBLwdEF4nuxnFdsfajde4WfxtJr3CaiH+F6ewcIB/q4jQ4UzPyid+CQ==}
     hasBin: true
 
-  node-html-parser@9.0.4:
-    resolution: {integrity: sha512-reUSrZkF1rO7hEYe5mJwtbVcQ6mB5QrViCZH6Wv+iz3er/PA9Q50gol15dMLQRDfdli4VzqPMPR24HNRFgVKFw==}
+  node-html-parser@9.0.5:
+    resolution: {integrity: sha512-LpUc74Ax3L6AsxTEqoep0GDqCBbsPjtn74sYaiazxGXfwhe6iqD4E5sHTJFCU+wBxVMX+Dd7mvLim0QM1vsvpw==}
 
   node-liblzma@2.2.0:
     resolution: {integrity: sha512-s0KzNOWwOJJgPG6wxg6cKohnAl9Wk/oW1KrQaVzJBjQwVcUGPQCzpR46Ximygjqj/3KhOrtJXnYMp/xYAXp75g==}
@@ -8477,7 +8477,7 @@ snapshots:
   node-gyp-build@4.8.4:
     optional: true
 
-  node-html-parser@9.0.4:
+  node-html-parser@9.0.5:
     dependencies:
       css-select: 5.2.2
       entities: 8.1.0
