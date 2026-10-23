@@ -974,14 +974,14 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "timeout-ms",
         type: "int",
         description:
-          "Wall-clock bound on the script. Exceeding it is `exitCode` 124 with `timedOut: true`, not an error envelope. Capped at 600000.",
+          "Wall-clock bound on the script. Exceeding it is `exitCode` 124 with `timedOut: true`, not an error envelope. A value above 600000 is refused.",
         default: 30000
       },
       {
         name: "sha",
         type: "string",
         description:
-          "The commit to mount, materialized as a detached worktree. Defaults to HEAD. Never the live working tree, whose gitignored .memhtml/index.db a worktree omits."
+          "The commit to mount: a sha, an abbreviation, or a ref, resolved to the full sha the report names and materialized as a detached worktree. Defaults to HEAD. A value starting with a dash is refused. Never the live working tree, whose gitignored .memhtml/index.db a worktree omits."
       }
     ],
     responseTypes: ["exec.report"]
@@ -1326,7 +1326,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "timeout-ms",
         type: "int",
         description:
-          "Wall-clock bound on the script. Exceeding it is `exitCode` 124 with `timedOut: true`, for a bash loop and a `js-exec` module alike. Other sandbox bounds end a runaway sooner with exit 126 and the bound named on stderr: call depth 100, and 100,000 iterations inside one `awk`, `sed`, or `jq`. Capped at 600000. Under the head server a run still going 5 s past the bound (a single command the shell cannot interrupt) has its worker stopped, and it reports exit 124 with nothing harvested.",
+          "Wall-clock bound on the script. Exceeding it is `exitCode` 124 with `timedOut: true`, for a bash loop and a `js-exec` module alike. Other sandbox bounds end a runaway sooner with exit 126 and the bound named on stderr: call depth 100, and 100,000 iterations inside one `awk`, `sed`, or `jq`. A value above 600000 is refused. Under the head server a run still going 5 s past the bound (a single command the shell cannot interrupt) has its worker stopped, and it reports exit 124 with nothing harvested.",
         default: 30000
       },
       {

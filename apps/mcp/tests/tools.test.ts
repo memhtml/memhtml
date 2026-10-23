@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url"
 import { claimFromProse, NEIGHBORS_LIMIT, proseTail } from "@memhtml/cli"
 import { MEMORY_RELS } from "@memhtml/contracts/edges"
 import { WRITABLE_MEMORY_TYPES } from "@memhtml/contracts/types"
@@ -915,7 +916,7 @@ describe("the body-to-claim split", () => {
     const { join } = await import("node:path")
     /** `claimFromProse`'s first-sentence pattern and `proseTail`'s blank-line pattern, as emitted. */
     const SIGNATURES = ["(.*?[.!?])(\\s|$)", "\\n\\s*\\n"]
-    const dist = new URL("../dist", import.meta.url).pathname
+    const dist = fileURLToPath(new URL("../dist", import.meta.url))
     const entries = await readdir(dist, { recursive: true, withFileTypes: true })
     const files = entries
       .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))

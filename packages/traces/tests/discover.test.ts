@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 
 import { Effect, Result } from "effect"
 import { describe, expect, it } from "vitest"
@@ -13,7 +14,7 @@ import {
 } from "../src/discover.js"
 
 /** The checked-in fixture tree: two slugs, one main session each, one sidecar under the first. */
-const FIXTURE_ROOT = new URL("./fixtures", import.meta.url).pathname
+const FIXTURE_ROOT = fileURLToPath(new URL("./fixtures", import.meta.url))
 
 const ALPHA = "11111111-1111-4111-8111-111111111111"
 const BETA = "22222222-2222-4222-8222-222222222222"
@@ -91,7 +92,13 @@ describe("discoverSessions", () => {
     expect(files.map((file) => file.kind)).toEqual(["session"])
   })
 
-  it("reports an unreadable projects directory as a StorageFailure rather than as empty", async () => {
+  it("reports an unreadable projects directory as a StorageFailure rather than as empty", async (ctx) => {
+    // uid 0 reads a mode-000 directory, and win32 does not enforce the mode bits for the owner, so
+    // the denial cannot be staged on either.
+    ctx.skip(
+      process.getuid?.() === 0 || process.platform === "win32",
+      "chmod 000 does not deny the read on this platform or user, so the denial cannot be staged"
+    )
     const root = await tempRoot("denied")
     const projects = join(root, PROJECTS_DIR)
     await mkdir(projects, { recursive: true })

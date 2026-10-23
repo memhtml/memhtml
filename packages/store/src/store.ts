@@ -324,13 +324,17 @@ export const Store = Context.Service<StoreShape>("memhtml/Store")
  * shell expands a tilde, so the other two would otherwise create a literal `./~` directory. The
  * `MEMHTML_ROOT` config that reads it lives in the composition root, which owns every environment
  * lookup; this package is handed a root rather than resolving one.
+ *
+ * Both separators are accepted after the tilde. A value set through a Windows-native surface (an
+ * MCP client's env block, a `.env` file) reads `~\memhtml`, and it has to expand like `~/memhtml`
+ * rather than resolve as a literal `~` directory under the working directory.
  */
 export function expandRoot(raw: string): string {
   const trimmed = raw.trim()
   const expanded =
     trimmed === "~"
       ? homedir()
-      : trimmed.startsWith("~/")
+      : trimmed.startsWith("~/") || trimmed.startsWith("~\\")
         ? join(homedir(), trimmed.slice(2))
         : trimmed
   return isAbsolute(expanded) ? expanded : resolve(expanded)

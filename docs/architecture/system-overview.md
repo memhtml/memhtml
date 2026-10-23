@@ -4,7 +4,7 @@ Describes the source at 0.16.0 (2026-10-18). Citations are `path:line` into that
 
 ## What this repository is
 
-This repository holds the software that manages an agent's long-term memory. It stores no memory of its own. The memory lives in a separate directory called the memhtml root, which is its own git repository. The environment variable `MEMHTML_ROOT` tells every command which root to act on, and it defaults to `~/memhtml` (`apps/cli/src/config.ts:108-112`, `apps/cli/src/config.ts:277-280`, `AGENTS.md:675`). One installed binary serves many roots.
+This repository holds the software that manages an agent's long-term memory. It stores no memory of its own. The memory lives in a separate directory called the memhtml root, which is its own git repository. The environment variable `MEMHTML_ROOT` tells every command which root to act on, and it defaults to `~/memhtml` (`apps/cli/src/config.ts:108-117`, `apps/cli/src/config.ts:282-286`, `AGENTS.md:675`). One installed binary serves many roots.
 
 Inside a root, one fact is one semantic HTML5 file, and the root's git tree is the system of record. `.memhtml/index.db` is a SQLite projection of that tree, so it can be deleted and rebuilt without loss (`packages/store/src/layout.ts:24-25`, `packages/index/src/indexer.ts:19`).
 
@@ -16,11 +16,11 @@ The root also carries one tracked file that isn't a record, the store policy `me
 
 The primary caller is a coding agent. The workspace declares two binaries, `memhtml` (`apps/cli/package.json:21-23`) and `memhtml-mcp` (`apps/mcp/package.json:20-22`).
 
-Every CLI call writes one JSON envelope carrying `apiVersion`, a `type` discriminator drawn from the append-only `RESPONSE_TYPES` list, and `data` (`apps/cli/src/envelope.ts:92-96`, `apps/cli/src/envelope.ts:8-12`). There are two exceptions. `memhtml help` on a terminal writes Markdown, and a successful `memhtml hook` writes the host's hook protocol (`apps/cli/src/envelope.ts:51-54`). Two commands run until they're stopped and write their envelope then. `memhtml serve mcp` writes `serve.exit` after its child exits, and `memhtml head serve` writes `head.served` after a signal stops it (`apps/cli/src/run.ts:1946-1955`, `apps/cli/src/run.ts:2269-2282`).
+Every CLI call writes one JSON envelope carrying `apiVersion`, a `type` discriminator drawn from the append-only `RESPONSE_TYPES` list, and `data` (`apps/cli/src/envelope.ts:92-96`, `apps/cli/src/envelope.ts:8-12`). There are two exceptions. `memhtml help` on a terminal writes Markdown, and a successful `memhtml hook` writes the host's hook protocol (`apps/cli/src/envelope.ts:51-54`). Two commands run until they're stopped and write their envelope then. `memhtml serve mcp` writes `serve.exit` after its child exits, and `memhtml head serve` writes `head.served` after a signal stops it (`apps/cli/src/run.ts:1960-1969`, `apps/cli/src/run.ts:2283-2296`).
 
 Failures carry a stable `code` from the append-only `ERROR_CODES` list plus `suggestions`, so an agent branches on the code instead of the prose (`apps/cli/src/envelope.ts:98-110`). Exit codes are fixed at 0 for success, 2 for usage, and 1 for runtime (`apps/cli/src/envelope.ts:165-168`).
 
-`memhtml manifest` returns the whole command surface without building the app layer, so it answers on a machine with no root, no database, and no credentials (`apps/cli/src/run.ts:1714-1729`). At 0.16.0 it lists 57 commands, the 53 response types they answer, 25 error codes, and 25 environment variables (`buildManifest` at `apps/cli/src/commands.ts:1995-2023`). `--dense` drops nulls and indentation to save context tokens (`apps/cli/src/envelope.ts:218-235`).
+`memhtml manifest` returns the whole command surface without building the app layer, so it answers on a machine with no root, no database, and no credentials (`apps/cli/src/run.ts:1728-1743`). At 0.16.0 it lists 57 commands, the 53 response types they answer, 25 error codes, and 25 environment variables (`buildManifest` at `apps/cli/src/commands.ts:1995-2023`). `--dense` drops nulls and indentation to save context tokens (`apps/cli/src/envelope.ts:218-235`).
 
 `AGENTS.md` is generated from the same `COMMANDS` array that drives argument parsing, so the doc stays in step with the binary (`apps/cli/src/agents-doc.ts:11-16`).
 
@@ -40,7 +40,7 @@ The repository is a pnpm workspace over `apps/*`, `packages/*`, and `tests-integ
 
 Four libraries carry v2, which treats the corpus as a value (`docs/design.md` §15). `@memhtml/head` holds the parsed corpus as one immutable version per commit in `effect` structures, with its indexes, `searchHead`, and the head gate (`packages/head/src/index.ts:1-6`, 9 files, 1473 LOC). `@memhtml/session` holds a session's overlay log and the commit path that lands it on a ref through a temporary git index (`packages/session/src/index.ts:1-4`, 10 files, 2440 LOC). `@memhtml/snapshot` writes and reads the Arrow snapshot of a commit and the vector cache (`packages/snapshot/src/index.ts:1`, 5 files, 981 LOC). `@memhtml/curator` holds the bounded model-driven curator loop, its charters and budget, and the deterministic collapse planner (`packages/curator/src/index.ts:1-6`, 17 files, 3307 LOC).
 
-`@memhtml/cli` is the one composition root. It depends on every library (`apps/cli/package.json:38-59`, 44 files, 22561 LOC), and `@memhtml/mcp` depends on the CLI and reuses its operations (`apps/mcp/package.json:44`, 7 files, 2674 LOC). The v1 commands run over `layerApp` (`apps/cli/src/api-layer.ts:402-419`), the Effect layer that opens `index.db` through `layerDatabase` (`apps/cli/src/api-layer.ts:111-129`). The `session`, `head`, and `curate` commands resolve the root themselves and never build that layer, because none of them reads `index.db` (`apps/cli/src/v2.ts:122-128`, `apps/cli/src/run.ts:1209-1215`).
+`@memhtml/cli` is the one composition root. It depends on every library (`apps/cli/package.json:38-59`, 44 files, 22561 LOC), and `@memhtml/mcp` depends on the CLI and reuses its operations (`apps/mcp/package.json:44`, 7 files, 2674 LOC). The v1 commands run over `layerApp` (`apps/cli/src/api-layer.ts:402-419`), the Effect layer that opens `index.db` through `layerDatabase` (`apps/cli/src/api-layer.ts:111-129`). The `session`, `head`, and `curate` commands resolve the root themselves and never build that layer, because none of them reads `index.db` (`apps/cli/src/v2.ts:122-128`, `apps/cli/src/run.ts:1223-1229`).
 
 `memhtml head serve` is a long-running process that holds the head loaded at its ref's tip and follows the ref (`apps/cli/src/head-server.ts:96-117`). It answers JSON over HTTP on the Unix socket `.memhtml/head.sock`, or a named pipe on win32, on seven routes (`apps/cli/src/head-protocol.ts:7-29`). `head status`, `head search`, `session put`, `session exec`, `session commit`, and `session rebase` ask the server first. When no server answers, they load the head locally, from a snapshot when one exists and from git otherwise (`apps/cli/src/v2.ts:130-141`). See `docs/design.md` §22 for the server's lifecycle and protocol.
 
@@ -95,26 +95,26 @@ flowchart LR
 
 ## Stack
 
-| Layer         | Technology                                                                                       | Source                                                                        |
-| ------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| Language      | TypeScript 7.0.2 (`apps/docs` pins 6.0.3)                                                        | `package.json:38`, `apps/docs/package.json:51`                                |
-| Runtime       | Node.js >= 24, pinned to 24                                                                      | `package.json:7-9`, `mise.toml:37`                                            |
-| Framework     | Effect 4.0.5, one catalog set of four packages                                                   | `pnpm-workspace.yaml:60-64`                                                   |
-| Storage       | `node:sqlite` `DatabaseSync` over 12 SQL migrations plus 2 state-plane migrations                | `packages/index/src/database.ts:4`, `packages/index/src/schema-const.ts:9-16` |
-| Storage       | git as the system of record for the root                                                         | `packages/index/src/indexer.ts:19`                                            |
-| Snapshots     | apache-arrow 21.2.0, one Arrow IPC file per commit and one vector cache per model                | `packages/snapshot/package.json:27`, `packages/snapshot/src/snapshot.ts:2`    |
-| Locks         | proper-lockfile 4.1.2 for the checkout lock and the session lock                                 | `packages/store/package.json:40`, `packages/session/package.json:30`          |
-| Atomic writes | write-file-atomic 8.0.0 for session logs, snapshots, and vector caches                           | `packages/session/package.json:31`, `packages/snapshot/package.json:29`       |
-| HTML parsing  | parse5 8.0.1                                                                                     | `packages/html/package.json:36`                                               |
-| Embeddings    | AWS Bedrock SDK 3.1153.0, `cohere.embed-v4:0` at 1024 dims                                       | `packages/llm/package.json:33`, `packages/llm/src/constants.ts:7-8`           |
-| Curator model | AI SDK `ai` 7.0.146 with `@ai-sdk/amazon-bedrock` 5.0.120 and `@ai-sdk/openai-compatible` 3.0.74 | `packages/curator/package.json:28-38`                                         |
-| Collapse plan | graphology 0.26.0, graphology-communities-louvain 2.0.2, graphology-metrics 2.4.2                | `packages/curator/package.json:40-42`                                         |
-| Sandbox       | just-bash 3.4.2 for `exec` and `session exec`                                                    | `apps/cli/package.json:56`                                                    |
-| Head server   | `@effect/platform-node` 4.0.5, HTTP over the store's Unix socket                                 | `pnpm-workspace.yaml:62`, `apps/cli/src/head-client.ts:30-33`                 |
-| Tracing       | Effect's own `OtlpTracer`, opt-in                                                                | `packages/telemetry/src/index.ts:14-18`                                       |
-| Build tooling | turbo 2.11.9, pnpm 11.21.0, biome 2.5.15, tsdown 0.23.1                                          | `package.json:6`, `package.json:32-36`                                        |
-| Test tooling  | vitest 5.0.5, `@effect/vitest`, fast-check 4.10.2                                                | `apps/cli/package.json:60-67`, `pnpm-workspace.yaml:64-65`                    |
-| Docs site     | astro ^7.4.1, `@astrojs/starlight` ^0.42.6                                                       | `apps/docs/package.json:24`, `apps/docs/package.json:19`                      |
+| Layer         | Technology                                                                                       | Source                                                                         |
+| ------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| Language      | TypeScript 7.0.2 (`apps/docs` pins 6.0.3)                                                        | `package.json:38`, `apps/docs/package.json:51`                                 |
+| Runtime       | Node.js >= 24, pinned to 24                                                                      | `package.json:7-9`, `mise.toml:37`                                             |
+| Framework     | Effect 4.0.5, one catalog set of four packages                                                   | `pnpm-workspace.yaml:60-64`                                                    |
+| Storage       | `node:sqlite` `DatabaseSync` over 12 SQL migrations plus 2 state-plane migrations                | `packages/index/src/database.ts:4`, `packages/index/src/schema-const.ts:11-18` |
+| Storage       | git as the system of record for the root                                                         | `packages/index/src/indexer.ts:19`                                             |
+| Snapshots     | apache-arrow 21.2.0, one Arrow IPC file per commit and one vector cache per model                | `packages/snapshot/package.json:27`, `packages/snapshot/src/snapshot.ts:2`     |
+| Locks         | proper-lockfile 4.1.2 for the checkout lock and the session lock                                 | `packages/store/package.json:40`, `packages/session/package.json:30`           |
+| Atomic writes | write-file-atomic 8.0.0 for session logs, snapshots, and vector caches                           | `packages/session/package.json:31`, `packages/snapshot/package.json:29`        |
+| HTML parsing  | parse5 8.0.1                                                                                     | `packages/html/package.json:36`                                                |
+| Embeddings    | AWS Bedrock SDK 3.1153.0, `cohere.embed-v4:0` at 1024 dims                                       | `packages/llm/package.json:33`, `packages/llm/src/constants.ts:7-8`            |
+| Curator model | AI SDK `ai` 7.0.146 with `@ai-sdk/amazon-bedrock` 5.0.120 and `@ai-sdk/openai-compatible` 3.0.74 | `packages/curator/package.json:28-38`                                          |
+| Collapse plan | graphology 0.26.0, graphology-communities-louvain 2.0.2, graphology-metrics 2.4.2                | `packages/curator/package.json:40-42`                                          |
+| Sandbox       | just-bash 3.4.2 for `exec` and `session exec`                                                    | `apps/cli/package.json:56`                                                     |
+| Head server   | `@effect/platform-node` 4.0.5, HTTP over the store's Unix socket                                 | `pnpm-workspace.yaml:62`, `apps/cli/src/head-client.ts:30-33`                  |
+| Tracing       | Effect's own `OtlpTracer`, opt-in                                                                | `packages/telemetry/src/index.ts:14-18`                                        |
+| Build tooling | turbo 2.11.9, pnpm 11.21.0, biome 2.5.15, tsdown 0.23.1                                          | `package.json:6`, `package.json:32-36`                                         |
+| Test tooling  | vitest 5.0.5, `@effect/vitest`, fast-check 4.10.2                                                | `apps/cli/package.json:60-67`, `pnpm-workspace.yaml:64-65`                     |
+| Docs site     | astro ^7.4.1, `@astrojs/starlight` ^0.42.6                                                       | `apps/docs/package.json:24`, `apps/docs/package.json:19`                       |
 
 ## See also
 

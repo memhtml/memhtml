@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 import type { AstroIntegration } from "astro"
 
 import { rawMarkdownUrl, type SiteContext } from "./agent-surface.js"
@@ -78,7 +79,7 @@ export const llmsPages = (context: SiteContext): AstroIntegration => ({
   name: "memhtml:llms-pages",
   hooks: {
     "astro:build:done": async ({ dir, pages, logger }) => {
-      const root = dir.pathname
+      const root = fileURLToPath(dir)
       const entries = []
       for (const page of pages) {
         const id = entryIdOf(`/${page.pathname}`, context.base)

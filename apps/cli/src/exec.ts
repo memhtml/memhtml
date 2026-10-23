@@ -500,6 +500,35 @@ export const readScript = async (file: string): Promise<string | Failure> => {
  * Cost measured: `git worktree add --detach` on the 305-file fixture is 31ms (three runs: 31/30/31),
  * against a 640ms full-corpus parse. The pin is ~5% of the work it makes correct.
  */
+/**
+ * The full sha of the commit `requested` names, so the worktree and the report carry the same
+ * 40-character commit whether the caller passed a sha, an abbreviation, or a ref.
+ *
+ * `--end-of-options` keeps git from reading the value as an option even when a caller reaches
+ * this function without the CLI's flag check. A value that names no commit is the runtime
+ * failing, so it answers `InvalidMemory` (exit 1), the same as a sha the repository lacks.
+ */
+const resolveCommit = (
+  git: ReturnType<typeof makeGit>,
+  requested: string,
+  root: string
+): Effect.Effect<string, InvalidMemory | GitFailure> =>
+  git.run(["rev-parse", "--verify", "--quiet", "--end-of-options", `${requested}^{commit}`]).pipe(
+    Effect.map((out) => out.trim()),
+    Effect.catchTag("GitFailure", (failure) =>
+      failure.exitCode === 1 ? Effect.succeed("") : Effect.fail(failure)
+    ),
+    Effect.flatMap((sha) =>
+      /^[0-9a-f]{40}$/.test(sha)
+        ? Effect.succeed(sha)
+        : Effect.fail(
+            InvalidMemory.make({
+              reason: `--sha ${requested} names no commit in ${root}: exec mounts a committed tree`
+            })
+          )
+    )
+  )
+
 export const execCommand = (input: {
   readonly script: string
   readonly memhtmlRoot: string
@@ -509,10 +538,10 @@ export const execCommand = (input: {
   Effect.gen(function* () {
     const git = makeGit(input.memhtmlRoot)
 
-    const requested = input.sha
+    const requested = input.sha?.trim()
     const sha =
-      requested !== undefined && requested.trim() !== ""
-        ? requested.trim()
+      requested !== undefined && requested !== ""
+        ? yield* resolveCommit(git, requested, input.memhtmlRoot)
         : yield* git.revParseHead()
     if (sha === null) {
       return yield* Effect.fail(

@@ -1,6 +1,7 @@
 import { access, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 
 import { makeFixtureRepo } from "@memhtml/store/testing"
 import { Effect } from "effect"
@@ -23,7 +24,7 @@ const VAR = "MEMHTML_REFUSE_ENV_ROOT"
 const CODE = "ERR_REPO_REQUIRED"
 
 /** The repo root, three levels up from this file: `apps/cli/tests` to the workspace. */
-const REPO_ROOT = new URL("../../..", import.meta.url).pathname
+const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url))
 
 const parse = (stdout: string) => JSON.parse(stdout) as Record<string, unknown>
 

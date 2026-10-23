@@ -52,7 +52,7 @@ Review a curator branch with `git log` and `git diff` against `main` instead, as
 
 ## The exception that never touches your store
 
-`memhtml eval discriminate` never builds the application layer at all (`apps/cli/src/run.ts:834`). It is the discrimination gate, which checks that every probe query ranks its target fact above deliberately wrong versions of that fact. It measures the ranking stack against its own generated fixture corpus, in a temp directory, with an in-memory database, and it never opens your `index.db`.
+`memhtml eval discriminate` never builds the application layer at all (`apps/cli/src/run.ts:848`). It is the discrimination gate, which checks that every probe query ranks its target fact above deliberately wrong versions of that fact. It measures the ranking stack against its own generated fixture corpus, in a temp directory, with an in-memory database, and it never opens your `index.db`.
 
 Checking the gate is exactly what an operator wants to do while the server is up, and a gate that needed the store quiet would be a gate nobody ran at the moment it mattered.
 

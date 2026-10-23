@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
 
 import {
@@ -573,7 +574,7 @@ describe("rebuild determinism", () => {
     const { join } = await import("node:path")
     /** What an index-time detector could not avoid: the module, hljs itself, or the threshold. */
     const SIGNATURES = ["detect.js", "highlight.js", "highlightAuto", "0.28685957116771854"]
-    const dist = new URL("../../index/dist", import.meta.url).pathname
+    const dist = fileURLToPath(new URL("../../index/dist", import.meta.url))
     const entries = await readdir(dist, { recursive: true, withFileTypes: true })
     const files = entries
       .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
@@ -591,7 +592,7 @@ describe("rebuild determinism", () => {
     // The dist lock catches a detector that got imported; this catches one that got INSTALLED,
     // before anyone writes the import.
     const { readFile } = await import("node:fs/promises")
-    const manifest = new URL("../../index/package.json", import.meta.url).pathname
+    const manifest = fileURLToPath(new URL("../../index/package.json", import.meta.url))
     const pkg = JSON.parse(await readFile(manifest, "utf8")) as {
       dependencies?: Record<string, string>
       devDependencies?: Record<string, string>
@@ -608,7 +609,7 @@ describe("rebuild determinism", () => {
      * re-runs the eval, so the pin is asserted as an exact string rather than a satisfied range.
      */
     const { readFile } = await import("node:fs/promises")
-    const manifest = new URL("../package.json", import.meta.url).pathname
+    const manifest = fileURLToPath(new URL("../package.json", import.meta.url))
     const pkg = JSON.parse(await readFile(manifest, "utf8")) as {
       dependencies: Record<string, string>
     }
