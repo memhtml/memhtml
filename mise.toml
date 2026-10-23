@@ -59,6 +59,7 @@ dprint = "0.56.0"                        # markdown formatter (textWrap: never)
 # External-link checker for the built docs site, used ONLY by the scheduled `links` workflow. It is
 # not in `check` and must not be: an outbound 404 appears when somebody else edits their site, so
 # gating on it would fail whichever commit happened to be pushed that day.
+"aqua:ossf/scorecard" = "5.6.0"         # per-check security ratchet
 lychee = "latest"
 
 [env]
@@ -108,9 +109,13 @@ run = "pnpm install --frozen-lockfile"
 # --- the gate -----------------------------------------------------------------------
 
 [tasks.check]
-description = "The definition of done: lint, typecheck, tests, integration, eval, a11y"
+description = "The definition of done: lint, typecheck, tests, integration, eval, a11y, Scorecard"
 raw_args = true
-run = "pnpm check"
+run = ["pnpm check", "mise run gate:scorecard"]
+
+[tasks."gate:scorecard"]
+description = "Ratchet local Scorecard checks against the committed HEAD export"
+run = "node scripts/scorecard-gate.mjs"
 
 [tasks.build]
 description = "tsc -b across the project-reference graph"

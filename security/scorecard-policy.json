@@ -1,0 +1,42 @@
+{
+  "command": ["mise", "x", "aqua:ossf/scorecard@5.6.0", "--", "scorecard"],
+  "version": "v5.6.0",
+  "mode": "local",
+  "checks": {
+    "Binary-Artifacts": {
+      "min": 10
+    },
+    "Dangerous-Workflow": {
+      "min": 10
+    },
+    "Dependency-Update-Tool": {
+      "min": 10
+    },
+    "Fuzzing": {
+      "min": 10
+    },
+    "License": {
+      "min": 9
+    },
+    "Packaging": {
+      "min": 10
+    },
+    "Pinned-Dependencies": {
+      "min": 10
+    },
+    "SAST": {
+      "min": 10
+    },
+    "Security-Policy": {
+      "min": 10
+    },
+    "Token-Permissions": {
+      "min": 10
+    },
+    "Vulnerabilities": {
+      "min": null,
+      "evidence": false,
+      "why": "osv-scanner reports vulnerabilities through the existing SARIF workflow; a new advisory must not fail every pull request through this local score."
+    }
+  }
+}

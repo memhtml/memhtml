@@ -61,3 +61,18 @@ jobs:
           name: sbom-cyclonedx
           path: .sbom/sbom.cyclonedx.json
           retention-days: 90
+
+  scorecard-gate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
+        with:
+          install_args: --locked
+      - run: mise run gate:scorecard
