@@ -1,8 +1,7 @@
-# Dependency, SAST, and secret scanning — kept out of check.yml so the gate stays one
-# job with one meaning.
+# Dependency, SAST, and secret scanning, plus a separate Scorecard ratchet for pull requests.
 #
-# The contract in one line: FINDINGS do not fail this job, a scanner that produced no usable
-# report does.
+# The scan job reports findings and fails only when a scanner produces no usable report.
+# The Scorecard job gates each credited check against its floor and committed baseline.
 #
 # Every scanner's own findings exit code is swallowed in mise.toml, because a scanner that
 # exits non-zero kills the step before the upload runs and throws away the finding detail that

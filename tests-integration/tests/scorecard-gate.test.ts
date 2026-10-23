@@ -214,27 +214,16 @@ describe("the Scorecard ratchet", () => {
     expect(unknown.stderr).toContain("usage:")
   })
 
-  it("ignores an installed native binary, but rejects that same binary committed in HEAD", async () => {
-    const clone = join(scratch, "clone")
+  const cloneHead = async (name: string) => {
+    const clone = join(scratch, name)
     const cloned = spawnSync("git", ["clone", "--quiet", "--no-hardlinks", REPO_ROOT, clone], {
       encoding: "utf8"
     })
     expect(cloned.status, cloned.stderr).toBe(0)
-    const installed = join(clone, "node_modules", "native")
-    await mkdir(dirname(installed), { recursive: true })
-    await copyFile(process.execPath, installed)
-    const ignored = spawnSync("git", ["check-ignore", "node_modules/native"], {
-      cwd: clone,
-      encoding: "utf8"
-    })
-    expect(ignored.status, ignored.stderr).toBe(0)
-    const clean = runGate(["--target", clone])
-    expect(clean.status, clean.stdout + clean.stderr).toBe(0)
-    expect(clean.stdout).toContain("11 of 11 policy checks ran")
+    return clone
+  }
 
-    // A successful installed-binary run alone is weak evidence: the scanner must also reject the
-    // very same bytes when git archive is supposed to include them.
-    await copyFile(installed, join(clone, "native"))
+  const commit = (clone: string, paths: string[], subject: string) => {
     const author = spawnSync("git", ["log", "-1", "--format=%an%n%ae"], {
       cwd: clone,
       encoding: "utf8"
@@ -248,17 +237,128 @@ describe("the Scorecard ratchet", () => {
       GIT_COMMITTER_NAME: author[0],
       GIT_COMMITTER_EMAIL: author[1]
     }
-    const staged = spawnSync("git", ["add", "native"], { cwd: clone, encoding: "utf8", env })
+    const staged = spawnSync("git", ["add", ...paths], { cwd: clone, encoding: "utf8", env })
     expect(staged.status, staged.stderr).toBe(0)
-    const committed = spawnSync("git", ["commit", "-m", "test: commit native binary"], {
+    const committed = spawnSync("git", ["commit", "-m", subject], {
       cwd: clone,
       encoding: "utf8",
       env
     })
     expect(committed.status, committed.stderr).toBe(0)
-    const planted = runGate(["--target", clone])
+  }
+
+  // The real git export is the subject here. A fake Scorecard keeps the regular check offline;
+  // live committed plants separately prove how the pinned scanner scores these same files.
+  const offlineScanner = async () => {
+    const commands = join(scratch, `commands-${serial++}`)
+    await mkdir(commands)
+    const report = await readFile(join(FIXTURES, "clean.json"), "utf8")
+    await writeFile(
+      join(commands, "mise"),
+      `#!/usr/bin/env node
+const fs = require("node:fs")
+const path = require("node:path")
+const report = ${report}
+const tree = process.argv.find(arg => arg.startsWith("--local=")).slice(8)
+const binaries = [path.join(tree, "native"), path.join(tree, "node_modules", "native")]
+if (binaries.some(binary => fs.existsSync(binary) && fs.readFileSync(binary).equals(fs.readFileSync(process.execPath)))) {
+  report.checks.find(check => check.name === "Binary-Artifacts").score = 0
+}
+const workflow = fs.readFileSync(path.join(tree, ".github/workflows/check.yml"), "utf8")
+if (!/^permissions:/m.test(workflow)) {
+  report.checks.find(check => check.name === "Token-Permissions").score = 0
+}
+if (process.env.EXPORT_CAPTURE) {
+  fs.writeFileSync(process.env.EXPORT_CAPTURE, fs.readFileSync(path.join(tree, "marker.txt")))
+}
+process.stdout.write(JSON.stringify(report))
+`,
+      { mode: 0o755 }
+    )
+    return { ...process.env, PATH: `${commands}:${process.env.PATH}` }
+  }
+
+  it("ignores an installed native binary, but rejects that same binary committed in HEAD", async () => {
+    const clone = await cloneHead("installed-clone")
+    const installed = join(clone, "node_modules", "native")
+    await mkdir(dirname(installed), { recursive: true })
+    await copyFile(process.execPath, installed)
+    const ignored = spawnSync("git", ["check-ignore", "node_modules/native"], {
+      cwd: clone,
+      encoding: "utf8"
+    })
+    expect(ignored.status, ignored.stderr).toBe(0)
+    const env = await offlineScanner()
+    const clean = runGate(["--target", clone], env)
+    expect(clean.status, clean.stdout + clean.stderr).toBe(0)
+    expect(clean.stdout).toContain("11 of 11 policy checks ran")
+
+    await copyFile(installed, join(clone, "native"))
+    commit(clone, ["native"], "test: commit native binary")
+    const planted = runGate(["--target", clone], env)
     expect(planted.status, planted.stdout + planted.stderr).toBe(1)
     expect(planted.stdout).toContain("FLOOR Binary-Artifacts")
+  })
+
+  it("scores a committed permissions drop even when export-ignore names the workflow", async () => {
+    const clone = await cloneHead("permissions-clone")
+    const workflow = join(clone, ".github", "workflows", "check.yml")
+    await writeFile(
+      workflow,
+      (await readFile(workflow, "utf8")).replace(/^permissions:\n {2}contents: read\n/m, "")
+    )
+    await writeFile(join(clone, ".gitattributes"), ".github/workflows/check.yml export-ignore\n")
+    commit(clone, [".gitattributes", ".github/workflows/check.yml"], "test: hide workflow export")
+    const run = runGate(["--target", clone], await offlineScanner())
+    expect(run.status, run.stdout + run.stderr).toBe(1)
+    expect(run.stdout).toContain("FLOOR Token-Permissions 0 < floor 10")
+  })
+
+  it("scores a committed binary even when export-ignore names it", async () => {
+    const clone = await cloneHead("binary-clone")
+    await copyFile(process.execPath, join(clone, "native"))
+    await writeFile(join(clone, ".gitattributes"), "native export-ignore\n")
+    commit(clone, [".gitattributes", "native"], "test: hide binary export")
+    const run = runGate(["--target", clone], await offlineScanner())
+    expect(run.status, run.stdout + run.stderr).toBe(1)
+    expect(run.stdout).toContain("FLOOR Binary-Artifacts 0 < floor 10")
+  })
+
+  it("exports committed content without export-subst expansion", async () => {
+    const clone = await cloneHead("substitution-clone")
+    const content = "$Format:%H$\n"
+    await writeFile(join(clone, "marker.txt"), content)
+    await writeFile(join(clone, ".gitattributes"), "marker.txt export-subst\n")
+    commit(clone, [".gitattributes", "marker.txt"], "test: preserve archive content")
+    const capture = join(scratch, "captured-marker.txt")
+    const run = runGate(["--target", clone], {
+      ...(await offlineScanner()),
+      EXPORT_CAPTURE: capture
+    })
+    expect(run.status, run.stdout + run.stderr).toBe(0)
+    expect(await readFile(capture, "utf8")).toBe(content)
+  })
+
+  it("refuses an export whose file list differs from the committed tree", async () => {
+    const commands = join(scratch, "incomplete-export")
+    await mkdir(commands)
+    await writeFile(
+      join(commands, "tar"),
+      `#!/usr/bin/env node
+const { spawnSync } = require("node:child_process")
+const { rmSync } = require("node:fs")
+const { join } = require("node:path")
+const args = process.argv.slice(2)
+const run = spawnSync("/usr/bin/tar", args)
+if (run.status !== 0) process.exit(run.status)
+rmSync(join(args[args.indexOf("-C") + 1], "README.md"))
+`,
+      { mode: 0o755 }
+    )
+    const env = await offlineScanner()
+    const run = runGate([], { ...env, PATH: `${commands}:${env.PATH}` })
+    expect(run.status, run.stdout + run.stderr).toBe(2)
+    expect(run.stderr).toContain("EXPORT exported file list differs from committed HEAD")
   })
 
   it("refuses a tool exit failure even when the tool prints a clean report", async () => {

@@ -14,7 +14,7 @@
  * existing vulnerability reporting policy.
  */
 import { spawnSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -160,6 +160,12 @@ const checkedCommand = (command, args, options) => {
   return run
 }
 
+const exportedPaths = (root, prefix = "") =>
+  readdirSync(join(root, prefix), { withFileTypes: true }).flatMap((entry) => {
+    const path = prefix ? `${prefix}/${entry.name}` : entry.name
+    return entry.isDirectory() ? exportedPaths(root, path) : [path]
+  })
+
 const scanHead = (policy, target) => {
   const scratch = mkdtempSync(
     join(process.env.TMPDIR ?? process.env.RUNNER_TEMP ?? tmpdir(), "scorecard-")
@@ -167,9 +173,39 @@ const scanHead = (policy, target) => {
   try {
     const archive = join(scratch, "head.tar")
     const tree = join(scratch, "tree")
+    const repository = join(scratch, "repository.git")
+    const head = checkedCommand("git", ["-C", target, "rev-parse", "HEAD"]).stdout.trim()
+    const committed = checkedCommand("git", [
+      "-C",
+      target,
+      "ls-tree",
+      "-r",
+      "--name-only",
+      "--full-tree",
+      "-z",
+      head
+    ])
+      .stdout.split("\0")
+      .filter(Boolean)
+      .sort()
     mkdirSync(tree)
-    checkedCommand("git", ["-C", target, "archive", "HEAD", "--format=tar", `--output=${archive}`])
+    // info/attributes wins over every committed .gitattributes, including nested ones. A separate
+    // object store avoids changing the checkout, and neither export attribute may hide its bytes.
+    checkedCommand("git", ["clone", "--quiet", "--bare", "--no-hardlinks", target, repository])
+    mkdirSync(join(repository, "info"), { recursive: true })
+    writeFileSync(join(repository, "info", "attributes"), "* -export-ignore -export-subst\n")
+    checkedCommand("git", [
+      "-C",
+      repository,
+      "archive",
+      head,
+      "--format=tar",
+      `--output=${archive}`
+    ])
     checkedCommand("tar", ["-xf", archive, "-C", tree])
+    if (JSON.stringify(exportedPaths(tree).sort()) !== JSON.stringify(committed)) {
+      refuse("EXPORT exported file list differs from committed HEAD")
+    }
     const [command, ...args] = policy.command
     const run = spawnSync(
       command,
