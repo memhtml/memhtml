@@ -3,7 +3,7 @@
 # lives in any secret. RELEASING.md documents the flow, the bootstrap, and the failure
 # signatures.
 #
-# One workflow, two jobs, on purpose: a second workflow keyed on `release: [published]`
+# One workflow, on purpose: a second workflow keyed on `release: [published]`
 # would never fire, because GitHub does not start workflow runs from events raised by the
 # default GITHUB_TOKEN, and release-please tags with that token.
 name: release-please
@@ -60,12 +60,18 @@ jobs:
       # The OIDC token npm exchanges for a short-lived publish credential. This is the
       # whole reason there is no NPM_TOKEN secret anywhere in this repo.
       id-token: write
+      attestations: write
+    outputs:
+      version: ${{ steps.assets.outputs.version }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      tag: ${{ inputs.tag || needs.release-please.outputs.tag_name }}
     steps:
       # The TAG, not the branch: `main` has already moved on by the time this runs, and
       # the bytes that get published have to be the bytes that were released.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.tag || needs.release-please.outputs.tag_name }}
+          persist-credentials: false
 
       # The toolchain mise.lock pins, and this job genuinely needs it: `pnpm check` builds the
       # docs site, astro-d2 shells out to the `d2` binary, and d2 is a mise tool. Without this
@@ -101,10 +107,9 @@ jobs:
       - run: pnpm exec playwright install chromium --with-deps
         working-directory: apps/docs
 
-      # The full gate again, on the tag. release-please opens its PR with the default
-      # GITHUB_TOKEN, and GitHub starts no workflow runs from that token's events, so the
-      # release PR itself runs NO CI. This step is the only gate on a release's contents.
-      # Do not remove it to save minutes.
+      # The full gate again, on the tag. The release PR's bot-created runs wait for a
+      # maintainer to approve them and then pass before merge (see RELEASING.md).
+      # Keep this check too: it proves the actual tag being published.
       - run: pnpm check
 
       # Assemble the one publishable package from the twelve workspace trees, then INSTALL
@@ -118,13 +123,89 @@ jobs:
       # setup-node's hands, which is the one that holds the OIDC `.npmrc`.
       - run: pnpm package:smoke
 
-      # `npm publish`, not `pnpm publish`, and from the staging directory: the artifact is
-      # already assembled with concrete dependency versions and no `workspace:`/`catalog:`
-      # specifier left to rewrite, so pnpm's publish-time rewriting has nothing to do here.
-      # pnpm 11's native publish also has open regressions ignoring publishConfig.access
-      # (#11728) and publishConfig.registry (#11419).
-      #
-      # `--tag latest` explicitly rather than relying on `publishConfig`, and no
-      # `--provenance`: trusted publishing generates the attestation automatically.
-      - run: npm publish --tag latest
-        working-directory: dist-package
+      # npm packs once inside this script. Retry checks registry integrity and recovers
+      # the published tarball if rebuilding changed its bytes; it never publishes twice.
+      - name: Stage release assets
+        id: assets
+        env:
+          RELEASE_TAG: ${{ inputs.tag || needs.release-please.outputs.tag_name }}
+        run: node scripts/release-assets.mjs stage dist-package "$RUNNER_TEMP/release-assets" "$RELEASE_TAG" --registry
+
+      # Publish the packed file, with the same trusted publishing identity as before.
+      # --provenance is unnecessary: npm adds it automatically for public OIDC publishes.
+      - name: Publish the packed tarball
+        if: steps.assets.outputs.publish == 'true'
+        env:
+          TARBALL: ${{ steps.assets.outputs.tarball }}
+        run: npm publish "$TARBALL" --tag latest
+
+      - name: Attest the release assets
+        id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            ${{ steps.assets.outputs.tarball }}
+            ${{ steps.assets.outputs.sbom }}
+            ${{ steps.assets.outputs.checksums }}
+          create-storage-record: false
+
+      - name: Export the provenance bundles and envelopes
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+          TARBALL: ${{ steps.assets.outputs.tarball }}
+          SBOM: ${{ steps.assets.outputs.sbom }}
+          CHECKSUMS: ${{ steps.assets.outputs.checksums }}
+          VERSION: ${{ steps.assets.outputs.version }}
+        run: |
+          for asset in "$TARBALL" "$SBOM" "$CHECKSUMS"; do
+            node scripts/release-assets.mjs convert "$BUNDLE" "$asset" "$RUNNER_TEMP/release-assets"
+          done
+          node scripts/release-assets.mjs verify "$RUNNER_TEMP/release-assets" "$VERSION"
+
+      - name: Transfer the verified release assets
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: ${{ runner.temp }}/release-assets/
+          if-no-files-found: error
+          retention-days: 7
+
+  release-assets:
+    needs: publish
+    # Dispatch skips release-please; upload only after publish succeeds, even on that path.
+    if: always() && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.publish.outputs.tag }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.publish.outputs.artifact_id }}
+          path: ${{ runner.temp }}/release-assets/
+          digest-mismatch: error
+
+      - name: Verify and upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.publish.outputs.tag }}
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: |
+          node scripts/release-assets.mjs verify "$RUNNER_TEMP/release-assets" "$VERSION"
+          for asset in "$RUNNER_TEMP/release-assets/memhtml-$VERSION.tgz" \
+            "$RUNNER_TEMP/release-assets/memhtml-$VERSION.cyclonedx.json" \
+            "$RUNNER_TEMP/release-assets/memhtml-$VERSION-SHA256SUMS"; do
+            gh attestation verify "$asset" --repo "$GITHUB_REPOSITORY" \
+              --bundle "$asset.sigstore.json" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release-please.yml"
+          done
+          gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/release-assets/"* --repo "$GITHUB_REPOSITORY" --clobber

@@ -57,13 +57,18 @@ The copies use a **directory** `from` with `to: OUT_DIR`, not a glob. A glob wit
 
 1. Merge Conventional Commits to `main`. `feat:` moves the minor, `fix:` the patch, and a `!` or a `BREAKING CHANGE:` footer moves the major.
 2. release-please opens (and keeps updating) a release PR bumping the version and writing `CHANGELOG.md`.
-3. Merge that PR. release-please tags the release — `memhtml-v0.2.0`, component-prefixed because the package is named in the config — and the `publish` job in the same workflow run re-runs `pnpm check`, then `pnpm package:smoke` on the tag, then `npm publish` from `dist-package/`.
+3. On the release PR, click **Approve workflows to run**, then wait for `check`, `package`, and CodeQL to pass before merging. Bot-created PR runs wait for this approval.
+4. Merge that PR. release-please tags the release — `memhtml-v0.2.0`, component-prefixed because the package is named in the config — and the `publish` job in the same workflow run re-runs `pnpm check`, then `pnpm package:smoke` on the tag, then packs `dist-package/` once, publishes that tarball, and attests the release assets. A separate job uploads the verified assets to the GitHub release.
 
 **A publish that fails for an environment reason is retryable without cutting another version.** The workflow takes a `workflow_dispatch` with a `tag` input for exactly that:
 
 ```bash
 gh workflow run release-please.yml -f tag=memhtml-v0.2.0
 ```
+
+The staging log reports `publish: "true"` when npm has no version matching the tag, so the workflow publishes the packed tarball. It reports `publish: "false"` when that version already exists, so the workflow skips npm publication and restages, attests, and reuploads the assets. Registry lookup failures stop the run; only an explicit package-not-found response or a successful version list that omits the version means unpublished. A retry compares the packed tarball's SHA512 integrity with npm's metadata. If rebuilding produced different bytes, it downloads the actual published tarball and verifies that integrity before generating the SBOM and attestations. It never overwrites the npm version. `--clobber` replaces the release's asset copies after all local and cryptographic checks pass.
+
+The retry must run this workflow from a revision containing the asset pipeline, against a tag that contains `scripts/release-assets.mjs`. It does not add assets to older tags that predate it.
 
 This exists because the first real release failed that way: the publish job had no mise, so the `d2` binary was absent, and the docs build inside `pnpm check` died in `astro:config:setup` — nothing to do with the bytes being published.
 
@@ -153,12 +158,43 @@ That first publish carries no provenance attestation: provenance requires a clou
   The failure is not destructive and loses no work: release-please computes every bump, pushes `release-please--branches--main`, and fails only on the PR call, so flipping the setting and re-running the workflow opens the PR from the branch already there.
 - The npm trusted publisher must name `release-please.yml`, because that is the workflow whose `publish` job runs `npm publish`.
 
-## The release PR runs no CI, and cannot
+## Approve the release PR's waiting workflows
 
-release-please creates its release PR with the default `GITHUB_TOKEN`, and GitHub does not start workflow runs from `GITHUB_TOKEN` events. This is why the `publish` job runs `pnpm check` and `pnpm package:smoke` on the tag before publishing: those steps are the ONLY gate on a release PR's contents. Do not remove them to save minutes.
+release-please opens its PR with the default `GITHUB_TOKEN`. GitHub starts bot-created `pull_request` runs in an approval-required state. A maintainer with write access must click **Approve workflows to run** on the PR, then wait for the `check`, `package`, and CodeQL checks to pass before merging. Approval starts the runs; it is not evidence that they passed. A manually dispatched run does not replace these PR checks.
 
-## Why one workflow with two jobs
+The publish job still runs `pnpm check` and `pnpm package:smoke` on the tag. Keep both: they verify the source and the assembled package at the exact release revision.
 
-A second workflow keyed on `release: [published]` would never fire: GitHub does not start workflow runs from events raised by the default `GITHUB_TOKEN`, and release-please tags with that token. Keeping release-please and publish as two jobs of one `push`-triggered workflow sidesteps the whole class of problem, and keeps `id-token: write` scoped to the one job that publishes.
+## Release assets and verification
 
-The publish job carries no `mise`, deliberately: `actions/setup-node` owns the node that writes the OIDC `.npmrc`, and a second node on PATH is a way for the wrong `npm` to run the publish. It calls the pnpm scripts that the mise tasks delegate to.
+For version `0.16.2`, the primary assets are `memhtml-0.16.2.tgz`, `memhtml-0.16.2.cyclonedx.json`, and `memhtml-0.16.2-SHA256SUMS`. The SBOM catalogs the packed npm tarball, including the published package manifest; it describes what is in the archive, not a resolved installation of every dependency. The checksum file covers the tarball and SBOM. Each primary asset also has `<asset>.sigstore.json` containing its complete SLSA provenance bundle and `<asset>.intoto.jsonl` containing exactly one compact DSSE envelope. The checksum file has its own attestation, since a checksum file cannot contain its own digest.
+
+Download the release assets, check their checksums, then verify each primary asset against the expected repository and workflow identity:
+
+```bash
+gh release download memhtml-v0.16.2 --repo memhtml/memhtml
+sha256sum --check memhtml-0.16.2-SHA256SUMS
+for asset in memhtml-0.16.2.tgz memhtml-0.16.2.cyclonedx.json memhtml-0.16.2-SHA256SUMS; do
+  gh attestation verify "$asset" --repo memhtml/memhtml \
+    --bundle "$asset.sigstore.json" \
+    --signer-workflow memhtml/memhtml/.github/workflows/release-please.yml
+done
+```
+
+`gh attestation verify` checks the signature and artifact digest, using SLSA provenance by default. The signer-workflow restriction prevents accepting another workflow's valid signature. The `.intoto.jsonl` files expose the same signed envelopes to tools that consume in-toto provenance; they are not unsigned copies of the statements.
+
+For fully offline verification, supply a previously obtained Sigstore trusted root with `--custom-trusted-root trusted_root.jsonl`. The bundle conversion is also checked against a GitHub CLI release artifact with this command, using its own repository and workflow identity:
+
+```bash
+gh attestation verify gh_2.103.0_linux_amd64.tar.gz --repo cli/cli \
+  --bundle gh_2.103.0_linux_amd64.tar.gz.sigstore.json \
+  --custom-trusted-root trusted_root.jsonl \
+  --signer-workflow cli/cli/.github/workflows/deployment.yml
+```
+
+Appending even one byte to the artifact makes verification fail. A JSON-lines bundle may contain several predicate types; the converter selects SLSA provenance by predicate type and matching artifact name/digest, then preserves the complete selected bundle.
+
+## Why one workflow
+
+A second workflow keyed on `release: [published]` would never fire: GitHub does not start those workflow runs from events raised by the default `GITHUB_TOKEN`, and release-please tags with that token. Keeping release-please, publish, and asset upload in one `push`-triggered workflow preserves the flow. The publish job alone holds job-level `id-token: write` and `attestations: write`, while the upload job alone gets the additional `contents: write` needed to attach release assets. The release-please job retains its existing release/PR permissions.
+
+The publish job installs mise before `actions/setup-node`: mise supplies the tools the checks need, while setup-node owns the node and npm that use trusted publishing. The upload job receives the immutable Actions artifact by ID, verifies its file census, checksums, bundles, and signatures, and calls `gh release upload` only after those checks pass.
