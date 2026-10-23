@@ -11,7 +11,8 @@
  */
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { appendFile, lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises"
+import { constants } from "node:fs"
+import { appendFile, mkdir, open, readdir, writeFile } from "node:fs/promises"
 import { basename, join, resolve } from "node:path"
 
 const PROVENANCE = "https://slsa.dev/provenance/v1"
@@ -34,9 +35,14 @@ const versionNames = (version) => {
 }
 
 const fileBytes = async (path) => {
-  const stat = await lstat(path)
-  if (!stat.isFile() || stat.size === 0) throw new Error(`not a nonempty regular file: ${path}`)
-  return readFile(path)
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+  try {
+    const stat = await handle.stat()
+    if (!stat.isFile() || stat.size === 0) throw new Error(`not a nonempty regular file: ${path}`)
+    return await handle.readFile()
+  } finally {
+    await handle.close()
+  }
 }
 
 const census = async (dir, expected) => {
@@ -105,7 +111,7 @@ const checksumText = async (dir, names) => {
 }
 
 const stage = async (packageDir, outputDir, tag, registry) => {
-  const pkg = JSON.parse(await readFile(join(packageDir, "package.json"), "utf8"))
+  const pkg = JSON.parse((await fileBytes(join(packageDir, "package.json"))).toString("utf8"))
   const names = versionNames(pkg.version)
   if (pkg.name !== "memhtml") throw new Error("expected the assembled memhtml package")
   if (tag !== `memhtml-v${pkg.version}`)
@@ -115,9 +121,20 @@ const stage = async (packageDir, outputDir, tag, registry) => {
   await census(dir, [])
   const dist = registry ? publishedDist(pkg.version) : null
 
-  // Pack once. This exact pathname is the publish subject and the attestation subject.
+  // Pack once: new releases use the assembled package; retries fetch the published archive.
+  // This exact pathname is the publish subject and the attestation subject.
+  const packSpec = dist ? `memhtml@${pkg.version}` : resolve(packageDir)
   const packed = JSON.parse(
-    successful("npm", ["pack", resolve(packageDir), "--json", "--pack-destination", dir])
+    successful("npm", [
+      "pack",
+      packSpec,
+      "--json",
+      "--pack-destination",
+      dir,
+      "--registry",
+      REGISTRY,
+      "--ignore-scripts"
+    ])
   )
   if (
     !Array.isArray(packed) ||
@@ -131,17 +148,7 @@ const stage = async (packageDir, outputDir, tag, registry) => {
   await census(dir, [names.tarball])
   const tarball = join(dir, names.tarball)
   if (dist && `sha512-${digest(await fileBytes(tarball), "sha512", "base64")}` !== dist.integrity) {
-    // Rebuilding may produce different bytes. Recover the published artifact, never republish it.
-    const response = await fetch(dist.tarball, {
-      redirect: "error",
-      signal: AbortSignal.timeout(60_000)
-    })
-    if (!response.ok) throw new Error(`published tarball download failed: HTTP ${response.status}`)
-    const bytes = Buffer.from(await response.arrayBuffer())
-    if (`sha512-${digest(bytes, "sha512", "base64")}` !== dist.integrity) {
-      throw new Error("published tarball integrity mismatch")
-    }
-    await writeFile(tarball, bytes)
+    throw new Error("published tarball integrity mismatch")
   }
   successful("syft", [
     "scan",
@@ -227,7 +234,7 @@ const convert = async (bundlePath, assetPath, outputDir) => {
   const name = basename(assetPath)
   const bytes = await fileBytes(assetPath)
   const bundle = provenanceFor(
-    parseBundles(await readFile(bundlePath, "utf8")),
+    parseBundles((await fileBytes(bundlePath)).toString("utf8")),
     name,
     digest(bytes)
   )
@@ -247,17 +254,20 @@ const verify = async (dir, version) => {
     dir,
     primary.flatMap((name) => [name, `${name}.sigstore.json`, `${name}.intoto.jsonl`])
   )
-  if ((await readFile(join(dir, names.checksums), "utf8")) !== (await checksumText(dir, names))) {
+  if (
+    (await fileBytes(join(dir, names.checksums))).toString("utf8") !==
+    (await checksumText(dir, names))
+  ) {
     throw new Error("SHA256SUMS does not match the tarball and SBOM")
   }
   for (const name of primary) {
     const bundle = provenanceFor(
-      [JSON.parse(await readFile(join(dir, `${name}.sigstore.json`), "utf8"))],
+      [JSON.parse((await fileBytes(join(dir, `${name}.sigstore.json`))).toString("utf8"))],
       name,
       digest(await fileBytes(join(dir, name)))
     )
     if (
-      (await readFile(join(dir, `${name}.intoto.jsonl`), "utf8")) !==
+      (await fileBytes(join(dir, `${name}.intoto.jsonl`))).toString("utf8") !==
       `${JSON.stringify(bundle.dsseEnvelope)}\n`
     ) {
       throw new Error(`DSSE envelope differs from its Sigstore bundle: ${name}`)

@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 
@@ -42,7 +42,6 @@ beforeEach(async () => {
     `#!${process.execPath}\n${`
 const fs = require("node:fs")
 const path = require("node:path")
-const crypto = require("node:crypto")
 const args = process.argv.slice(2)
 fs.appendFileSync(process.env.TOOL_LOG, JSON.stringify(["npm", ...args]) + "\\n")
 if (args[0] === "view") {
@@ -58,10 +57,12 @@ if (args[0] === "view") {
     tarball: process.env.REGISTRY_URL || "https://registry.npmjs.org/memhtml/-/memhtml-0.16.2.tgz"})); process.exit(0)
 }
 if (args[0] !== "pack") process.exit(9)
-const pkg = JSON.parse(fs.readFileSync(path.join(args[1], "package.json")))
+const registry = args[1] === "memhtml@0.16.2"
+if (registry && process.env.DOWNLOAD_FAIL === "1") process.exit(5)
+const pkg = registry ? {name:"memhtml", version:"0.16.2"} : JSON.parse(fs.readFileSync(path.join(args[1], "package.json")))
 const filename = pkg.name + "-" + pkg.version + ".tgz"
 const dir = args[args.indexOf("--pack-destination") + 1]
-fs.writeFileSync(path.join(dir, filename), "packed bytes")
+fs.writeFileSync(path.join(dir, filename), registry ? process.env.DOWNLOAD_BYTES || "registry bytes" : "packed bytes")
 if (process.env.PACK_STRAY) fs.writeFileSync(path.join(dir, "stray.txt"), "stray")
 console.log(JSON.stringify([{filename, name:pkg.name, version:pkg.version}]))
 `}`
@@ -81,16 +82,6 @@ fs.writeFileSync(target, JSON.stringify(process.env.SYFT_INVALID ? {} :
 `}`
   )
   await Promise.all([chmod(join(bin, "npm"), 0o755), chmod(join(bin, "syft"), 0o755)])
-  await writeFile(
-    join(scratch, "fetch.cjs"),
-    `
-global.fetch = async (url, options) => {
-  if (url !== "https://registry.npmjs.org/memhtml/-/memhtml-0.16.2.tgz" || options.redirect !== "error") throw Error("unexpected download")
-  return {ok: process.env.DOWNLOAD_FAIL !== "1", status:503,
-    arrayBuffer: async () => Buffer.from(process.env.DOWNLOAD_BYTES || "registry bytes")}
-}
-`
-  )
 })
 
 afterEach(async () => {
@@ -213,11 +204,12 @@ describe("release asset staging", () => {
       expect(await readdir(assets)).toEqual([])
     }
   )
-  it("skips publishing when packed bytes already match npm integrity", () => {
+  it("skips publishing when the registry tarball matches npm integrity", () => {
     const result = stage(
       {
         REGISTRY_MODE: "published",
-        REGISTRY_INTEGRITY: `sha512-${hash("packed bytes", "sha512", "base64")}`
+        REGISTRY_INTEGRITY: `sha512-${hash("packed bytes", "sha512", "base64")}`,
+        DOWNLOAD_BYTES: "packed bytes"
       },
       true
     )
@@ -229,14 +221,30 @@ describe("release asset staging", () => {
       {
         REGISTRY_MODE: "published",
         REGISTRY_INTEGRITY: `sha512-${hash("registry bytes", "sha512", "base64")}`,
-        EXPECTED_BYTES: "registry bytes",
-        NODE_OPTIONS: `--require=${join(scratch, "fetch.cjs")}`
+        EXPECTED_BYTES: "registry bytes"
       },
       true
     )
     expect(result.status, result.stderr).toBe(0)
     expect(JSON.parse(result.stdout).publish).toBe("false")
     expect(await readFile(join(assets, TARBALL), "utf8")).toBe("registry bytes")
+    const calls = (await readFile(join(scratch, "tools.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+    const packs = calls.filter((call) => call[0] === "npm" && call[1] === "pack")
+    expect(packs).toHaveLength(1)
+    expect(packs[0]).toEqual([
+      "npm",
+      "pack",
+      `memhtml@${VERSION}`,
+      "--json",
+      "--pack-destination",
+      assets,
+      "--registry",
+      "https://registry.npmjs.org",
+      "--ignore-scripts"
+    ])
   })
   it.each([{ DOWNLOAD_BYTES: "tampered" }, { DOWNLOAD_FAIL: "1" }])(
     "refuses unverified registry recovery %s",
@@ -245,12 +253,14 @@ describe("release asset staging", () => {
         {
           REGISTRY_MODE: "published",
           REGISTRY_INTEGRITY: `sha512-${hash("registry bytes", "sha512", "base64")}`,
-          NODE_OPTIONS: `--require=${join(scratch, "fetch.cjs")}`,
           ...env
         },
         true
       )
       expect(result.status).toBe(1)
+      expect(result.stderr).toContain(
+        env.DOWNLOAD_BYTES ? "published tarball integrity mismatch" : "npm failed"
+      )
     }
   )
   it.each([
@@ -270,9 +280,29 @@ describe("release asset staging", () => {
 })
 
 describe("provenance exports", () => {
-  it.each([false, true])(
-    "selects SLSA provenance by predicate and bytes, independent of bundle order %s",
-    async (reversed) => {
+  it("refuses a symlink asset without exporting sidecars", async () => {
+    const target = join(scratch, "target.tgz")
+    const asset = join(scratch, TARBALL)
+    const bundlePath = join(scratch, "bundle.json")
+    await writeFile(target, "packed bytes")
+    await symlink(target, asset)
+    await writeFile(
+      bundlePath,
+      JSON.stringify(bundleFor([{ name: TARBALL, digest: { sha256: hash("packed bytes") } }]))
+    )
+    const result = run(["convert", bundlePath, asset, assets])
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain("ELOOP")
+    expect(await readdir(assets)).toEqual([])
+  })
+  it.each([
+    { reversed: false, trailingNewline: true },
+    { reversed: true, trailingNewline: true },
+    { reversed: false, trailingNewline: false },
+    { reversed: true, trailingNewline: false }
+  ])(
+    "selects SLSA provenance by predicate and bytes with reversed=$reversed and trailingNewline=$trailingNewline",
+    async ({ reversed, trailingNewline }) => {
       const asset = join(scratch, "gh_2.103.0_linux_amd64.tar.gz")
       await writeFile(asset, "fixture bytes")
       const expected = bundleFor([
@@ -281,7 +311,10 @@ describe("provenance exports", () => {
       const bundles = [fixture[0], expected]
       if (reversed) bundles.reverse()
       const path = join(scratch, "fixture.jsonl")
-      await writeFile(path, bundles.map((bundle) => JSON.stringify(bundle)).join("\n"))
+      await writeFile(
+        path,
+        bundles.map((bundle) => JSON.stringify(bundle)).join("\n") + (trailingNewline ? "\n" : "")
+      )
       const result = run(["convert", path, asset, assets])
       expect(result.status, result.stderr).toBe(0)
       expect(

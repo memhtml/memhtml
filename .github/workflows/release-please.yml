@@ -123,8 +123,8 @@ jobs:
       # setup-node's hands, which is the one that holds the OIDC `.npmrc`.
       - run: pnpm package:smoke
 
-      # npm packs once inside this script. Retry checks registry integrity and recovers
-      # the published tarball if rebuilding changed its bytes; it never publishes twice.
+      # npm packs once inside this script. Retry fetches the published tarball and
+      # verifies registry integrity; it never publishes twice.
       - name: Stage release assets
         id: assets
         env:
