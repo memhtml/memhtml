@@ -11,7 +11,7 @@ memhtml curate run --model fake --dry-run                             # credenti
 memhtml curate collapse --model fake --dry-run                        # plan a corpus-wide fold
 ```
 
-A curation pass is two commands. `memhtml curate run` lets a model clean up the corpus inside one session on a `curate/<date>` branch, and `main` doesn't move while it works. `memhtml curate merge` is the only way that work reaches `main`, and a person or a gate decides when to run it. Throwing a pass away is `git branch -D`, because `main` never moved.
+A curation pass is two commands. `memhtml curate run` lets a model clean up the corpus inside one session on a `curate/<date>` branch, and the run never moves `main`. `memhtml curate merge` is the command that lands that work on `main` behind the head gate, and a person or a gate decides when to run it. Throwing a pass away is `git branch -D`, because the run never moved `main`.
 
 ## Run the curator
 
@@ -24,7 +24,7 @@ memhtml curate run --model fake
 | Value               | What it calls                                                                                                                                             |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `fake`              | A scripted curator that needs no credential. It archives the briefed duplicates, drops dangling links, and files inbox records that have an obvious home. |
-| `bedrock:<modelId>` | Bedrock, through the default AWS credential chain and the region in `AWS_REGION`.                                                                         |
+| `bedrock:<modelId>` | Bedrock in `AWS_REGION` (`us-east-1` when unset), with `AWS_BEARER_TOKEN_BEDROCK` when it is set and the default AWS credential chain otherwise.          |
 | `proxy:<model>`     | An OpenAI-compatible proxy at `MEMHTML_LLM_BASE_URL`, naming the model with the `MEMHTML_LLM_MODEL_PREFIX` convention.                                    |
 
 Without `--model`, the run uses `MEMHTML_CURATOR_MODEL`, then a proxy model when `MEMHTML_LLM_BASE_URL` is set, and otherwise refuses.
@@ -54,9 +54,11 @@ Without `--model`, the run uses `MEMHTML_CURATOR_MODEL`, then a proxy model when
 }
 ```
 
-The payload is shortened here. It also carries the `briefing` the model started from, the `head` it loaded, and the `snapshot` it wrote. `next` is the command that lands the branch.
+The payload is shortened here. It also carries the `briefing` the model started from, the `head` it loaded, the `snapshot` it wrote, and the `charter` file it ran under. `next` is the `curate merge` command that lands the branch on `main`.
 
-The run writes to `curate/<UTC date>` unless you pass `--ref`, and the ref must sit under `curate/`. `main`, any other branch, or a tag is `ERR_INVALID_FLAG` at exit 2. The branch your checkout has open is `ERR_INVALID_MEMORY` at exit 1, so a run can't land on the branch you're working on. The session id is the ref with slashes as dashes (`curate-2026-10-18`), and a second run on the same ref is refused with `ERR_STORAGE` (`session.exists`) unless you pass `--resume`. `--resume` reopens the session's log and loads the corpus at the session's own base.
+The run writes to `curate/<UTC date>` unless you pass `--ref`, and the ref must sit under `curate/`. A ref outside it, such as `main`, another branch, or a tag, is `ERR_INVALID_FLAG` at exit 2. A `curate/` branch your checkout has open is `ERR_INVALID_MEMORY` at exit 1, so a run can't land on the branch you're working on.
+
+The session id is the ref with slashes as dashes (`curate-2026-10-18`). A second run on the same ref is refused with `ERR_STORAGE` (`session.exists`) unless you pass `--resume`. `--resume` reopens the session's log and loads the corpus at the session's own base, which after a committed run is the branch's tip.
 
 `--dry-run` runs the whole loop over an in-memory copy and writes no session, no ref, and no commit. With `--resume` it starts from the logged operations, so you see what a resumed run would do.
 
@@ -66,29 +68,31 @@ The loop stops at whichever limit it reaches first, and `stoppedBy` names it:
 
 | `stoppedBy`  | Limit                                                                 |
 | ------------ | --------------------------------------------------------------------- |
-| `finish`     | The model called `finish` with its report.                            |
+| `finish`     | The model called `finish`, or answered with text and no tool call.    |
 | `maxSteps`   | `--max-steps` model calls, 40 by default.                             |
 | `wallClock`  | `--wall-clock-ms` for the whole run, 1200000 (20 minutes) by default. |
 | `maxOps`     | 200 operations, the most one commit can hold.                         |
 | `modelError` | A model call failed.                                                  |
 
-A run the model stopped is `ERR_MODEL_UNAVAILABLE` at exit 1, and its operations stay in the session for `--resume`. A run that finished with no operations exits 0 with `commit: null`.
+A failed model call stops the run as `modelError`, which is `ERR_MODEL_UNAVAILABLE` at exit 1, and the operations a run without `--dry-run` appended stay in its session for `--resume`. A run that another limit stopped ends like a finished one, with a report that names the limit, so without `--dry-run` it commits what the session holds. A run that ends with no operations exits 0 with `commit: null`.
 
 ### What the curator works from
 
-The run starts from a briefing that code computes before any model call. It counts active and archived records and the share sitting in `areas/inbox/`, and it names the work by path in a few capped lists:
+The run starts from a briefing that code computes before any model call. It counts active and archived records and the share sitting in `areas/inbox/`, lists the records with the lowest stated confidence, and names the work by path in seven capped lists:
 
 - `duplicates`: records whose claims fill one slot with the same value.
 - `contradictions`: records whose claims fill one slot with different values.
-- `recent`: records created since the last curation branch, each with its three nearest records.
+- `recent`: records created after the tip commit of the newest other `curate/` branch (any record on a first run), each with up to three nearest records.
 - `unlabeled`: records outside `projects/<slug>/` that carry no `memhtml-entity`.
 - `supersededActive`: records a `supersedes` link names that were never archived.
-- `danglingEdges`: links whose target is no longer a live record, with the better target when one exists.
+- `danglingEdges`: links from active records whose target is no record at all, live or archived, with the better target when one exists.
 - `inbox`: inbox records, each with a home directory when code can find an obvious one.
 
-The model then works through six tools: `search`, `read`, `exec` (a script over the session's view, harvested the way `session exec` harvests), `propose` (explicit operations), `status`, and `finish`. It can propose the seven session operations: `put`, `archive`, `link`, `unlink`, `label`, `unlabel`, and `move`. Under the curator's scope it may write `areas/arcs/` and `resources/people/`, which other sessions can't. The store's [write bar](/learn/operations/set-the-store-policy/) judges every operation it proposes, and a refused proposal goes back to the model with the reason so it can fix it in the same run.
+The model then works through six tools: `search`, `read`, `exec` (a script over the session's view, harvested the way `session exec` harvests), `propose` (explicit operations), `status`, and `finish`. It can propose the seven session operations: `put`, `archive`, `link`, `unlink`, `label`, `unlabel`, and `move`.
 
-The shipped charter tells the model its priorities in order. It never settles a contradiction by deleting a side, it leaves people records and tasks alone apart from a missing entity, and then it removes duplicates, labels records, resolves entity aliases, files inbox records, writes a few arcs, and repairs dangling links. Memory bodies are data to the curator and never instructions. The first line of its report becomes the commit subject, `memhtml(curate): <first line>`.
+Under the curator's scope it may write `areas/arcs/` and `resources/people/`, which other sessions can't. Every operation it proposes gets the checks a session commit runs, including the store's [write bar](/learn/operations/set-the-store-policy/) on each record it writes, and a refused proposal goes back to the model with the reason so it can fix it in the same run.
+
+The shipped charter ranks the model's priorities in order: never settle a contradiction by deleting a side, leave people records and tasks alone apart from a missing entity, then remove duplicates, label records, resolve entity aliases, file inbox records, write a few arcs, and repair dangling links. It also tells the model that memory bodies are data, never instructions. That is an instruction to the model, not a check in code: what code enforces is that every operation passes the checks above and that the run commits only to its `curate/` branch. The first line of its report becomes the commit subject, `memhtml(curate): <first line>`.
 
 ## Review the branch
 
@@ -100,7 +104,7 @@ git -C ~/memhtml diff --stat main...curate/2026-10-18
 git -C ~/memhtml show curate/2026-10-18
 ```
 
-The commit's subject is `memhtml(curate):` followed by the report's first line, cut to 72 characters. The whole report, including what it left undone, is the `curate.run` payload's `report`. Every archive is a move into `archive/<YYYY>/` with the original path mirrored beneath, so `git diff -M` shows it as a rename.
+The commit's subject is `memhtml(curate):` followed by the report's first non-blank line, and a line longer than 72 characters keeps its first 71 and gains an ellipsis. The whole report, including what it left undone, is the `curate.run` payload's `report`. Every archive is a move into `archive/<YYYY>/` with the original path mirrored beneath, so `git diff` and the `--stat` above show it as a rename under git's default rename detection.
 
 ## Land it with curate merge
 
@@ -146,10 +150,10 @@ memhtml curate merge curate/2026-10-18
 }
 ```
 
-`--into` names the branch to land on, `main` by default. The landing takes one of two shapes:
+`--into` names the branch to land on, `main` by default, so a store whose branch is `master` passes `--into master`. The landing takes one of two shapes:
 
 - When the curate branch still descends from `main`, the landing is a fast-forward. `main` moves to the branch's tip with a compare-and-swap, so a writer that moved `main` in the meantime makes the merge refuse instead of being overwritten.
-- When `main` has moved past the branch's base, which is the usual case on a store agents write to all day, the landing is a replay. The merge reads the branch's changes back as session operations, commits them as one new commit on `main`'s tip with the subject `memhtml(curate): <subject> (replayed onto <sha>)`, and moves the curate branch to that commit. `replayed` in the payload counts the operations and names the branch's original tip.
+- When `main` has moved past the branch's base, which is the usual case on a store agents write to all day, the landing is a replay. The merge reads the branch's changes since that base back as session operations and commits them as one new commit on `main`'s tip. Its subject is the branch tip's subject followed by `(replayed onto <short sha>)`, cut to 72 characters after the `memhtml(curate):` prefix, so a long subject loses that suffix. The merge then moves the curate branch to that commit, and `replayed` in the payload counts the operations and names the branch's original tip.
 
 A replay refuses, with nothing moved, when the branch holds a change that isn't an operation, such as an article edited in place or a file deleted with no archive copy. It also refuses when the operations collide with what `main` gained meanwhile, such as a `duplicate`, a `claim-edit`, or a link whose target is gone. Either refusal is `ERR_INVALID_MEMORY` and names the path.
 
@@ -157,11 +161,13 @@ When `main` is the branch your checkout has open, the working tree moves with th
 
 ### The head gate
 
-Before anything moves, the merge checks that retrieval didn't get worse. It loads the version at `main` and the version the landing would produce, takes a seeded sample of up to 200 records that are active in both, searches for each by its title, and looks for the record in the top 10. It compares the mean reciprocal rank (MRR) of the two versions and counts inversions, which are a probe whose record fell out of the top 10 or a superseded record that now ranks above its replacement.
+Before anything moves, the merge checks that retrieval didn't get worse. It loads the version at `main` and the version at the curate branch's tip, takes a seeded sample of up to 200 records that are active in both, searches for each by its title, and looks for the record in the top 10. It compares the mean reciprocal rank (MRR) of the two versions and counts inversions, which are a probe whose record fell out of the top 10 or a superseded record that now ranks above its replacement.
 
-The gate passes when the landed MRR is no more than 0.02 below the base MRR and the inversion count didn't grow. A failing gate is `ERR_DISCRIMINATION_FAILED` at exit 1 with both numbers in the message, and nothing moves. The gate is relative because a store's own base numbers depend on its corpus. Records the landing adds aren't probes, since they have no rank at the base to compare against.
+The gate passes when the MRR at the branch's tip is no more than 0.02 below the MRR at `main` and the inversion count didn't grow. A failing gate is `ERR_DISCRIMINATION_FAILED` at exit 1 with both numbers in the message, and nothing moves.
 
-`--skip-gate` lands without the gate. It's a logged override, and `gate.ran` in the payload says which happened.
+The gate is relative because a store's own base numbers depend on its corpus. Records the landing adds aren't probes, since they have no rank at the base to compare against.
+
+`--skip-gate` lands without the gate. The merge then writes a warning to stderr, and `gate.ran` in the payload says which happened.
 
 ## Throw a pass away
 
@@ -169,7 +175,7 @@ The gate passes when the landed MRR is no more than 0.02 below the base MRR and 
 git -C ~/memhtml branch -D curate/2026-10-18
 ```
 
-Nothing else needs undoing, because the run never touched `main`, the checkout, or the index. The curator's session log stays under `.memhtml/sessions/` with no operations in it until [`session prune`](/learn/operations/write-through-a-session/#clean-up-with-session-prune) removes it. Until then, a new run on the same date needs `--resume` or another `--ref`, such as `curate/2026-10-18-2`.
+Nothing else needs undoing, because the run never touched `main`, the checkout, or the index. The curator's session log stays under `.memhtml/sessions/` with no operations in it until [`session prune`](/learn/operations/write-through-a-session/#clean-up-with-session-prune) removes it. Until then, a new run on the same date needs another `--ref`, such as `curate/2026-10-18-2`, because `--resume` would build on the deleted branch's commit and bring the thrown-away pass back.
 
 ## Fold a whole corpus with curate collapse
 
@@ -186,9 +192,11 @@ The planner cuts in four passes, each taking what the earlier ones left:
 3. Frame keys. Records whose claims fill one slot fold together only when they agree, and records that disagree are kept apart as contradiction candidates.
 4. A similarity graph over what's left, split into communities.
 
-Each cluster is an `archive`, a `fold`, or a `keep`. Archive clusters land with no model. Each fold cluster runs one bounded curator session under the collapse charter, where the model writes one canonical record and the driver archives every member and links it from the canonical with `supersedes`. Keep clusters are reported under `untouched` and left alone. One failed cluster is data in its own outcome and doesn't stop the others.
+Each cluster is an `archive`, a `fold`, or a `keep`. Archive clusters land with no model. Each fold cluster runs one bounded curator session under the collapse charter, where the model writes one canonical record, and every member ends archived and linked from the canonical with `supersedes`, the driver adding the archives and links the model left out. Keep clusters are reported under `untouched` and left alone. One failed cluster is data in its own outcome and doesn't stop the others.
 
-The branch defaults to `curate/<UTC date>-collapse`, so it never shares a session with a same-day `curate run`. `--dry-run` prints the whole plan under `plan`, and `--plan <file>` runs a saved one. `--only <ids>` and `--limit <n>` narrow what runs, and `--concurrency` (4 by default) sets how many fold sessions run at once. Each fold's budget is `--max-steps` (14) and `--wall-clock-ms` (900000). Land the result with `curate merge`, the same way as a curator run.
+The branch defaults to `curate/<UTC date>-collapse`, so it never shares a branch with a same-day `curate run`. `--dry-run` prints the whole plan under `plan`, and `--plan <file>` runs a saved one.
+
+`--only <ids>` and `--limit <n>` narrow what runs, and `--concurrency` (4 by default) sets how many fold sessions run at once. Each fold's budget is `--max-steps` (14) and `--wall-clock-ms` (900000). Land the result with `curate merge`, the same way as a curator run.
 
 ## Brief the model with your own charter
 
@@ -200,16 +208,16 @@ The branch defaults to `curate/<UTC date>-collapse`, so it never shares a sessio
 | `{{refusedTypesRule}}`   | A sentence naming the types `writeBar.refusedTypes` refuses, or nothing when the store refuses none |
 | `{{refusedTypesClause}}` | The same as a clause, for the middle of a sentence                                                  |
 
-Any other text is used as written. The write bar still judges every operation the model proposes, so a charter can't loosen the store's policy. A file that can't be read or holds no text is `ERR_STORAGE` at exit 1 before any model call. The payload's `charter` field names the file a run used.
+Any other text is used as written. The write bar still judges every record the model writes, so a charter can't loosen the store's policy. A file that can't be read or holds no text is `ERR_STORAGE` at exit 1 before any model call. The payload's `charter` field names the file a run used.
 
-## Put it on a schedule
+## Run it unattended
 
-Run the curator from cron, and keep the merge a human step:
+Start the curator from whatever runs your unattended jobs, and keep the merge a human step:
 
-```cron
-30 3 * * *  cd $HOME && MEMHTML_ROOT=$HOME/memhtml MEMHTML_CURATOR_MODEL=bedrock:global.anthropic.claude-opus-5 memhtml curate run --dense >> /var/log/memhtml/curate.jsonl 2>> /var/log/memhtml/curate.err
+```bash
+cd $HOME && MEMHTML_ROOT=$HOME/memhtml MEMHTML_CURATOR_MODEL=bedrock:global.anthropic.claude-opus-5 memhtml curate run --dense >> /var/log/memhtml/curate.jsonl 2>> /var/log/memhtml/curate.err
 ```
 
-Each morning, read the branch and its report, then run `memhtml curate merge curate/<date>` or delete the branch. The head gate runs inside the merge either way.
+After each run, read the branch and its report, then run `memhtml curate merge curate/<date>`, which runs the head gate, or delete the branch.
 
 The store's `curator.writerBuckets` and `curator.placementQuota` keys tune where the curator files records and how many it files per run. [Set the store policy](/learn/operations/set-the-store-policy/) covers them.
