@@ -1,0 +1,16 @@
+{
+  "version": "v5.6.0",
+  "checks": {
+    "Binary-Artifacts": 10,
+    "Dangerous-Workflow": 10,
+    "Dependency-Update-Tool": 10,
+    "Fuzzing": 10,
+    "License": 9,
+    "Packaging": 10,
+    "Pinned-Dependencies": 10,
+    "SAST": 10,
+    "Security-Policy": 10,
+    "Token-Permissions": 10,
+    "Vulnerabilities": 10
+  }
+}

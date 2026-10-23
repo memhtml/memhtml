@@ -60,6 +60,8 @@ dprint = "0.56.0"                        # markdown formatter (textWrap: never)
 # not in `check` and must not be: an outbound 404 appears when somebody else edits their site, so
 # gating on it would fail whichever commit happened to be pushed that day.
 lychee = "latest"
+# Per-check security ratchet, run separately from the offline check task.
+"aqua:ossf/scorecard" = "5.6.0"
 
 [env]
 # Puts the workspace's own binaries on PATH so a lefthook job reaching for `biome` gets
@@ -111,6 +113,10 @@ run = "pnpm install --frozen-lockfile"
 description = "The definition of done: lint, typecheck, tests, integration, eval, a11y"
 raw_args = true
 run = "pnpm check"
+
+[tasks."gate:scorecard"]
+description = "Ratchet local Scorecard checks against the committed HEAD export"
+run = "node scripts/scorecard-gate.mjs"
 
 [tasks.build]
 description = "tsc -b across the project-reference graph"

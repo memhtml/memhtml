@@ -16,6 +16,20 @@ url = "https://github.com/betterleaks/betterleaks/releases/download/v1.7.4/bette
 url_api = "https://api.github.com/repos/betterleaks/betterleaks/releases/assets/508893148"
 provenance = "cosign"
 
+[[tools."aqua:ossf/scorecard"]]
+version = "5.6.0"
+backend = "aqua:ossf/scorecard"
+
+[tools."aqua:ossf/scorecard"."platforms.linux-x64"]
+checksum = "sha256:19bde07129450cb65a95c6e3b9f34e034341579e6f0e241546ec3ae6efb2dd9a"
+url = "https://github.com/ossf/scorecard/releases/download/v5.6.0/scorecard_5.6.0_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/ossf/scorecard/releases/assets/632187119"
+
+[tools."aqua:ossf/scorecard"."platforms.macos-arm64"]
+checksum = "sha256:1537183c0fcc6d8d1572aabc7a949091a36a2ee6be5bcb65f487cbb0a7b40381"
+url = "https://github.com/ossf/scorecard/releases/download/v5.6.0/scorecard_5.6.0_darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/ossf/scorecard/releases/assets/632187121"
+
 [[tools."aqua:terrastruct/d2"]]
 version = "0.7.1"
 backend = "aqua:terrastruct/d2"
