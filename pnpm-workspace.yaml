@@ -48,6 +48,10 @@ pmOnFail: ignore
 # toolchain this dependency serves (measured — it resolved 6.0.1).
 overrides:
   nanoid@<3.3.17: "^3.3.17"
+  # Expressive Code uses postcss-nested 6.x for the docs site's code-block styles.
+  # Its parser 6.x carries GHSA-rj75-hqrm-r3gf; 7.1.6 fixes quadratic selector
+  # parsing. Scope the override to this dependency path until nested adopts 7.x.
+  "postcss-nested>postcss-selector-parser@<7.1.6": "7.1.6"
 
 # Effect v4 is pre-release: every Effect package moves as one pinned, tested set, and the
 # four versions here are always the same string.
