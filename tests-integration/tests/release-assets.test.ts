@@ -57,12 +57,11 @@ if (args[0] === "view") {
     tarball: process.env.REGISTRY_URL || "https://registry.npmjs.org/memhtml/-/memhtml-0.16.2.tgz"})); process.exit(0)
 }
 if (args[0] !== "pack") process.exit(9)
-const registry = args[1] === "memhtml@0.16.2"
-if (registry && process.env.DOWNLOAD_FAIL === "1") process.exit(5)
-const pkg = registry ? {name:"memhtml", version:"0.16.2"} : JSON.parse(fs.readFileSync(path.join(args[1], "package.json")))
+if (process.env.PACK_FAIL === "1") process.exit(5)
+const pkg = JSON.parse(fs.readFileSync(path.join(args[1], "package.json")))
 const filename = pkg.name + "-" + pkg.version + ".tgz"
 const dir = args[args.indexOf("--pack-destination") + 1]
-fs.writeFileSync(path.join(dir, filename), registry ? process.env.DOWNLOAD_BYTES || "registry bytes" : "packed bytes")
+fs.writeFileSync(path.join(dir, filename), process.env.PACK_BYTES || "packed bytes")
 if (process.env.PACK_STRAY) fs.writeFileSync(path.join(dir, "stray.txt"), "stray")
 console.log(JSON.stringify([{filename, name:pkg.name, version:pkg.version}]))
 `}`
@@ -204,40 +203,48 @@ describe("release asset staging", () => {
       expect(await readdir(assets)).toEqual([])
     }
   )
-  it("skips publishing when the registry tarball matches npm integrity", () => {
+  it("skips publishing when the rebuilt tarball matches npm integrity", () => {
     const result = stage(
       {
         REGISTRY_MODE: "published",
-        REGISTRY_INTEGRITY: `sha512-${hash("packed bytes", "sha512", "base64")}`,
-        DOWNLOAD_BYTES: "packed bytes"
+        REGISTRY_INTEGRITY: `sha512-${hash("packed bytes", "sha512", "base64")}`
       },
       true
     )
     expect(result.status, result.stderr).toBe(0)
     expect(JSON.parse(result.stdout).publish).toBe("false")
   })
-  it("recovers and catalogs the verified published tarball when rebuilding changed bytes", async () => {
+  it("refuses changed rebuilt bytes before cataloging or producing workflow outputs", async () => {
+    const outputs = join(scratch, "outputs")
+    const npmIntegrity = `sha512-${hash("registry bytes", "sha512", "base64")}`
+    const rebuiltIntegrity = `sha512-${hash("packed bytes", "sha512", "base64")}`
     const result = stage(
       {
         REGISTRY_MODE: "published",
-        REGISTRY_INTEGRITY: `sha512-${hash("registry bytes", "sha512", "base64")}`,
-        EXPECTED_BYTES: "registry bytes"
+        REGISTRY_INTEGRITY: npmIntegrity,
+        GITHUB_OUTPUT: outputs
       },
       true
     )
-    expect(result.status, result.stderr).toBe(0)
-    expect(JSON.parse(result.stdout).publish).toBe("false")
-    expect(await readFile(join(assets, TARBALL), "utf8")).toBe("registry bytes")
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain(`rebuilt: ${rebuiltIntegrity}; npm: ${npmIntegrity}`)
+    expect(result.stderr).toContain("Restore the original build inputs and toolchain")
+    expect(result.stderr).toContain("release a new version")
+    expect(result.stdout).toBe("")
+    expect(await readdir(assets)).toEqual([TARBALL])
+    expect(await readFile(join(assets, TARBALL), "utf8")).toBe("packed bytes")
+    expect(await readdir(scratch)).not.toContain("outputs")
     const calls = (await readFile(join(scratch, "tools.jsonl"), "utf8"))
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line))
     const packs = calls.filter((call) => call[0] === "npm" && call[1] === "pack")
+    expect(calls.some((call) => call[0] === "syft")).toBe(false)
     expect(packs).toHaveLength(1)
     expect(packs[0]).toEqual([
       "npm",
       "pack",
-      `memhtml@${VERSION}`,
+      pkg,
       "--json",
       "--pack-destination",
       assets,
@@ -246,20 +253,20 @@ describe("release asset staging", () => {
       "--ignore-scripts"
     ])
   })
-  it.each([{ DOWNLOAD_BYTES: "tampered" }, { DOWNLOAD_FAIL: "1" }])(
-    "refuses unverified registry recovery %s",
+  it.each([{ PACK_BYTES: "tampered" }, { PACK_FAIL: "1" }])(
+    "refuses an invalid rebuilt archive %s",
     (env) => {
       const result = stage(
         {
           REGISTRY_MODE: "published",
-          REGISTRY_INTEGRITY: `sha512-${hash("registry bytes", "sha512", "base64")}`,
+          REGISTRY_INTEGRITY: `sha512-${hash("packed bytes", "sha512", "base64")}`,
           ...env
         },
         true
       )
       expect(result.status).toBe(1)
       expect(result.stderr).toContain(
-        env.DOWNLOAD_BYTES ? "published tarball integrity mismatch" : "npm failed"
+        env.PACK_BYTES ? "rebuilt tarball differs from the published npm version" : "npm failed"
       )
     }
   )
@@ -386,5 +393,99 @@ describe("provenance exports", () => {
   it("reports incomplete command wiring as usage", () => {
     expect(run([]).status).toBe(2)
     expect(run(["convert"]).status).toBe(2)
+  })
+})
+
+describe("release workflow source and signer restrictions", () => {
+  const workflowPath = join(ROOT, ".github/workflows/release-please.yml")
+  const stepScripts = (workflow: string, name: string) =>
+    workflow
+      .split(`      - name: ${name}\n`)
+      .slice(1)
+      .map((step) => {
+        const body = step.split("\n      - ")[0]?.match(/ {8}run: \|\n((?: {10}.*\n)+)/)?.[1]
+        expect(body).toBeDefined()
+        return (body as string).replace(/^ {10}/gm, "")
+      })
+
+  it.each(["tag", "branch"])("requires a tag dispatch instead of a %s ref", async (refType) => {
+    const workflow = await readFile(workflowPath, "utf8")
+    expect(workflow).not.toContain("inputs.tag")
+    expect(workflow).toContain(`REF_TYPE: \${{ github.ref_type }}`)
+    expect(workflow).toContain(
+      `tag: \${{ github.event_name == 'workflow_dispatch' && github.ref_name || needs.release-please.outputs.tag_name }}`
+    )
+    const scripts = stepScripts(workflow, "Require a tag for retries")
+    expect(scripts).toHaveLength(1)
+    const result = spawnSync("bash", ["-e", "-c", scripts[0] as string], {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: { ...process.env, REF_TYPE: refType }
+    })
+    expect(result.status, result.stderr).toBe(refType === "tag" ? 0 : 1)
+  })
+
+  it.each([true, false])(
+    "binds both qualified tag checkouts to the event SHA: matches=%s",
+    async (matches) => {
+      const workflow = await readFile(workflowPath, "utf8")
+      const refs = [...workflow.matchAll(/ {10}ref: (.+)/g)].map((match) => match[1])
+      expect(refs).toHaveLength(2)
+      expect(refs.every((ref) => ref?.startsWith("refs/tags/${{"))).toBe(true)
+      const scripts = stepScripts(workflow, "Verify the release revision")
+      expect(scripts).toHaveLength(2)
+      expect(workflow.indexOf("Verify the release revision")).toBeLessThan(
+        workflow.indexOf("Attest the release assets")
+      )
+      const sha = spawnSync("git", ["rev-parse", "HEAD"], {
+        cwd: ROOT,
+        encoding: "utf8"
+      }).stdout.trim()
+      for (const script of scripts) {
+        const result = spawnSync("bash", ["-e", "-c", script], {
+          cwd: ROOT,
+          encoding: "utf8",
+          env: { ...process.env, GITHUB_SHA: matches ? sha : "0".repeat(40) }
+        })
+        expect(result.status, result.stderr).toBe(matches ? 0 : 1)
+      }
+    }
+  )
+
+  it("accepts only the expected workflow on main or a release tag in upload and verification docs", async () => {
+    const workflow = await readFile(workflowPath, "utf8")
+    expect(workflow).not.toContain("--signer-workflow")
+    const expression = workflow.match(/--cert-identity-regex '([^']+)'/)?.[1]
+    expect(expression).toBeDefined()
+    const identity = new RegExp(expression as string)
+    const prefix = "https://github.com/memhtml/memhtml/.github/workflows/release-please.yml@"
+    for (const ref of ["refs/heads/main", `refs/tags/memhtml-v${VERSION}`]) {
+      expect(identity.test(prefix + ref)).toBe(true)
+    }
+    for (const ref of [
+      "refs/heads/other",
+      "refs/tags/other",
+      "refs/heads/memhtml-v0.16.2",
+      "refs/tags/memhtml-v0.16.2/other"
+    ]) {
+      expect(identity.test(prefix + ref)).toBe(false)
+    }
+    expect(identity.test(`${prefix}refs/heads/main/other`)).toBe(false)
+    expect(identity.test(`other${prefix}refs/heads/main`)).toBe(false)
+    expect(
+      identity.test(`${prefix.replace("release-please.yml", "other.yml")}refs/heads/main`)
+    ).toBe(false)
+    const docs = await readFile(join(ROOT, "RELEASING.md"), "utf8")
+    expect(docs).toContain(`--cert-identity-regex '${expression}'`)
+    const examples = docs
+      .split("```bash\n")
+      .slice(1)
+      .map((section) => section.split("```")[0] as string)
+      .filter((example) => example.includes("gh attestation verify"))
+    expect(examples).toHaveLength(2)
+    for (const example of examples) {
+      expect(example).toContain("--cert-identity-regex")
+      expect(example).not.toContain("--signer-workflow")
+    }
   })
 })

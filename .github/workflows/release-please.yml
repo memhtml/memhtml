@@ -15,11 +15,6 @@ on:
   # has nothing to do with the bytes — a missing tool on the runner did exactly that on the
   # first real release — and without this the only way to retry is to cut another version.
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Existing release tag to publish, e.g. memhtml-v0.2.0"
-        required: true
-        type: string
 
 # Least privilege at the top, granted per job below. `id-token: write` in particular must
 # never reach the release-please job — only the step that publishes needs an OIDC token.
@@ -64,14 +59,32 @@ jobs:
     outputs:
       version: ${{ steps.assets.outputs.version }}
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
-      tag: ${{ inputs.tag || needs.release-please.outputs.tag_name }}
+      tag: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || needs.release-please.outputs.tag_name }}
     steps:
+      - name: Require a tag for retries
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          if [ "$REF_TYPE" != tag ]; then
+            echo 'Retry requires a tag ref; dispatch with --ref memhtml-vX.Y.Z.' >&2
+            exit 1
+          fi
+
       # The TAG, not the branch: `main` has already moved on by the time this runs, and
       # the bytes that get published have to be the bytes that were released.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag || needs.release-please.outputs.tag_name }}
+          ref: refs/tags/${{ github.event_name == 'workflow_dispatch' && github.ref_name || needs.release-please.outputs.tag_name }}
           persist-credentials: false
+
+      - name: Verify the release revision
+        run: |
+          actual_sha=$(git rev-parse HEAD)
+          if [ "$actual_sha" != "$GITHUB_SHA" ]; then
+            echo "Release checkout differs from the workflow revision: $actual_sha != $GITHUB_SHA" >&2
+            exit 1
+          fi
 
       # The toolchain mise.lock pins, and this job genuinely needs it: `pnpm check` builds the
       # docs site, astro-d2 shells out to the `d2` binary, and d2 is a mise tool. Without this
@@ -123,12 +136,12 @@ jobs:
       # setup-node's hands, which is the one that holds the OIDC `.npmrc`.
       - run: pnpm package:smoke
 
-      # npm packs once inside this script. Retry fetches the published tarball and
-      # verifies registry integrity; it never publishes twice.
+      # npm packs the rebuilt package once. Retry requires identical npm integrity
+      # before SBOM generation or attestation; it never publishes twice.
       - name: Stage release assets
         id: assets
         env:
-          RELEASE_TAG: ${{ inputs.tag || needs.release-please.outputs.tag_name }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || needs.release-please.outputs.tag_name }}
         run: node scripts/release-assets.mjs stage dist-package "$RUNNER_TEMP/release-assets" "$RELEASE_TAG" --registry
 
       # Publish the packed file, with the same trusted publishing identity as before.
@@ -181,8 +194,16 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.publish.outputs.tag }}
+          ref: refs/tags/${{ needs.publish.outputs.tag }}
           persist-credentials: false
+
+      - name: Verify the release revision
+        run: |
+          actual_sha=$(git rev-parse HEAD)
+          if [ "$actual_sha" != "$GITHUB_SHA" ]; then
+            echo "Release checkout differs from the workflow revision: $actual_sha != $GITHUB_SHA" >&2
+            exit 1
+          fi
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -206,6 +227,6 @@ jobs:
             "$RUNNER_TEMP/release-assets/memhtml-$VERSION-SHA256SUMS"; do
             gh attestation verify "$asset" --repo "$GITHUB_REPOSITORY" \
               --bundle "$asset.sigstore.json" \
-              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release-please.yml"
+              --cert-identity-regex '^https://github\.com/memhtml/memhtml/\.github/workflows/release-please\.yml@refs/(heads/main|tags/memhtml-v[^/]+)$'
           done
           gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/release-assets/"* --repo "$GITHUB_REPOSITORY" --clobber

@@ -121,13 +121,12 @@ const stage = async (packageDir, outputDir, tag, registry) => {
   await census(dir, [])
   const dist = registry ? publishedDist(pkg.version) : null
 
-  // Pack once: new releases use the assembled package; retries fetch the published archive.
+  // Pack only the assembled package, including on retries; never attest foreign bytes.
   // This exact pathname is the publish subject and the attestation subject.
-  const packSpec = dist ? `memhtml@${pkg.version}` : resolve(packageDir)
   const packed = JSON.parse(
     successful("npm", [
       "pack",
-      packSpec,
+      resolve(packageDir),
       "--json",
       "--pack-destination",
       dir,
@@ -147,8 +146,11 @@ const stage = async (packageDir, outputDir, tag, registry) => {
   }
   await census(dir, [names.tarball])
   const tarball = join(dir, names.tarball)
-  if (dist && `sha512-${digest(await fileBytes(tarball), "sha512", "base64")}` !== dist.integrity) {
-    throw new Error("published tarball integrity mismatch")
+  const rebuiltIntegrity = `sha512-${digest(await fileBytes(tarball), "sha512", "base64")}`
+  if (dist && rebuiltIntegrity !== dist.integrity) {
+    throw new Error(
+      `rebuilt tarball differs from the published npm version; rebuilt: ${rebuiltIntegrity}; npm: ${dist.integrity}. Restore the original build inputs and toolchain, then retry the same tag; if the bytes must change, release a new version. No SBOM or attestation was generated.`
+    )
   }
   successful("syft", [
     "scan",

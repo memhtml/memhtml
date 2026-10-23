@@ -60,15 +60,15 @@ The copies use a **directory** `from` with `to: OUT_DIR`, not a glob. A glob wit
 3. On the release PR, click **Approve workflows to run**, then wait for `check`, `package`, and CodeQL to pass before merging. Bot-created PR runs wait for this approval.
 4. Merge that PR. release-please tags the release — `memhtml-v0.2.0`, component-prefixed because the package is named in the config — and the `publish` job in the same workflow run re-runs `pnpm check`, then `pnpm package:smoke` on the tag, then packs `dist-package/` once, publishes that tarball, and attests the release assets. A separate job uploads the verified assets to the GitHub release.
 
-**A publish that fails for an environment reason is retryable without cutting another version.** The workflow takes a `workflow_dispatch` with a `tag` input for exactly that:
+**A publish that fails for an environment reason is retryable without cutting another version.** Dispatch the workflow on the release tag itself:
 
 ```bash
-gh workflow run release-please.yml -f tag=memhtml-v0.2.0
+gh workflow run release-please.yml --ref memhtml-v0.2.0
 ```
 
-The staging log reports `publish: "true"` when npm has no version matching the tag, so the workflow publishes the packed tarball. It reports `publish: "false"` when that version already exists, so the workflow skips npm publication and restages, attests, and reuploads the assets. Registry lookup failures stop the run; only an explicit package-not-found response or a successful version list that omits the version means unpublished. A retry retrieves the actual published tarball with `npm pack memhtml@<version> --json --pack-destination <dir>` and verifies its SHA512 integrity against npm's metadata before generating the SBOM and attestations. The script calls `npm pack` once, choosing the assembled package for a new version or the published archive for a retry. It never overwrites the npm version. `--clobber` replaces the release's asset copies after all local and cryptographic checks pass.
+The staging log reports `publish: "true"` when npm has no version matching the tag, so the workflow publishes the packed tarball. It reports `publish: "false"` when that version already exists and the rebuilt tarball matches npm's SHA512 integrity, so the workflow skips npm publication and restages, attests, and reuploads the rebuilt assets. Registry lookup failures stop the run; only an explicit package-not-found response or a successful version list that omits the version means unpublished. The script calls `npm pack` once on `dist-package/`, including on retries. If the rebuilt digest differs from npm's metadata, it prints both digests and stops before generating an SBOM or attestation. Restore the original build inputs and toolchain before retrying; if the bytes must change, release a new version. The workflow never attests a downloaded npm archive or overwrites an npm version. `--clobber` replaces the release's asset copies after all local and cryptographic checks pass.
 
-The retry must run this workflow from a revision containing the asset pipeline, against a tag that contains `scripts/release-assets.mjs`. It does not add assets to older tags that predate it.
+The retry requires a tag ref and derives the release tag from that event's `github.ref_name`; branch dispatches fail. Both jobs check out the fully qualified `refs/tags/<tag>`, so a branch with the same name cannot supply the source. Each checkout must have `git rev-parse HEAD` equal to `GITHUB_SHA` before continuing. The tag must contain this workflow and `scripts/release-assets.mjs`; this path does not add assets to older tags that predate it.
 
 This exists because the first real release failed that way: the publish job had no mise, so the `d2` binary was absent, and the docs build inside `pnpm check` died in `astro:config:setup` — nothing to do with the bytes being published.
 
@@ -176,11 +176,11 @@ sha256sum --check memhtml-0.16.2-SHA256SUMS
 for asset in memhtml-0.16.2.tgz memhtml-0.16.2.cyclonedx.json memhtml-0.16.2-SHA256SUMS; do
   gh attestation verify "$asset" --repo memhtml/memhtml \
     --bundle "$asset.sigstore.json" \
-    --signer-workflow memhtml/memhtml/.github/workflows/release-please.yml
+    --cert-identity-regex '^https://github\.com/memhtml/memhtml/\.github/workflows/release-please\.yml@refs/(heads/main|tags/memhtml-v[^/]+)$'
 done
 ```
 
-`gh attestation verify` checks the signature and artifact digest, using SLSA provenance by default. The signer-workflow restriction prevents accepting another workflow's valid signature. The `.intoto.jsonl` files expose the same signed envelopes to tools that consume in-toto provenance; they are not unsigned copies of the statements.
+`gh attestation verify` checks the signature and artifact digest, using SLSA provenance by default. `--signer-workflow` restricts the workflow path but does not restrict its ref. The anchored certificate identity regex also requires that workflow to sign on `refs/heads/main` or a `refs/tags/memhtml-v*` tag; another branch or tag is refused. The upload job applies the same restriction. The `.intoto.jsonl` files expose the same signed envelopes to tools that consume in-toto provenance; they are not unsigned copies of the statements.
 
 For fully offline verification, supply a previously obtained Sigstore trusted root with `--custom-trusted-root trusted_root.jsonl`. The bundle conversion is also checked against a GitHub CLI release artifact with this command, using its own repository and workflow identity:
 
@@ -188,7 +188,7 @@ For fully offline verification, supply a previously obtained Sigstore trusted ro
 gh attestation verify gh_2.103.0_linux_amd64.tar.gz --repo cli/cli \
   --bundle gh_2.103.0_linux_amd64.tar.gz.sigstore.json \
   --custom-trusted-root trusted_root.jsonl \
-  --signer-workflow cli/cli/.github/workflows/deployment.yml
+  --cert-identity-regex '^https://github\.com/cli/cli/\.github/workflows/deployment\.yml@refs/heads/trunk$'
 ```
 
 Appending even one byte to the artifact makes verification fail. A JSON-lines bundle may contain several predicate types; the converter selects SLSA provenance by predicate type and matching artifact name/digest, then preserves the complete selected bundle.
