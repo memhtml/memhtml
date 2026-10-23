@@ -412,3 +412,4 @@ That path goes straight to the package's vitest, so it skips turbo and builds no
 | `docs/tasks.md`     | The task memory type                                            |
 | `docs/code-mode.md` | Navigating the corpus with code                                 |
 | `docs/backlog.md`   | The fine-grained ledger                                         |
+| `SECURITY.md`       | Supported versions and private vulnerability reporting          |
