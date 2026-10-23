@@ -398,6 +398,14 @@ describe("provenance exports", () => {
 
 describe("release workflow source and signer restrictions", () => {
   const workflowPath = join(ROOT, ".github/workflows/release-please.yml")
+  const tagExpression = `\${{ github.event_name == 'workflow_dispatch' && github.ref_name || needs.release-please.outputs.tag_name }}`
+  const jobBody = (workflow: string, name: string) => {
+    const body = workflow.split(new RegExp(`^ {2}${name}:\\n`, "m"))[1]?.split(/^ {2}[\w-]+:\n/m)[0]
+    expect(body).toBeDefined()
+    return body as string
+  }
+  const namedSteps = (body: string, name: string) =>
+    body.split(/(?=^ {6}- )/m).filter((step) => step.startsWith(`      - name: ${name}\n`))
   const stepScripts = (workflow: string, name: string) =>
     workflow
       .split(`      - name: ${name}\n`)
@@ -407,6 +415,53 @@ describe("release workflow source and signer restrictions", () => {
         expect(body).toBeDefined()
         return (body as string).replace(/^ {10}/gm, "")
       })
+
+  it("keeps retry inputs, guard conditions, and tag expressions bound to the dispatch ref", async () => {
+    const workflow = await readFile(workflowPath, "utf8")
+    const dispatch = workflow.match(
+      /^ {2}workflow_dispatch:[^\n]*(?:\n(?: {4,}[^\n]*|[ \t]*))*/m
+    )?.[0]
+    expect(dispatch).toBeDefined()
+    expect(dispatch).not.toMatch(/^\s+inputs:/m)
+    expect(workflow).not.toContain("continue-on-error")
+    const publish = jobBody(workflow, "publish")
+    const upload = jobBody(workflow, "release-assets")
+    const guards = namedSteps(publish, "Require a tag for retries")
+    expect(guards).toHaveLength(1)
+    expect(guards[0]?.match(/^ {8}if: (.+)$/m)?.[1]).toBe(
+      "github.event_name == 'workflow_dispatch'"
+    )
+    for (const job of [publish, upload]) {
+      const revisions = namedSteps(job, "Verify the release revision")
+      expect(revisions).toHaveLength(1)
+      expect(revisions[0]).not.toMatch(/^ {8}(?:if|continue-on-error):/m)
+    }
+    expect(publish.match(/^ {6}tag: (.+)$/m)?.[1]).toBe(tagExpression)
+    expect(publish.match(/^ {10}ref: (.+)$/m)?.[1]).toBe(`refs/tags/${tagExpression}`)
+    const stageSteps = namedSteps(publish, "Stage release assets")
+    expect(stageSteps).toHaveLength(1)
+    expect(stageSteps[0]?.match(/^ {10}RELEASE_TAG: (.+)$/m)?.[1]).toBe(tagExpression)
+    expect(upload.match(/^ {10}ref: (.+)$/m)?.[1]).toBe(
+      `refs/tags/\${{ needs.publish.outputs.tag }}`
+    )
+    expect(upload.match(/^ {10}RELEASE_TAG: (.+)$/m)?.[1]).toBe(`\${{ needs.publish.outputs.tag }}`)
+  })
+
+  it.each(["publish", "release-assets"])(
+    "checks the revision after checkout and before tools or publication in %s",
+    async (name) => {
+      const workflow = await readFile(workflowPath, "utf8")
+      const job = jobBody(workflow, name)
+      const checkout = job.indexOf("- uses: actions/checkout@")
+      const revision = job.indexOf("- name: Verify the release revision")
+      expect(checkout).toBeGreaterThanOrEqual(0)
+      expect(revision).toBeGreaterThan(checkout)
+      for (const operation of ["jdx/mise-action@", "pnpm install", "npm publish"]) {
+        const position = job.indexOf(operation)
+        if (position !== -1) expect(revision).toBeLessThan(position)
+      }
+    }
+  )
 
   it.each(["tag", "branch"])("requires a tag dispatch instead of a %s ref", async (refType) => {
     const workflow = await readFile(workflowPath, "utf8")
@@ -473,6 +528,11 @@ describe("release workflow source and signer restrictions", () => {
     expect(identity.test(`${prefix}refs/heads/main/other`)).toBe(false)
     expect(identity.test(`other${prefix}refs/heads/main`)).toBe(false)
     expect(
+      identity.test(
+        "https://github.com/evil/memhtml/.github/workflows/release-please.yml@refs/heads/main"
+      )
+    ).toBe(false)
+    expect(
       identity.test(`${prefix.replace("release-please.yml", "other.yml")}refs/heads/main`)
     ).toBe(false)
     const docs = await readFile(join(ROOT, "RELEASING.md"), "utf8")
@@ -487,5 +547,55 @@ describe("release workflow source and signer restrictions", () => {
       expect(example).toContain("--cert-identity-regex")
       expect(example).not.toContain("--signer-workflow")
     }
+  })
+
+  it("stops the upload step when gh rejects an attestation", async () => {
+    await rm(assets, { recursive: true })
+    assets = join(scratch, "release-assets")
+    await mkdir(assets)
+    expect(stage().status).toBe(0)
+    await signAssets()
+    const callsPath = join(scratch, "gh-calls.jsonl")
+    await writeFile(
+      join(bin, "gh"),
+      `#!${process.execPath}\n${`
+const fs = require("node:fs")
+const args = process.argv.slice(2)
+fs.appendFileSync(process.env.GH_CALLS, JSON.stringify(args) + "\\n")
+if (args[0] === "attestation") process.exit(1)
+if (args[0] === "release" && args[1] === "upload") process.exit(0)
+process.exit(9)
+`}`
+    )
+    await chmod(join(bin, "gh"), 0o755)
+    const workflow = await readFile(workflowPath, "utf8")
+    const scripts = stepScripts(
+      jobBody(workflow, "release-assets"),
+      "Verify and upload release assets"
+    )
+    expect(scripts).toHaveLength(1)
+    const result = spawnSync("bash", ["-e", "-c", scripts[0] as string], {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: {
+        PATH: `${bin}:${process.env.PATH}`,
+        TMPDIR: tmpdir(),
+        RUNNER_TEMP: scratch,
+        VERSION,
+        RELEASE_TAG: `memhtml-v${VERSION}`,
+        GITHUB_REPOSITORY: "memhtml/memhtml",
+        GH_CALLS: callsPath
+      }
+    })
+    expect(result.stdout, result.stderr).toContain("verified 3 versioned assets")
+    expect(result.stderr).toBe("")
+    expect(result.status, result.stderr).toBe(1)
+    const calls = (await readFile(callsPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as string[])
+    expect(calls[0]?.slice(0, 2)).toEqual(["attestation", "verify"])
+    expect(calls).toHaveLength(1)
+    expect(calls.some((call) => call[0] === "release" && call[1] === "upload")).toBe(false)
   })
 })

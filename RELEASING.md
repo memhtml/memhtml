@@ -180,7 +180,7 @@ for asset in memhtml-0.16.2.tgz memhtml-0.16.2.cyclonedx.json memhtml-0.16.2-SHA
 done
 ```
 
-`gh attestation verify` checks the signature and artifact digest, using SLSA provenance by default. `--signer-workflow` restricts the workflow path but does not restrict its ref. The anchored certificate identity regex also requires that workflow to sign on `refs/heads/main` or a `refs/tags/memhtml-v*` tag; another branch or tag is refused. The upload job applies the same restriction. The `.intoto.jsonl` files expose the same signed envelopes to tools that consume in-toto provenance; they are not unsigned copies of the statements.
+`gh attestation verify` checks the signature and artifact digest, using SLSA provenance by default. A ref-less `--signer-workflow` accepts that workflow on any ref; a value ending in `@refs/...` requires that exact ref. The anchored certificate identity regex also requires that workflow to sign on `refs/heads/main` or a `refs/tags/memhtml-v*` tag; another branch or tag is refused. The upload job applies the same restriction. The `.intoto.jsonl` files expose the same signed envelopes to tools that consume in-toto provenance; they are not unsigned copies of the statements.
 
 For fully offline verification, supply a previously obtained Sigstore trusted root with `--custom-trusted-root trusted_root.jsonl`. The bundle conversion is also checked against a GitHub CLI release artifact with this command, using its own repository and workflow identity:
 
