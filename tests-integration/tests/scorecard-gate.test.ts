@@ -258,6 +258,7 @@ describe("the Scorecard ratchet", () => {
       `#!/usr/bin/env node
 const fs = require("node:fs")
 const path = require("node:path")
+if (process.env.SCANNER_START_MARKER) fs.writeFileSync(process.env.SCANNER_START_MARKER, "started")
 const report = ${report}
 const tree = process.argv.find(arg => arg.startsWith("--local=")).slice(8)
 const binaries = [path.join(tree, "native"), path.join(tree, "node_modules", "native")]
@@ -346,19 +347,33 @@ process.stdout.write(JSON.stringify(report))
       join(commands, "tar"),
       `#!/usr/bin/env node
 const { spawnSync } = require("node:child_process")
-const { rmSync } = require("node:fs")
+const { renameSync, rmSync } = require("node:fs")
 const { join } = require("node:path")
 const args = process.argv.slice(2)
 const run = spawnSync("/usr/bin/tar", args)
 if (run.status !== 0) process.exit(run.status)
-rmSync(join(args[args.indexOf("-C") + 1], "README.md"))
+const tree = args[args.indexOf("-C") + 1]
+if (process.env.EXPORT_DEFECT === "rename") {
+  renameSync(join(tree, "README.md"), join(tree, "README-renamed.md"))
+} else {
+  rmSync(join(tree, "README.md"))
+}
 `,
       { mode: 0o755 }
     )
     const env = await offlineScanner()
-    const run = runGate([], { ...env, PATH: `${commands}:${env.PATH}` })
-    expect(run.status, run.stdout + run.stderr).toBe(2)
-    expect(run.stderr).toContain("EXPORT exported file list differs from committed HEAD")
+    for (const defect of ["remove", "rename"]) {
+      const started = join(scratch, `scanner-${defect}.txt`)
+      const run = runGate([], {
+        ...env,
+        PATH: `${commands}:${env.PATH}`,
+        EXPORT_DEFECT: defect,
+        SCANNER_START_MARKER: started
+      })
+      expect(run.status, run.stdout + run.stderr).toBe(2)
+      expect(run.stderr).toContain("EXPORT exported file list differs from committed HEAD")
+      await expect(readFile(started)).rejects.toMatchObject({ code: "ENOENT" })
+    }
   })
 
   it("refuses a tool exit failure even when the tool prints a clean report", async () => {
