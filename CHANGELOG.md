@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.17.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.16.2...memhtml-v0.17.0) (2026-10-23)
+
+
+### Features
+
+* **release:** publish and verify attested package assets ([#327](https://github.com/memhtml/memhtml/issues/327)) ([9df4e90](https://github.com/memhtml/memhtml/commit/9df4e9012ad1678879167e9b9e02f53c44538594))
+
+
+### Bug Fixes
+
+* **deps:** patch selector parsing in documentation styles ([#326](https://github.com/memhtml/memhtml/issues/326)) ([86e4a0a](https://github.com/memhtml/memhtml/commit/86e4a0a6e860a2c0e8c300d1c9ec70354a3370c9))
+
 ## [0.16.2](https://github.com/memhtml/memhtml/compare/memhtml-v0.16.1...memhtml-v0.16.2) (2026-10-23)
 
 
