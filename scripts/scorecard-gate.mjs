@@ -14,7 +14,19 @@
  * existing vulnerability reporting policy.
  */
 import { spawnSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  writeFileSync
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -166,6 +178,49 @@ const exportedPaths = (root, prefix = "") =>
     return entry.isDirectory() ? exportedPaths(root, path) : [path]
   })
 
+const exportedBytes = (path, mode) => {
+  if (mode === "120000") return readlinkSync(path, { encoding: "buffer" })
+  const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+  try {
+    if (!fstatSync(descriptor).isFile()) refuse("export is not a regular file")
+    return readFileSync(descriptor)
+  } finally {
+    closeSync(descriptor)
+  }
+}
+
+const verifyExportBytes = (repository, tree, entries) => {
+  const objects = checkedCommand("git", ["-C", repository, "cat-file", "--batch"], {
+    encoding: null,
+    input: entries.map((entry) => `${entry.oid}\n`).join(""),
+    maxBuffer: 512 * 1024 * 1024
+  }).stdout
+  let offset = 0
+  for (const entry of entries) {
+    const end = objects.indexOf(10, offset)
+    const [oid, type, length] = objects.subarray(offset, end).toString().split(" ")
+    const size = Number(length)
+    if (
+      end < 0 ||
+      oid !== entry.oid ||
+      type !== "blob" ||
+      !Number.isSafeInteger(size) ||
+      size < 0
+    ) {
+      refuse(`EXPORT ${entry.path}: no committed blob bytes`)
+    }
+    const bytes = objects.subarray(end + 1, end + 1 + size)
+    offset = end + 1 + size + 1
+    try {
+      if (!exportedBytes(join(tree, entry.path), entry.mode).equals(bytes)) {
+        refuse("bytes differ from committed HEAD")
+      }
+    } catch (error) {
+      refuse(`EXPORT ${entry.path}: ${error.message}`)
+    }
+  }
+}
+
 const scanHead = (policy, target) => {
   const scratch = mkdtempSync(
     join(process.env.TMPDIR ?? process.env.RUNNER_TEMP ?? tmpdir(), "scorecard-")
@@ -175,25 +230,32 @@ const scanHead = (policy, target) => {
     const tree = join(scratch, "tree")
     const repository = join(scratch, "repository.git")
     const head = checkedCommand("git", ["-C", target, "rev-parse", "HEAD"]).stdout.trim()
-    const committed = checkedCommand("git", [
+    const entries = checkedCommand("git", [
       "-C",
       target,
       "ls-tree",
       "-r",
-      "--name-only",
       "--full-tree",
       "-z",
       head
     ])
       .stdout.split("\0")
       .filter(Boolean)
-      .sort()
+      .map((line) => {
+        const tab = line.indexOf("\t")
+        const [mode, type, oid] = line.slice(0, tab).split(" ")
+        return { mode, type, oid, path: line.slice(tab + 1) }
+      })
+    const committed = entries.map((entry) => entry.path).sort()
     mkdirSync(tree)
     // info/attributes wins over every committed .gitattributes, including nested ones. A separate
-    // object store avoids changing the checkout, and neither export attribute may hide its bytes.
+    // object store avoids changing the checkout; archive and conversion attributes cannot alter its bytes.
     checkedCommand("git", ["clone", "--quiet", "--bare", "--no-hardlinks", target, repository])
     mkdirSync(join(repository, "info"), { recursive: true })
-    writeFileSync(join(repository, "info", "attributes"), "* -export-ignore -export-subst\n")
+    writeFileSync(
+      join(repository, "info", "attributes"),
+      "* -export-ignore -export-subst -text -eol -crlf -ident -filter -working-tree-encoding\n"
+    )
     checkedCommand("git", [
       "-C",
       repository,
@@ -206,6 +268,7 @@ const scanHead = (policy, target) => {
     if (JSON.stringify(exportedPaths(tree).sort()) !== JSON.stringify(committed)) {
       refuse("EXPORT exported file list differs from committed HEAD")
     }
+    verifyExportBytes(repository, tree, entries)
     const [command, ...args] = policy.command
     const run = spawnSync(
       command,

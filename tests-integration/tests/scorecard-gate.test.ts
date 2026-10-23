@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process"
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -269,8 +269,12 @@ const workflow = fs.readFileSync(path.join(tree, ".github/workflows/check.yml"),
 if (!/^permissions:/m.test(workflow)) {
   report.checks.find(check => check.name === "Token-Permissions").score = 0
 }
+const dockerfile = path.join(tree, "Dockerfile")
+if (fs.existsSync(dockerfile) && /^FROM node:24\\s*$/m.test(fs.readFileSync(dockerfile, "utf8"))) {
+  report.checks.find(check => check.name === "Pinned-Dependencies").score = 9
+}
 if (process.env.EXPORT_CAPTURE) {
-  fs.writeFileSync(process.env.EXPORT_CAPTURE, fs.readFileSync(path.join(tree, "marker.txt")))
+  fs.writeFileSync(process.env.EXPORT_CAPTURE, fs.readFileSync(path.join(tree, process.env.EXPORT_CAPTURE_FILE ?? "marker.txt")))
 }
 process.stdout.write(JSON.stringify(report))
 `,
@@ -340,6 +344,72 @@ process.stdout.write(JSON.stringify(report))
     expect(await readFile(capture, "utf8")).toBe(content)
   })
 
+  it("scores committed Dockerfile bytes despite a working-tree encoding attribute", async () => {
+    const clone = await cloneHead("encoding-clone")
+    const content = Buffer.from("FROM node:24\n")
+    await writeFile(join(clone, "Dockerfile"), content)
+    commit(clone, ["Dockerfile"], "test: commit unpinned container base")
+    await writeFile(join(clone, ".gitattributes"), "Dockerfile working-tree-encoding=UTF-16\n")
+    commit(clone, [".gitattributes"], "test: add container encoding attribute")
+    const capture = join(scratch, "captured-dockerfile")
+    const run = runGate(["--target", clone], {
+      ...(await offlineScanner()),
+      EXPORT_CAPTURE: capture,
+      EXPORT_CAPTURE_FILE: "Dockerfile"
+    })
+    expect(run.status, run.stdout + run.stderr).toBe(1)
+    expect(run.stdout).toContain("FLOOR Pinned-Dependencies 9 < floor 10")
+    expect(await readFile(capture)).toEqual(content)
+    const committed = spawnSync("git", ["show", "HEAD:Dockerfile"], { cwd: clone })
+    expect(committed.status).toBe(0)
+    expect(await readFile(capture)).toEqual(committed.stdout)
+  })
+
+  it("compares regular-file bytes and symlink targets before scanning", async () => {
+    const clone = await cloneHead("content-clone")
+    await symlink("README.md", join(clone, "source-link"))
+    commit(clone, ["source-link"], "test: commit source symlink")
+    const commands = join(scratch, "content-export")
+    await mkdir(commands)
+    await writeFile(
+      join(commands, "tar"),
+      `#!/usr/bin/env node
+const { spawnSync } = require("node:child_process")
+const { rmSync, symlinkSync, writeFileSync } = require("node:fs")
+const { join } = require("node:path")
+const args = process.argv.slice(2)
+const run = spawnSync("/usr/bin/tar", args)
+if (run.status !== 0) process.exit(run.status ?? 1)
+const tree = args[args.indexOf("-C") + 1]
+if (process.env.EXPORT_DEFECT === "symlink") {
+  rmSync(join(tree, "source-link"))
+  symlinkSync("SECURITY.md", join(tree, "source-link"))
+} else {
+  writeFileSync(join(tree, "README.md"), "changed bytes")
+}
+`,
+      { mode: 0o755 }
+    )
+    const env = await offlineScanner()
+    const clean = runGate(["--target", clone], env)
+    expect(clean.status, clean.stdout + clean.stderr).toBe(0)
+    for (const [defect, path] of [
+      ["bytes", "README.md"],
+      ["symlink", "source-link"]
+    ]) {
+      const started = join(scratch, `scanner-${defect}.txt`)
+      const run = runGate(["--target", clone], {
+        ...env,
+        PATH: `${commands}:${env.PATH}`,
+        EXPORT_DEFECT: defect,
+        SCANNER_START_MARKER: started
+      })
+      expect(run.status, run.stdout + run.stderr).toBe(2)
+      expect(run.stderr).toContain(`EXPORT ${path}: bytes differ from committed HEAD`)
+      await expect(readFile(started)).rejects.toMatchObject({ code: "ENOENT" })
+    }
+  })
+
   it("refuses an export whose file list differs from the committed tree", async () => {
     const commands = join(scratch, "incomplete-export")
     await mkdir(commands)
@@ -347,13 +417,15 @@ process.stdout.write(JSON.stringify(report))
       join(commands, "tar"),
       `#!/usr/bin/env node
 const { spawnSync } = require("node:child_process")
-const { renameSync, rmSync } = require("node:fs")
+const { renameSync, rmSync, writeFileSync } = require("node:fs")
 const { join } = require("node:path")
 const args = process.argv.slice(2)
 const run = spawnSync("/usr/bin/tar", args)
-if (run.status !== 0) process.exit(run.status)
+if (run.status !== 0) process.exit(run.status ?? 1)
 const tree = args[args.indexOf("-C") + 1]
-if (process.env.EXPORT_DEFECT === "rename") {
+if (process.env.EXPORT_DEFECT === "add") {
+  writeFileSync(join(tree, "extra.txt"), "extra")
+} else if (process.env.EXPORT_DEFECT === "rename") {
   renameSync(join(tree, "README.md"), join(tree, "README-renamed.md"))
 } else {
   rmSync(join(tree, "README.md"))
@@ -362,7 +434,7 @@ if (process.env.EXPORT_DEFECT === "rename") {
       { mode: 0o755 }
     )
     const env = await offlineScanner()
-    for (const defect of ["remove", "rename"]) {
+    for (const defect of ["remove", "rename", "add"]) {
       const started = join(scratch, `scanner-${defect}.txt`)
       const run = runGate([], {
         ...env,
