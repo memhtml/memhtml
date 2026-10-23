@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.2](https://github.com/memhtml/memhtml/compare/memhtml-v0.16.1...memhtml-v0.16.2) (2026-10-23)
+
+
+### Bug Fixes
+
+* refuse script URL schemes, resolve exec --sha, and read module paths portably ([#317](https://github.com/memhtml/memhtml/issues/317)) ([bf242ed](https://github.com/memhtml/memhtml/commit/bf242ed1ea3ef71a13f6b1b0ba484fabfe5df3a6))
+
 ## [0.16.1](https://github.com/memhtml/memhtml/compare/memhtml-v0.16.0...memhtml-v0.16.1) (2026-10-21)
 
 
