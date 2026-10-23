@@ -39,7 +39,7 @@ The propose-only report on `memory_write_batch`. It reduces each op's claim to a
 
 ### Curator
 
-The model-driven loop `memhtml curate run` starts on a `curate/<date>` branch. It works from a briefing code computes, proposes session operations within a step, time, and operation budget, and commits only to its branch, so `main` never moves until `memhtml curate merge` lands the branch. See [Curate the corpus](/learn/operations/curate-the-corpus/).
+The model-driven loop `memhtml curate run` starts on a `curate/<date>` branch. It works from a briefing code computes, proposes session operations within a step, time, and operation budget, and commits only to its branch, so the run never moves `main` and `memhtml curate merge` lands its work. See [Curate the corpus](/learn/operations/curate-the-corpus/).
 
 ### Degraded retrieval
 
@@ -71,7 +71,7 @@ The parsed corpus at one commit, held in memory as an immutable version: a persi
 
 ### Head gate
 
-The check `memhtml curate merge` runs before it moves anything. It searches a seeded sample of up to 200 records by title at the base version and at the landed version, and refuses with `ERR_DISCRIMINATION_FAILED` when the landed mean reciprocal rank falls more than 0.02 below the base or the inversion count grows. It's a different gate from the discrimination gate, which measures the ranking code over a generated fixture. See [Curate the corpus](/learn/operations/curate-the-corpus/#the-head-gate).
+The check `memhtml curate merge` runs before it moves anything. It searches a seeded sample of up to 200 records by title at the target branch's tip and at the curate branch's tip, and refuses with `ERR_DISCRIMINATION_FAILED` when the curate branch's mean reciprocal rank falls more than 0.02 below the target's or the inversion count grows. It's a different gate from the discrimination gate, which measures the ranking code over a generated fixture. See [Curate the corpus](/learn/operations/curate-the-corpus/#the-head-gate).
 
 ### Head server
 
