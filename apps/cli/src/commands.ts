@@ -847,7 +847,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   },
   {
     name: "publish",
-    summary: "Regenerate the per-directory index.html listings and sitemap.xml, and commit them.",
+    summary: "Regenerate index.html listings and sitemap.xml, remove stale listings, and commit.",
     args: [],
     flags: [],
     responseTypes: ["publish.report"]

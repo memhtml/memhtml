@@ -411,7 +411,7 @@ Corpus health: HEAD, dirty state, counts by type, edges, index freshness.
 
 ### `memhtml publish`
 
-Regenerate the per-directory index.html listings and sitemap.xml, and commit them.
+Regenerate index.html listings and sitemap.xml, remove stale listings, and commit.
 
 ### `memhtml doctor`
 

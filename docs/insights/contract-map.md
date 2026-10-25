@@ -349,7 +349,7 @@ This is the one interface between every SQL-writing module and the driver. 17 no
 - `packages/index/src/indexer.ts:11` takes it as an indexer dependency.
 - `packages/index/src/traces-persist.ts`, `packages/index/src/index-state.ts`, and `packages/index/src/reinforce.ts` all reference it, and `packages/index/src/sidecar.ts:44` and `packages/index/src/vector-coverage.ts:100` take it as their first argument.
 - `packages/eval/src/harness.ts` references it.
-- `apps/cli/src/api-layer.ts` wires it, and `apps/cli/src/operations.ts`, `apps/cli/src/views.ts`, `apps/cli/src/doctor.ts`, `apps/cli/src/hook.ts:5`, `apps/cli/src/artifacts.ts:32`, and `apps/cli/src/repair.ts:86`, `:98` consume it.
+- `apps/cli/src/api-layer.ts` wires it, and `apps/cli/src/operations.ts`, `apps/cli/src/views.ts`, `apps/cli/src/doctor.ts`, `apps/cli/src/hook.ts:5`, `apps/cli/src/artifacts.ts:34`, and `apps/cli/src/repair.ts:86`, `:98` consume it.
 - `packages/index/src/index.ts:10-18` publishes `DatabaseService`, `DatabaseShape`, `SqlValue`, `Write`, `attachState`, `makeDatabase`, `runStateMigrations` as the package's SQL surface.
 
 **Shape:**

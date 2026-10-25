@@ -103,12 +103,15 @@ memhtml publish
       "resources/runbook/index.html",
       "sitemap.xml"
     ],
+    "removed": [],
     "commitSha": "f1242b5e861ce09efb7fc1dfafd00f95b446215d"
   }
 }
 ```
 
-`memhtml publish` regenerates the per-directory `index.html` listings and `sitemap.xml` and commits them. It is deterministic to the byte (`apps/cli/src/publish.ts:10`), so two runs over an unchanged corpus write nothing and commit nothing, reporting `written: 0` and `commitSha: null`. That is what makes it safe on the cron. The listings come from the index, so on a store whose index holds no rows while HEAD carries memory files, such as a fresh clone, publish writes and commits nothing and fails with `ERR_INDEX_STALE`, and `memhtml index rebuild` followed by another publish is the fix.
+`memhtml publish` regenerates the per-directory `index.html` listings and `sitemap.xml` and commits them. It is deterministic to the byte (`apps/cli/src/publish.ts:34-36`), so two runs over an unchanged corpus write nothing and commit nothing, reporting `written: 0` and `commitSha: null`. That is what makes it safe on the cron. The listings come from the index, so on a store whose index holds no rows while HEAD carries memory files, such as a fresh clone, publish writes and commits nothing and fails with `ERR_INDEX_STALE`, and `memhtml index rebuild` followed by another publish is the fix.
+
+Publish also removes the listing of a directory that no longer holds a record. Once every record at or below a directory has been archived or moved, the generator stops producing that directory's `index.html`, and publish deletes it with `git rm` in the same commit and names it in `removed` (`staleListings` at `apps/cli/src/artifacts.ts:194-206`). Archived records keep listings of their own under `archive/<YYYY>/`, and the root `index.html` and `sitemap.xml` are never removed. The filename under a bucket belongs to the generator, so an `index.html` you wrote by hand in an emptied directory goes too.
 
 Those artifacts are what make the store browsable: open `$MEMHTML_ROOT/index.html` in a browser and walk the corpus with no tooling at all.
 

@@ -5,17 +5,24 @@ import {
   attemptIo,
   commitSubject,
   type GitShape,
+  parseNulPathList,
   readFileOrNull,
   withCheckoutLock
 } from "@memhtml/store"
 import { Effect } from "effect"
 
 import { Git } from "./api-layer.js"
-import { type GeneratedFile, generateArtifacts, type PublishRow, publishRows } from "./artifacts.js"
+import {
+  type GeneratedFile,
+  generateArtifacts,
+  type PublishRow,
+  publishRows,
+  staleListings
+} from "./artifacts.js"
 
 /**
- * `memhtml publish`: regenerate the per-directory `index.html` listings and the root `sitemap.xml`, and
- * commit whatever changed.
+ * `memhtml publish`: regenerate the per-directory `index.html` listings and the root `sitemap.xml`,
+ * remove the listings of directories that no longer hold a record, and commit whatever changed.
  *
  * **The generator is `./artifacts.ts` and is never re-derived.** `generateArtifacts` lives there because
  * a listing needs `files.title`/`gist`/`updated_at`, all of them index projections, and
@@ -37,6 +44,11 @@ export interface PublishReport {
   /** Artifacts whose bytes differed from what was on disk, and were therefore rewritten. */
   readonly written: number
   readonly paths: ReadonlyArray<string>
+  /**
+   * Tracked listings under a bucket that the generator no longer produces, because their directory
+   * holds no record at any depth. Removed with `git rm` in the same commit. Path-ordered.
+   */
+  readonly removed: ReadonlyArray<string>
   /** The commit, or `null` when nothing changed. */
   readonly commitSha: string | null
 }
@@ -58,12 +70,12 @@ const writeIfChanged = (root: string, artifact: GeneratedFile) =>
  * Refuse to regenerate from an index that holds no file rows while HEAD carries memory files.
  *
  * The listings and the sitemap are projections of the `files` table, so an index with no rows
- * regenerates every one of them empty, and the commit that follows reads as an ordinary
- * regeneration. A fresh clone, where `index.db` is gitignored and absent, and a rebuild that
- * emptied the table are both that state. The tree is the system of record, so the question is
- * asked of HEAD with the indexer's own path rule: when HEAD holds no memory file either, the store
- * is genuinely empty and an empty listing is the correct output. The check runs before any byte is
- * written, so a refusal leaves the tree and the history untouched.
+ * empties the sitemap and removes every listing under a bucket, and the commit that follows reads
+ * as an ordinary regeneration. A fresh clone, where `index.db` is gitignored and absent, and a
+ * rebuild that emptied the table are both that state. The tree is the system of record, so the
+ * question is asked of HEAD with the indexer's own path rule: when HEAD holds no memory file
+ * either, the store is genuinely empty and an empty listing is the correct output. The check runs
+ * before any byte is written, so a refusal leaves the tree and the history untouched.
  */
 const refuseEmptyIndex = (git: GitShape, rows: ReadonlyArray<PublishRow>) =>
   Effect.gen(function* () {
@@ -76,17 +88,52 @@ const refuseEmptyIndex = (git: GitShape, rows: ReadonlyArray<PublishRow>) =>
     if (memories === 0) return
     return yield* Effect.fail(
       new IndexStale(
-        `the index holds no memory rows while HEAD carries ${memories} memory ${memories === 1 ? "file" : "files"}, so publish would regenerate every listing and sitemap.xml empty; build the index with \`memhtml index rebuild\` and publish again`
+        `the index holds no memory rows while HEAD carries ${memories} memory ${memories === 1 ? "file" : "files"}, so publish would empty sitemap.xml and remove every listing; build the index with \`memhtml index rebuild\` and publish again`
       )
     )
   })
 
 /**
- * Regenerate and commit.
+ * Every path the git index tracks under the four buckets. The index rather than HEAD, because the
+ * index is what `git rm` acts on: a listing that a failed commit left staged is tracked, and HEAD
+ * does not hold it yet.
+ */
+const trackedPaths = (git: GitShape) =>
+  git.run(["ls-files", "-z", "--", ...TREE_PREFIXES]).pipe(Effect.map(parseNulPathList))
+
+/**
+ * `git rm` the stale listings, each spelled as a `:(literal)` pathspec. `git rm` reads a bare
+ * argument as a pattern in which `*`, `?` and `[` match, so a stale `resources/a[b]/index.html`
+ * would also remove `resources/ab/index.html`, the listing of a directory that still holds a
+ * record. `-f` because the filename is the generator's: without it `git rm` refuses a file whose
+ * working copy was edited, and a listing edited by hand is removed exactly as
+ * {@link writeIfChanged} would overwrite it, rather than failing the whole publish.
+ */
+const removeListings = (git: GitShape, paths: ReadonlyArray<string>) =>
+  paths.length === 0
+    ? Effect.void
+    : git
+        .run(["rm", "-q", "-f", "--", ...paths.map((path) => `:(literal)${path}`)])
+        .pipe(Effect.asVoid)
+
+/** The commit subject, naming the removals only when there are some. */
+const subjectFor = (artifacts: number, removed: number): string => {
+  const regenerated = `regenerate ${artifacts} generated artifacts`
+  if (removed === 0) return regenerated
+  return `${regenerated}, remove ${removed} stale ${removed === 1 ? "listing" : "listings"}`
+}
+
+/**
+ * Regenerate, remove the stale listings, and commit.
  *
  * The whole artifact set is staged rather than only the rewritten files, because a listing that was
  * hand-edited and then regenerated to its correct bytes is a change git already knows about. `commit`
  * no-ops on an index matching HEAD, so staging everything costs nothing when nothing moved.
+ *
+ * A tracked listing the generator no longer produces is removed in the same commit
+ * (`staleListings`), so a published tree carries no page listing records that have gone. The set is
+ * read from the git index under the checkout lock and removed before any artifact is written, so a
+ * removal git refuses leaves the tree as it was.
  */
 export const publish = () =>
   Effect.gen(function* () {
@@ -96,19 +143,22 @@ export const publish = () =>
     yield* refuseEmptyIndex(git, rows)
     const artifacts = generateArtifacts(rows)
 
-    // Written, staged, and committed under the checkout lock: the commit takes the whole shared
-    // index, so it must not run while a session commit has its own file staged there.
+    // Removed, written, staged, and committed under the checkout lock: the commit takes the whole
+    // shared index, so it must not run while a session commit has its own file staged there.
     const written: Array<string> = []
-    const commit = yield* withCheckoutLock(
+    const { commit, removed } = yield* withCheckoutLock(
       git.root,
       Effect.gen(function* () {
+        const removed = staleListings(yield* trackedPaths(git), artifacts)
+        yield* removeListings(git, removed)
         for (const artifact of artifacts) {
           if (yield* writeIfChanged(git.root, artifact)) written.push(artifact.path)
         }
         yield* git.add(artifacts.map((artifact) => artifact.path))
-        return yield* git.commit(
-          commitSubject("publish", `regenerate ${artifacts.length} generated artifacts`)
+        const commit = yield* git.commit(
+          commitSubject("publish", subjectFor(artifacts.length, removed.length))
         )
+        return { commit, removed }
       })
     )
 
@@ -117,6 +167,7 @@ export const publish = () =>
       artifacts: artifacts.length,
       written: written.length,
       paths: written,
+      removed,
       commitSha: commit.sha
     } satisfies PublishReport
   })

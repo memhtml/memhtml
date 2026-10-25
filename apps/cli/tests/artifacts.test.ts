@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest"
 
-import { generateArtifacts, generateIndexes, generateSitemap } from "../src/artifacts.js"
+import {
+  generateArtifacts,
+  generateIndexes,
+  generateSitemap,
+  staleListings
+} from "../src/artifacts.js"
 
 /**
  * The generated listings and sitemap behind `memhtml publish`: deterministic to the byte, complete over
@@ -69,5 +74,70 @@ describe("the generated artifacts", () => {
       expect(loc[1]?.startsWith("/")).toBe(true)
       expect(loc[1]).not.toContain("://")
     }
+  })
+})
+
+describe("the stale listings publish removes", () => {
+  const rows = [
+    {
+      path: "resources/acme-widget/a.html",
+      title: "A",
+      gist: "The A claim",
+      memory_type: "semantic",
+      updated_at: "2031-01-01T00:00:00Z"
+    }
+  ]
+  const generated = generateArtifacts(rows)
+  const generatedPaths = generated.map((file) => file.path)
+
+  it("is every tracked bucket listing the generator no longer produces", () => {
+    const tracked = [...generatedPaths, "resources/old/index.html", "archive/2031/index.html"]
+    expect(staleListings(tracked, generated)).toEqual([
+      "archive/2031/index.html",
+      "resources/old/index.html"
+    ])
+  })
+
+  it("never names a generated artifact, so a current listing is never removed", () => {
+    expect(staleListings(generatedPaths, generated)).toEqual([])
+  })
+
+  it("never names the root listing, the sitemap, or a file outside the four buckets", () => {
+    /**
+     * Over a store with no record the generator produces the sitemap alone, so every tracked path
+     * below is absent from its output. Only the two under a bucket are listings it owns.
+     */
+    const tracked = [
+      "index.html",
+      "sitemap.xml",
+      "notes/index.html",
+      "resourcesx/old/index.html",
+      ".memhtml/state/index.html",
+      "areas/index.html",
+      "areas/inbox/index.html"
+    ]
+    expect(staleListings(tracked, generateArtifacts([]))).toEqual([
+      "areas/inbox/index.html",
+      "areas/index.html"
+    ])
+  })
+
+  it("names only files called index.html, never a record or a near name", () => {
+    const tracked = [
+      "resources/old/a.html",
+      "resources/old/notindex.html",
+      "resources/old/index.html.bak",
+      "resources/old/Index.html"
+    ]
+    expect(staleListings(tracked, generated)).toEqual([])
+  })
+
+  it("names each path once, in path order", () => {
+    // `git ls-files` repeats an unmerged path once per stage.
+    const tracked = ["resources/b/index.html", "resources/a/index.html", "resources/b/index.html"]
+    expect(staleListings(tracked, generated)).toEqual([
+      "resources/a/index.html",
+      "resources/b/index.html"
+    ])
   })
 })
