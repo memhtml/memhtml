@@ -5,8 +5,12 @@ import {
   ARCS_DIR,
   archivePathFor,
   archiveYearOf,
+  DETECTION_DIGEST_CHARS,
+  DETECTION_PREFIX,
+  detectionKeyOf,
   INBOX_DIR,
   isArchivePath,
+  isDetectedTaskPath,
   isValidMemoryPath,
   memoryPathFor,
   memoryPathViolation,
@@ -132,6 +136,33 @@ describe("archive path algebra", () => {
       }),
       { numRuns: 1000 }
     )
+  })
+})
+
+describe("detected task paths", () => {
+  const live = "areas/inbox/tasks/det-0123456789ab-confirm-one-subject.html"
+
+  it("reads the key from a live or an archived detected task's filename", () => {
+    expect(detectionKeyOf(live)).toBe("det-0123456789ab")
+    expect(isDetectedTaskPath(live)).toBe(true)
+    expect(isDetectedTaskPath(archivePathFor(live, 2031))).toBe(true)
+    expect(isDetectedTaskPath(`projects/acme-widget/tasks/det-${"f".repeat(12)}-x.html`)).toBe(true)
+  })
+
+  it("refuses the shapes task list's GLOB refuses", () => {
+    for (const path of [
+      "areas/inbox/tasks/t-confirm-one-subject.html",
+      "areas/inbox/tasks/det-0123456789xy-confirm.html",
+      "areas/inbox/tasks/det-0123456789a-confirm.html",
+      "areas/inbox/tasks/det-0123456789AB-confirm.html",
+      "areas/inbox/tasks/detonate-things.html",
+      "areas/inbox/det-0123456789ab/a-fact.html"
+    ]) {
+      expect(isDetectedTaskPath(path), path).toBe(false)
+      expect(detectionKeyOf(path), path).toBeUndefined()
+    }
+    expect(DETECTION_PREFIX).toBe("det-")
+    expect(DETECTION_DIGEST_CHARS).toBe(12)
   })
 })
 

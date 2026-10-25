@@ -1,6 +1,7 @@
 import {
   type HeadView,
   hrefToPath,
+  isDetectedTaskPath,
   type MemoryRecord,
   type MemoryRel,
   originalPathFor
@@ -8,6 +9,7 @@ import {
 import { frameValueOf } from "@memhtml/domain"
 
 import {
+  claimedEntities,
   type InboxHome,
   type InboxPolicy,
   type InboxRecord,
@@ -43,7 +45,7 @@ import {
  *
  * The curator runs over a store of a few hundred active records (736 on 2026-09-28, after the
  * collapse), and runs again, so the briefing names the run's work by path rather than leaving the model
- * to find it with steps. Five lists, each sorted, capped, and carrying its uncapped total:
+ * to find it with steps. Six lists, each sorted, capped, and carrying its uncapped total:
  *
  * - `recent`: the records created since the last curate ref's commit, newest first, each with its
  *   nearest records by the caller's search (`neighborsOf`), so a restated fact is a pair the model
@@ -62,6 +64,13 @@ import {
  * - `inbox`: the active records under `areas/inbox/`, each with the home code would move it to and
  *   the evidence (`inbox.ts`), homes first. 535 of 923 active records sat there on 2026-09-30 and
  *   the two curator runs before this list existed moved none.
+ * - `mootDetectedTasks`: live detected tasks (`det-<digest>-…`, `isDetectedTaskPath`) whose
+ *   question has lost a side: an entity the task carries is carried by no live record outside
+ *   detected tasks, or every record carrying its entities is archived. No code in this build mints
+ *   or closes a detected task, so the briefing names the moot ones with the reason and the
+ *   charter's entity-resolution rule archives them. A detected task's entities are what it asks
+ *   about, not what it claims, so no entity count here or in `inbox.ts` reads them
+ *   (`claimedEntities`).
  */
 
 /** One active record in a group: its path, its claim, and the value the claim writes. */
@@ -132,6 +141,18 @@ export interface DanglingEdge {
 }
 
 /**
+ * One live detected task whose question is moot. `entities` are the ones it carries, sorted, and
+ * `reason` names the side that lost its records: `<entity> has no claim outside detected tasks`, or
+ * `every record carrying <entities> is archived`.
+ */
+export interface MootDetectedTask {
+  readonly path: string
+  readonly claim: string
+  readonly entities: ReadonlyArray<string>
+  readonly reason: string
+}
+
+/**
  * The records a caller's search ranks nearest `record`. The briefing drops `record` itself and
  * keeps the first {@link BRIEFING_NEIGHBOR_CAP}; the binder passes the head's lexical search.
  */
@@ -187,6 +208,9 @@ export interface Briefing {
   /** Dangling edges from active records, by path then href, capped at {@link BRIEFING_GROUP_CAP}. */
   readonly danglingEdges: ReadonlyArray<DanglingEdge>
   readonly danglingEdgesTotal: number
+  /** Live detected tasks whose question is moot, by path, capped at {@link BRIEFING_GROUP_CAP}. */
+  readonly mootDetectedTasks: ReadonlyArray<MootDetectedTask>
+  readonly mootDetectedTasksTotal: number
   /**
    * Inbox records this run should file: the store's `curator.placementQuota`, the charter's
    * placement priority and the fake model's cap.
@@ -232,6 +256,37 @@ const cut = (text: string, chars: number): string =>
 /** An instant as epoch milliseconds, `NaN` for a value that is not one (never after any cutoff). */
 const instant = (value: string): number => Date.parse(value)
 
+/** `a`, `a and b`, `a, b, and c`. */
+const joinAnd = (items: ReadonlyArray<string>): string =>
+  items.length <= 2
+    ? items.join(" and ")
+    : `${items.slice(0, -1).join(", ")}, and ${items.at(-1) ?? ""}`
+
+/**
+ * Why a detected task questioning `entities` is moot, or `null` while every entity it names still
+ * has a live claim (a live record outside detected tasks carrying it). `live` and `archived` count
+ * those claims per entity among active and archived records. When no entity has a live claim and
+ * each has an archived one, both sides' records are archived and the reason says so; otherwise it
+ * names the first entity with no live claim, preferring one no record ever carried.
+ */
+const mootReason = (
+  entities: ReadonlyArray<string>,
+  live: ReadonlyMap<string, number>,
+  archived: ReadonlyMap<string, number>
+): string | null => {
+  const unclaimed = entities.filter((entity) => (live.get(entity) ?? 0) === 0)
+  const [first] = unclaimed
+  if (first === undefined) return null
+  const wasClaimed = (entity: string): boolean => (archived.get(entity) ?? 0) > 0
+  if (unclaimed.length === entities.length && entities.every(wasClaimed)) {
+    return `every record carrying ${joinAnd(entities)} is archived`
+  }
+  const never = unclaimed.find((entity) => !wasClaimed(entity))
+  return never === undefined
+    ? `every record carrying ${first} is archived`
+    : `${never} has no claim outside detected tasks`
+}
+
 /**
  * Compute the briefing over a view. Pure over the view: the one field it cannot derive, the last
  * curate ref, is passed in by the caller that read git for it, and the neighbors of the recent
@@ -256,7 +311,13 @@ export const briefingFromView = (
   const supersededBy = new Map<string, Array<string>>()
   // original path -> its newest archived form.
   const archivedForm = new Map<string, string>()
+  // entity -> the active and the archived records claiming it, detected tasks never among them.
+  const liveClaims = new Map<string, number>()
+  const archivedClaims = new Map<string, number>()
+  const detectedTasks: Array<MemoryRecord> = []
   for (const record of view.records()) {
+    const claims = record.archived ? archivedClaims : liveClaims
+    for (const entity of claimedEntities(record)) claims.set(entity, (claims.get(entity) ?? 0) + 1)
     for (const link of record.links) {
       if (!link.href.startsWith("/")) continue
       const target = hrefToPath(link.href)
@@ -281,6 +342,7 @@ export const briefingFromView = (
       continue
     }
     active += 1
+    if (record.memoryType === "task" && isDetectedTaskPath(record.path)) detectedTasks.push(record)
     if (record.entities.length === 0 && !record.path.startsWith(ANCHORED_PREFIX)) {
       unlabeled.push({ path: record.path, claim: record.claim, memoryType: record.memoryType })
     }
@@ -367,6 +429,16 @@ export const briefingFromView = (
     })
     .sort((a, b) => byPath(a, b) || (a.href < b.href ? -1 : a.href > b.href ? 1 : 0))
   unlabeled.sort(byPath)
+
+  const mootDetectedTasks: Array<MootDetectedTask> = []
+  for (const task of detectedTasks) {
+    const entities = [...new Set(task.entities)].sort()
+    const reason = mootReason(entities, liveClaims, archivedClaims)
+    if (reason !== null)
+      mootDetectedTasks.push({ path: task.path, claim: task.claim, entities, reason })
+  }
+  mootDetectedTasks.sort(byPath)
+
   const placementQuota = options.placementQuota ?? PLACEMENT_QUOTA
   const inboxList = inboxWorkList(view, HEADLINE_CLAIM_TYPES, {
     writerBuckets: options.writerBuckets,
@@ -392,6 +464,8 @@ export const briefingFromView = (
     supersededActiveTotal: supersededActive.length,
     danglingEdges: danglingEdges.slice(0, BRIEFING_GROUP_CAP),
     danglingEdgesTotal: danglingEdges.length,
+    mootDetectedTasks: mootDetectedTasks.slice(0, BRIEFING_GROUP_CAP),
+    mootDetectedTasksTotal: mootDetectedTasks.length,
     placementQuota,
     inbox: inboxList.inbox,
     inboxTotal: inboxList.inboxTotal,

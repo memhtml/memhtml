@@ -5,6 +5,7 @@ import {
   DEFAULT_PLACEMENT_QUOTA,
   type HeadView,
   INBOX_DIR,
+  isDetectedTaskPath,
   type MemoryRecord,
   PEOPLE_DIR,
   slugify,
@@ -35,7 +36,8 @@ import {
  * matches, such as an importer's `*-import`, which name who wrote a record rather than what it is
  * about; none by default). An entity carried by more than {@link GENERIC_ENTITY_SHARE} of the active
  * records (never fewer than {@link GENERIC_ENTITY_FLOOR}) is the store's subject rather than a
- * record's, and places nothing: one person entity on 209 of 838 active records on 2026-09-30.
+ * record's, and places nothing: one person entity on 209 of 838 active records on 2026-09-30. A
+ * detected task's entities are left out of every entity count here ({@link claimedEntities}).
  *
  * Each candidate scores {@link NAMED_WEIGHT} per entity whose name is the home's directory name, 1
  * per tag that is, and 1 per record at the home carrying each of the record's entities. The best
@@ -184,6 +186,13 @@ const cut = (text: string, chars: number): string =>
 
 const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
 
+/**
+ * The entities a record claims, for counting: none for a detected task (`det-<digest>-…`), whose
+ * entities name the spellings its question is about rather than a subject it states anything of.
+ */
+export const claimedEntities = (record: MemoryRecord): ReadonlySet<string> =>
+  isDetectedTaskPath(record.path) ? new Set() : new Set(record.entities)
+
 /** True when a record is an inbox record the list quotes: not a task, a verdict, or a people record. */
 export const isPlaceable = (record: MemoryRecord, headlineTypes: ReadonlySet<string>): boolean =>
   !record.archived &&
@@ -221,7 +230,7 @@ export const inboxWorkList = (
   const genericCap = Math.max(GENERIC_ENTITY_FLOOR, GENERIC_ENTITY_SHARE * active.length)
   const carriers = new Map<string, number>()
   for (const record of active) {
-    for (const entity of new Set(record.entities)) {
+    for (const entity of claimedEntities(record)) {
       carriers.set(entity, (carriers.get(entity) ?? 0) + 1)
     }
   }
@@ -238,7 +247,7 @@ export const inboxWorkList = (
     if (NOT_HOMES.has(dir) || isBucketHome(name, buckets)) continue
     const home = homes.get(dir) ?? { records: 0, entities: new Map<string, number>() }
     home.records += 1
-    for (const entity of new Set(record.entities)) {
+    for (const entity of claimedEntities(record)) {
       home.entities.set(entity, (home.entities.get(entity) ?? 0) + 1)
     }
     homes.set(dir, home)

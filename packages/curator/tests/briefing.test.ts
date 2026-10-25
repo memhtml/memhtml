@@ -8,6 +8,7 @@ import {
   BRIEFING_NEIGHBOR_CAP,
   BRIEFING_RECENT_CAP,
   briefingFromView,
+  GENERIC_ENTITY_FLOOR,
   NEIGHBOR_CLAIM_CHARS,
   parseBriefing,
   renderBriefing
@@ -33,6 +34,14 @@ import {
  * - `briefingFromView`: drop `record.archived` from the superseded filter -> "names active records
  *   an active record supersedes" (the archived fold target is listed).
  * All four run 2026-09-28, each red on exactly its named case.
+ *
+ * The moot detected tasks, each run once the same way:
+ * - `briefingFromView`: the claim tally reads `record.entities` in place of `claimedEntities` ->
+ *   "names a live detected task one of whose entities ..." (the other detected task claims work:b).
+ * - `mootReason`: the both-archived branch dropped -> "names a task whose sides' records are all
+ *   archived ..."; its preference for a never-claimed entity dropped -> the same case.
+ * - `inboxWorkList`: `new Set(record.entities)` in place of `claimedEntities` in the generic
+ *   census, or in a home's tally -> "keeps detected tasks out of the entity counts ...".
  */
 
 /** A record whose frame key is computed from its claim, the way the head computes it. */
@@ -420,6 +429,145 @@ describe("the work lists", () => {
       }
     ])
     expect(briefing.danglingEdgesTotal).toBe(3)
+  })
+})
+
+describe("moot detected tasks", () => {
+  /** A live detected task at the inbox path its key names, questioning `entities`. */
+  const detected = (digest: string, entities: ReadonlyArray<string>, archived = false) =>
+    record(
+      `${archived ? "archive/2031/" : ""}areas/inbox/tasks/det-${digest}-confirm-one-subject.html`,
+      {
+        memoryType: "task",
+        claim: `confirm: are ${entities.join(" and ")} one subject?`,
+        entities: [...entities]
+      }
+    )
+
+  it("names a live detected task one of whose entities no record outside detected tasks carries", () => {
+    const view = viewOver([
+      detected("a1b2c3d4e5f6", ["work:b", "work:a"]),
+      // Another detected task carrying work:b is a question too, not a claim.
+      detected("0123456789ab", ["work:b", "work:c"]),
+      record("areas/inbox/a-fact.html", { entities: ["work:a"] }),
+      record("resources/acme-widget/c.html", { entities: ["work:c"] })
+    ])
+    const briefing = briefingFromView(view)
+    expect(briefing.mootDetectedTasks).toEqual([
+      {
+        path: "areas/inbox/tasks/det-0123456789ab-confirm-one-subject.html",
+        claim: "confirm: are work:b and work:c one subject?",
+        entities: ["work:b", "work:c"],
+        reason: "work:b has no claim outside detected tasks"
+      },
+      {
+        path: "areas/inbox/tasks/det-a1b2c3d4e5f6-confirm-one-subject.html",
+        claim: "confirm: are work:b and work:a one subject?",
+        entities: ["work:a", "work:b"],
+        reason: "work:b has no claim outside detected tasks"
+      }
+    ])
+    expect(briefing.mootDetectedTasksTotal).toBe(2)
+  })
+
+  it("names a task whose sides' records are all archived, and gives each side its own reason", () => {
+    const view = viewOver([
+      // Both sides were archived: the question is about records that left the corpus.
+      detected("aaaaaaaaaaaa", ["work:a", "work:b"]),
+      record("archive/2031/areas/inbox/a.html", { entities: ["work:a"] }),
+      record("archive/2031/areas/inbox/b.html", { entities: ["work:b"] }),
+      // One side archived, the other live: the archived side has no live claim.
+      detected("bbbbbbbbbbbb", ["work:c", "work:d"]),
+      record("archive/2031/areas/inbox/c.html", { entities: ["work:c"] }),
+      record("areas/inbox/d.html", { entities: ["work:d"] }),
+      // One side never claimed at all, the other archived: the side with nothing is named.
+      detected("cccccccccccc", ["work:e", "work:f"]),
+      record("archive/2031/areas/inbox/f.html", { entities: ["work:f"] })
+    ])
+    expect(
+      briefingFromView(view).mootDetectedTasks.map(({ path, reason }) => [path, reason])
+    ).toEqual([
+      [
+        "areas/inbox/tasks/det-aaaaaaaaaaaa-confirm-one-subject.html",
+        "every record carrying work:a and work:b is archived"
+      ],
+      [
+        "areas/inbox/tasks/det-bbbbbbbbbbbb-confirm-one-subject.html",
+        "every record carrying work:c is archived"
+      ],
+      [
+        "areas/inbox/tasks/det-cccccccccccc-confirm-one-subject.html",
+        "work:e has no claim outside detected tasks"
+      ]
+    ])
+  })
+
+  it("leaves a question whose sides both have live claims, a closed task, and a hand-opened task", () => {
+    const view = viewOver([
+      // Both sides claimed by live records, one of them a task a person opened: still a question.
+      detected("dddddddddddd", ["work:a", "work:b"]),
+      record("areas/inbox/a.html", { entities: ["work:a"] }),
+      record("areas/inbox/tasks/t-follow-up.html", { memoryType: "task", entities: ["work:b"] }),
+      // Already archived, so already closed.
+      detected("eeeeeeeeeeee", ["work:gone"], true),
+      // A task a person opened claims what it names, so it is never moot, whatever else carries it.
+      record("areas/inbox/tasks/rename-the-widget.html", {
+        memoryType: "task",
+        entities: ["work:orphan"]
+      }),
+      // A detected task naming no entity asks nothing this rule can judge.
+      detected("ffffffffffff", []),
+      // A control beside them, so the one entry is not an empty list from an empty rule. The
+      // archived detected task carrying work:gone is a question too, so it is no archived claim.
+      detected("999999999999", ["work:gone"])
+    ])
+    const briefing = briefingFromView(view)
+    expect(briefing.mootDetectedTasks.map(({ path, reason }) => [path, reason])).toEqual([
+      [
+        "areas/inbox/tasks/det-999999999999-confirm-one-subject.html",
+        "work:gone has no claim outside detected tasks"
+      ]
+    ])
+    expect(briefing.mootDetectedTasksTotal).toBe(1)
+  })
+
+  it("caps the list and reports the uncapped total", () => {
+    const records = Array.from({ length: BRIEFING_GROUP_CAP + 3 }, (_, at) =>
+      detected(at.toString(16).padStart(12, "0"), [`work:lone-${String(at)}`])
+    )
+    const briefing = briefingFromView(viewOver(records))
+    expect(briefing.mootDetectedTasks).toHaveLength(BRIEFING_GROUP_CAP)
+    expect(briefing.mootDetectedTasksTotal).toBe(BRIEFING_GROUP_CAP + 3)
+  })
+
+  it("keeps detected tasks out of the entity counts the inbox list homes records by", () => {
+    const entity = "project:acme-widget"
+    const records = [
+      record("areas/inbox/a-fact.html", { entities: [entity] }),
+      record("resources/acme-widget/b.html", { entities: [entity] }),
+      record("resources/acme-widget/c.html", { entities: [entity] }),
+      // Enough detected questions naming the entity to lift it past the generic floor if counted.
+      ...Array.from({ length: GENERIC_ENTITY_FLOOR }, (_, at) =>
+        detected(at.toString(16).padStart(12, "0"), [entity, `project:acme-widgets-${String(at)}`])
+      )
+    ]
+    const named = briefingFromView(viewOver(records)).inbox[0]
+    expect(named?.path).toBe("areas/inbox/a-fact.html")
+    expect(named?.home).toMatchObject({ dir: "resources/acme-widget", named: [entity] })
+
+    // A detected task filed under a home is not one of the home's carriers either.
+    const shared = briefingFromView(
+      viewOver([
+        record("areas/inbox/d-fact.html", { entities: ["project:acme-gadget"] }),
+        record("areas/gadgets/e.html", { entities: ["project:acme-gadget"] }),
+        record("areas/gadgets/det-abcdefabcdef-confirm-one-subject.html", {
+          memoryType: "task",
+          entities: ["project:acme-gadget", "project:acme-gadgets"]
+        })
+      ])
+    ).inbox[0]
+    expect(shared?.home).toBeNull()
+    expect(shared?.alternative).toEqual({ dir: "areas/gadgets", score: 1 })
   })
 })
 

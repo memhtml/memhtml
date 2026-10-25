@@ -236,3 +236,33 @@ export const archiveYearOf = (path: string): number | undefined => {
   const match = /^archive\/(\d{4,})\//.exec(normalizePath(path))
   return match?.[1] === undefined ? undefined : Number(match[1])
 }
+
+/**
+ * The filename prefix that makes a detected task recognizable from its path alone: a task a detector
+ * minted at `det-<digest>-<slug>.html`, with no `author` column and no commit message to read.
+ * `memhtml task list --detected` filters on it and the curator's briefing reads it, so both agree
+ * about what a detected path is.
+ */
+export const DETECTION_PREFIX = "det-"
+
+/**
+ * Hex characters of the digest carried in a detected task's path.
+ *
+ * Twelve, which is git's own abbreviated-sha width. It leaves 48 bits against a queue whose size a cap
+ * holds in the tens, and it costs 17 characters of the 80-character slug budget rather than 68.
+ */
+export const DETECTION_DIGEST_CHARS = 12
+
+const DETECTION_KEY = new RegExp(
+  `^(${DETECTION_PREFIX}[0-9a-f]{${String(DETECTION_DIGEST_CHARS)}})-`
+)
+
+/**
+ * The key a detected task's path carries, or `undefined` when the path is not one. The filename is
+ * read, not the directory, so an archived detected task under `archive/<YYYY>/` keeps its key.
+ */
+export const detectionKeyOf = (path: string): string | undefined =>
+  DETECTION_KEY.exec(path.slice(path.lastIndexOf("/") + 1))?.[1]
+
+/** True when a path, live or archived, is a detected task's. */
+export const isDetectedTaskPath = (path: string): boolean => detectionKeyOf(path) !== undefined

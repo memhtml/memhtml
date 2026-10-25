@@ -115,6 +115,18 @@ describe("the charter", () => {
     expect(text).toContain("never write a memory about this run")
   })
 
+  it("archives the briefing's moot detected tasks and leaves every other task alone", async () => {
+    const text = await Effect.runPromise(CURATOR_CHARTER)
+    expect(text).toContain("`mootDetectedTasks` holds")
+    const rules = text.split(/^\d+\. /m).slice(1)
+    // The task protection names its one exception, and the rule that makes it does the archive.
+    const protection = rules.find((rule) => rule.includes("resources/people/"))
+    expect(protection).toContain("`mootDetectedTasks`")
+    const resolution = rules.find((rule) => rule.startsWith("Entity resolution"))
+    expect(resolution).toContain("`archive` every task in the briefing's `mootDetectedTasks` list")
+    expect(resolution).toContain("no other task")
+  })
+
   it("gives placement a quota over the inbox list and keeps it behind the protections", async () => {
     const text = await strictCharter()
     expect(text).toContain("`inbox` holds the active records under `areas/inbox/`")

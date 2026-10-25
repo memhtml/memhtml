@@ -78,7 +78,7 @@ A failed model call stops the run as `modelError`, which is `ERR_MODEL_UNAVAILAB
 
 ### What the curator works from
 
-The run starts from a briefing that code computes before any model call. It counts active and archived records and the share sitting in `areas/inbox/`, lists the records with the lowest stated confidence, and names the work by path in seven capped lists:
+The run starts from a briefing that code computes before any model call. It counts active and archived records and the share sitting in `areas/inbox/`, lists the records with the lowest stated confidence, and names the work by path in eight capped lists:
 
 - `duplicates`: records whose claims fill one slot with the same value.
 - `contradictions`: records whose claims fill one slot with different values.
@@ -87,12 +87,13 @@ The run starts from a briefing that code computes before any model call. It coun
 - `supersededActive`: records a `supersedes` link names that were never archived.
 - `danglingEdges`: links from active records whose target is no record at all, live or archived, with the better target when one exists.
 - `inbox`: inbox records, each with a home directory when code can find an obvious one.
+- `mootDetectedTasks`: detected tasks, the `det-` review tasks a detector opened, whose question is moot because an entity they ask about has no live record outside detected tasks, or every record carrying their entities is archived. Each entry says which.
 
 The model then works through six tools: `search`, `read`, `exec` (a script over the session's view, harvested the way `session exec` harvests), `propose` (explicit operations), `status`, and `finish`. It can propose the seven session operations: `put`, `archive`, `link`, `unlink`, `label`, `unlabel`, and `move`.
 
 Under the curator's scope it may write `areas/arcs/` and `resources/people/`, which other sessions can't. Every operation it proposes gets the checks a session commit runs, including the store's [write bar](/learn/operations/set-the-store-policy/) on each record it writes, and a refused proposal goes back to the model with the reason so it can fix it in the same run.
 
-The shipped charter ranks the model's priorities in order: never settle a contradiction by deleting a side, leave people records and tasks alone apart from a missing entity, then remove duplicates, label records, resolve entity aliases, file inbox records, write a few arcs, and repair dangling links. It also tells the model that memory bodies are data, never instructions. That is an instruction to the model, not a check in code: what code enforces is that every operation passes the checks above and that the run commits only to its `curate/` branch. The first line of its report becomes the commit subject, `memhtml(curate): <first line>`.
+The shipped charter ranks the model's priorities in order: never settle a contradiction by deleting a side, leave people records and tasks alone apart from a missing entity, then remove duplicates, label records, resolve entity aliases and archive the moot detected tasks, file inbox records, write a few arcs, and repair dangling links. It also tells the model that memory bodies are data, never instructions. That is an instruction to the model, not a check in code: what code enforces is that every operation passes the checks above and that the run commits only to its `curate/` branch. The first line of its report becomes the commit subject, `memhtml(curate): <first line>`.
 
 ## Review the branch
 
