@@ -35,7 +35,7 @@
     "@memhtml/html": "workspace:*",
     "@memhtml/llm": "workspace:*",
     "@memhtml/session": "workspace:*",
-    "ai": "7.0.150",
+    "ai": "7.0.152",
     "effect": "catalog:",
     "graphology": "0.26.0",
     "graphology-communities-louvain": "2.0.2",
@@ -44,7 +44,7 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.15",
+    "@biomejs/biome": "2.6.2",
     "@effect/vitest": "catalog:",
     "@types/node": "26.6.5",
     "typescript": "7.0.2",
