@@ -1,4 +1,4 @@
-import { codeFor } from "@memhtml/cli"
+import { codeFor, MarkupInProse } from "@memhtml/cli"
 import {
   DirtyTree,
   DuplicateContent,
@@ -64,7 +64,8 @@ const EVERY_FAILURE = [
   StoreConfigInvalid.make({
     path: "/srv/store/memhtml.config.json",
     reason: "Unexpected key at writeBar.requireAnchors"
-  })
+  }),
+  new MarkupInProse({ line: 1, tag: "<p>" })
 ] as const
 
 /** The tool names an agent can actually call, which is the vocabulary a suggestion may use. */
@@ -136,6 +137,17 @@ describe("the wire failure a tool call produces", () => {
         InvalidMemory.make({ reason: "exactly one of body or article_html is required" })
       ).message
     ).toContain("exactly one of body or article_html is required")
+
+    // The tag, the body's line it sits on, and the parameter that takes markup instead.
+    const markup = toToolFailure(new MarkupInProse({ line: 3, tag: "&lt;ul&gt;" }))
+    expect(markup.code).toBe("ERR_INVALID_FLAG")
+    expect(markup.message).toContain("`&lt;ul&gt;` on its line 3")
+    expect(markup.message).toContain("article_html")
+    expect(markup.suggestions[0]).toContain("article_html")
+    // A claim that ran on into a fence: the reason says the first sentence never ended.
+    const unended = toToolFailure(new MarkupInProse({ line: 4, tag: "<ul>", unended: true }))
+    expect(unended.message).toContain("first sentence never ends before the tag")
+    expect(markup.message).not.toContain("never ends")
   })
 
   it("leaks no driver message, SQL, or git argv into the wire text", () => {

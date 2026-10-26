@@ -14,6 +14,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest"
 import { COMMIT_DEADLINE_VAR, headSocketPath } from "../src/head-protocol.js"
 import { type HeadServer, holdingPermit, startHeadServer } from "../src/head-server.js"
 import { run } from "../src/run.js"
+import { type LogEntry, recordingLogger } from "./harness.js"
 import { writeStoreConfig } from "./strict-store.js"
 
 /**
@@ -62,6 +63,8 @@ import { writeStoreConfig } from "./strict-store.js"
  *   early round dropped" (`dropped` is empty).
  * - `v2.ts` `commitOverHead`: commit a log with no ops instead of answering `refused` -> "a commit
  *   of a log with no ops ... touches nothing" (main gains an empty `memhtml(session)` commit).
+ * - `head-server.ts` `commitBase`: ask through `git.run` and catch the failure as "no" -> "judges a
+ *   base off the ref's history from a version it loads" (`git merge-base exited 1` at Error).
  * - `v2.ts` `commitOverHead` (2026-10-26): the log committed without the repoints it lacks appended
  *   -> "completes the new edge when the log is committed after a rebase here" and "completes a log
  *   an older writer left with the archive alone" (both refused, naming the note that still cites
@@ -172,14 +175,23 @@ const corpus = async (): Promise<FixtureRepo> => {
 /** A server in its own scope, closed after the test; the poll is off unless a case turns it on. */
 const serve = async (
   root: string,
-  options: { readonly commitQueueWaitMs?: number } = {}
+  options: {
+    readonly commitQueueWaitMs?: number
+    /** Where the server's log entries go instead of stderr, when given. */
+    readonly logs?: Array<LogEntry>
+  } = {}
 ): Promise<HeadServer> => {
   const scope = Scope.makeUnsafe()
   scopes.push(scope)
+  const started = startHeadServer({
+    root,
+    pollMs: 0,
+    commitQueueWaitMs: options.commitQueueWaitMs
+  }).pipe(Scope.provide(scope))
   return run_(
-    startHeadServer({ root, pollMs: 0, commitQueueWaitMs: options.commitQueueWaitMs }).pipe(
-      Scope.provide(scope)
-    )
+    options.logs === undefined
+      ? started
+      : started.pipe(Effect.provide(recordingLogger(options.logs)))
   )
 }
 
@@ -480,7 +492,8 @@ describe("session commit and rebase through the head server", () => {
       await run_(repo.git.run(["branch", "-f", "main", "rewritten"]))
       await run_(repo.git.run(["checkout", "-q", "main"]))
     }
-    await serve(served.root)
+    const logs: Array<LogEntry> = []
+    await serve(served.root, { logs })
     const viaServer = await commitCli(served.root, "off")
     const viaLocal = await commitCli(local.root, "off", { local: true })
     expect(viaServer.exitCode).toBe(0)
@@ -488,6 +501,9 @@ describe("session commit and rebase through the head server", () => {
     expect(data).toMatchObject({ kind: "rebase-needed", via: "server" })
     expect(data.server).toMatchObject({ used: true, base: "loaded" })
     expect(printed(served.root, data)).toBe(printed(local.root, dataOf(viaLocal.body)))
+    // `merge-base --is-ancestor` exits 1 for a base off the history: the answer, not an error.
+    expect(logs.filter((entry) => entry.level === "Error")).toEqual([])
+    expect(logs.some((entry) => entry.message.includes("'s history, for a commit"))).toBe(true)
   })
 })
 

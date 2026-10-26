@@ -275,15 +275,7 @@ const lastCurateRef = (
 
 /** The branch `HEAD` points at as a full ref, or `null` when detached. Shared with `curate collapse`. */
 export const headRefOf = (root: string): Effect.Effect<string | null, GitFailure> =>
-  makeGit(root)
-    .run(["symbolic-ref", "-q", "HEAD"])
-    .pipe(
-      Effect.map((out) => (out.trim() === "" ? null : out.trim())),
-      // `-q` exits 1 for a detached HEAD; that is "no branch", not a failure.
-      Effect.catchTag("GitFailure", (failure) =>
-        failure.exitCode === 1 ? Effect.succeed(null) : Effect.fail(failure)
-      )
-    )
+  makeGit(root).headRef()
 
 /**
  * A record as `read` shows it: every parsed field plus the bytes, minus the index-only ones. Shared
