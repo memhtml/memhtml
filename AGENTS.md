@@ -251,7 +251,7 @@ A disclosure pack under a character budget: arcs and memories folded separately.
 
 Supersede a memory: write the new file and archive the target in ONE commit.
 
-- `<target>` — The memory being corrected.
+- `<target>` — The memory being corrected. A path under archive/, or one that is not a usable memory path, is refused (ERR_INVALID_MEMORY) and nothing moves.
 
 - `--title` (string) — The new memory's title. _(**required**)_
 - `--claim` (string) — The corrected claim. Exactly one of --claim or --article-html.
@@ -291,7 +291,7 @@ Follow a possibly-moved path forward to the memory that carries the fact now.
 
 Soft-evict: `git mv` into archive/<YYYY>/ with the archive stamps. Never a delete.
 
-- `<path>` — The memory to archive.
+- `<path>` — The memory to archive. A path under archive/, or one that is not a usable memory path, is refused (ERR_INVALID_MEMORY) and nothing moves.
 
 - `--reason` (string) — Why it was evicted. _(**required**)_
 
@@ -346,7 +346,7 @@ Open a task: a `task` memory in projects/<ws>/tasks/ or areas/inbox/tasks/.
 Move a task's status. `done` stamps AND archives it, in one commit.
 
 - `<path>` — The task file.
-- `<status>` — One of: todo, doing, blocked, done.
+- `<status>` — One of: todo, doing, blocked, done. A task under archive/, or a path that is not a usable memory path, is refused (ERR_INVALID_MEMORY) unless the task already has that status, and nothing is written.
 
 - `--reason` (string) — Why it closed. Recorded on the archive commit when the status is `done`.
 

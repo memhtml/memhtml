@@ -1004,6 +1004,56 @@ describe("an archive whose ref gained an edge to the archived path before the co
   }, 60_000)
 })
 
+describe("a log that archives a record already under archive/", () => {
+  it("is refused by name at commit, with no repoint appended to the log", async () => {
+    const repo = await corpus()
+    const archived = archivePathFor("resources/acme-widget/b.html", 2031)
+    const html = renderTemplate({
+      title: "Widget batch size",
+      claim: "The acme widget ships in batches of twelve.",
+      memoryType: "semantic",
+      at: AT,
+      entities: ["project:acme-widget"]
+    })
+    await commitFiles(
+      repo,
+      [
+        { path: archived, html },
+        {
+          path: "resources/acme-widget/a.html",
+          html: note(
+            "Widget batch size, revised",
+            "The acme widget ships in batches of twenty.",
+            "supersedes",
+            `/${archived}`
+          )
+        }
+      ],
+      "a record at its archive slot and the successor citing it there"
+    )
+    await start(repo.root, "again")
+    // A log an older writer left: the archive alone, of a record that is already archived.
+    const file = sessionStateFile(repo.root, "again")
+    const state = JSON.parse(await readFile(file, "utf8")) as { ops: Array<unknown> }
+    const ops = [{ kind: "archive", path: archived, to: archivePathFor(archived, 2032), html }]
+    state.ops = ops
+    await writeFile(file, JSON.stringify(state), "utf8")
+    const refused = dataOf((await commitCli(repo.root, "again", { local: true })).body)
+    expect(refused, JSON.stringify(refused)).toMatchObject({
+      kind: "refused",
+      violations: [
+        {
+          kind: "format",
+          path: archived,
+          reasons: expect.arrayContaining([`archive source: already archived at ${archived}`])
+        }
+      ]
+    })
+    // The successor's supersedes edge is not repointed under archive/2032/archive/.
+    expect((await logOf(repo.root, "again")).ops).toEqual(ops)
+  }, 60_000)
+})
+
 describe("a --drop-refused round that drops an archive or a move", () => {
   const harbor = "areas/inbox/harbor.html"
   const glacier = "areas/inbox/glacier.html"

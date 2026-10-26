@@ -31,7 +31,7 @@ import {
  * `memhtml doctor`: the corpus's own health check, and `--fix` for the two findings a repair can settle
  * without a judgement call.
  *
- * Ten checks, and each one is a claim the design makes about the corpus rather than a lint:
+ * Eleven checks, and each one is a claim the design makes about the corpus rather than a lint:
  *
  * 1. **Dangling `<link>` hrefs**: an authored edge pointing at a path the tree does not hold. Design
  *    §2.3 has no foreign key on `edges` deliberately (a `<link>` may name a file the indexer has not
@@ -74,25 +74,36 @@ import {
  *    make `healthy: false` the normal state of a supported setup. A store with zero vectors and an
  *    embedder bound is the incident's shape one step earlier (a `rebuild --no-embed` nobody
  *    backfilled), and it is low.
+ * 11. **Nested archive paths**: a file under `archive/<YYYY>/archive/`, which is a record archived a
+ *    second time. `@memhtml/store` refuses a path under `archive/` as an archive source, and so does a
+ *    session's `archive` op, so no write makes one, but a tree written before that refusal, or moved by
+ *    hand, can hold one. `originalPathFor` strips a single `archive/<YYYY>/` prefix, so such a file maps
+ *    back to an archive path rather than to a live one.
  *
- * **`--fix` repairs exactly two of the ten, and the repair logic is `./repair.ts`, not re-ported per
+ * **`--fix` repairs exactly two of the eleven, and the repair logic is `./repair.ts`, not re-ported per
  * call site.** `archivedFormOf` decides whether a dangling target moved to the archive or is genuinely
  * gone, and `applyHeadEdits`/`link`/`unlink`/`meta` are the byte-splice editors that change one head
  * line without touching the article. A parse-then-serialize round trip drops a `<pre>` newline per
  * write, so a "repair" through the serializer would move the content hash of every file it touched.
  *
- * The other eight report and do not repair. An inbox memory or task needs a human or an agent to decide
+ * The other nine report and do not repair. An inbox memory or task needs a human or an agent to decide
  * where it belongs, a vocabulary warning needs the author's intent, and a stale index needs
  * `memhtml index update`, which doctor names in its own suggestions rather than running behind the
  * operator's back. An overdue task needs the work done or the deadline moved, and a stale blocker
  * needs someone to decide whether the blocked task is actually ready. An untyped entity needs the
  * producer that wrote it to name a type, which is a vocabulary decision no repair can make. Low vector
  * coverage needs embedding calls, which cost money and time an operator chooses to spend; the report
- * names the two commands that spend them (`vectorCoverageRemedy`) and runs neither.
+ * names the two commands that spend them (`vectorCoverageRemedy`) and runs neither. A nested archive
+ * path needs a move back to `archive/<YYYY>/<original path>`, which a later archive of the same path
+ * may already hold, and every link that names it re-pointed, so doctor names the path and moves
+ * nothing.
  */
 
 /** How deep the inbox may get before doctor calls it a finding. */
 export const INBOX_WARN_DEPTH = 20
+
+/** A path archived inside the archive, which is check 11's finding. */
+const NESTED_ARCHIVE_PATH = /^archive\/\d{4}\/archive\//
 
 /**
  * How many unplaced tasks may sit in `areas/inbox/tasks/` before doctor calls it a finding.
@@ -179,6 +190,8 @@ export interface DoctorReport {
   readonly warnings: ReadonlyArray<WarningFinding>
   /** Files the index holds that failed to parse when doctor re-read them. */
   readonly unparseable: ReadonlyArray<string>
+  /** Paths under `archive/<YYYY>/archive/`: records archived a second time, sorted. */
+  readonly nestedArchivePaths: ReadonlyArray<string>
   readonly indexFresh: boolean
   readonly indexHeadSha: string | null
   readonly headSha: string | null
@@ -581,9 +594,11 @@ export const doctor = (options: { readonly fix: boolean }) =>
       )
       .pipe(Effect.orElseSucceed(() => undefined))
 
-    const known = new Set(
-      (yield* allPaths(db).pipe(Effect.orElseSucceed(() => []))).map((row) => row.path)
+    const indexed = (yield* allPaths(db).pipe(Effect.orElseSucceed(() => []))).map(
+      (row) => row.path
     )
+    const known = new Set(indexed)
+    const nestedArchivePaths = indexed.filter((path) => NESTED_ARCHIVE_PATH.test(path))
     const year = yield* currentYear
     const edges = yield* danglingEdges(db).pipe(Effect.orElseSucceed(() => []))
     const dangling: ReadonlyArray<DanglingFinding> = edges.map((edge) => {
@@ -654,6 +669,11 @@ export const doctor = (options: { readonly fix: boolean }) =>
         taskDepth <= INBOX_TASK_WARN_DEPTH &&
         warnings.length === 0 &&
         unparseable.length === 0 &&
+        /**
+         * A nested archive path is a defect in the tree rather than a fact about the work: its path
+         * maps back to an archive path rather than to a live one.
+         */
+        nestedArchivePaths.length === 0 &&
         indexFresh &&
         embedModelMatches &&
         /**
@@ -674,6 +694,7 @@ export const doctor = (options: { readonly fix: boolean }) =>
       untypedEntityTotal: untyped.total,
       warnings,
       unparseable,
+      nestedArchivePaths,
       indexFresh,
       indexHeadSha: state?.head_sha ?? null,
       headSha,

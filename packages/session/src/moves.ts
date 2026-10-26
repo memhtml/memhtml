@@ -1,4 +1,10 @@
-import { type HeadView, normalizePath, type OverlayOp, pathToHref } from "@memhtml/contracts"
+import {
+  activeRecordPathViolation,
+  type HeadView,
+  normalizePath,
+  type OverlayOp,
+  pathToHref
+} from "@memhtml/contracts"
 import { addLink, readLinks, removeLink } from "@memhtml/html"
 
 import { BATCH_CAP, type CommitScope, isReservedPath, type Violation } from "./validate.js"
@@ -21,11 +27,14 @@ import { BATCH_CAP, type CommitScope, isReservedPath, type Violation } from "./v
  * alone (its archived copy keeps the edge as history, which `validateOps` allows), an edge the batch
  * already unlinks (at the holder's path, or at the path the batch moved it to) is left to the batch,
  * and a move's source the batch puts a new record at needs nothing, nor does an archive's source
- * the batch puts at after the archive (a claim edit, refused whatever the edges). A holder `scope`
- * may not write ({@link isReservedPath}: an arc or a people record under `session`) is left alone
- * too, its edge the curator's to repoint; `validateOps` lets an archive leave it and names it on a
- * move. Edges a batch's own puts or `link`s aim at the old path are not the view's to know;
- * `validateOps` names them.
+ * the batch puts at after the archive (a claim edit, refused whatever the edges). Nor does a source
+ * under `archive/`, or at a path that is not a usable memory path ({@link activeRecordPathViolation}):
+ * `validateOps` refuses that archive or move, and a pair for it would aim a live edge under
+ * `archive/<YYYY>/archive/`, or out of the archive, at a path no commit writes. A holder `scope` may
+ * not write ({@link isReservedPath}: an arc or a people record under `session`) is left alone too,
+ * its edge the curator's to repoint; `validateOps` lets an archive leave it and names it on a move.
+ * Edges a batch's own puts or `link`s aim at the old path are not the view's to know; `validateOps`
+ * names them.
  */
 export const withRepoints = (
   view: HeadView,
@@ -125,6 +134,9 @@ const repointsByVacate = (
   ops.forEach((op, index) => {
     if (op.kind !== "move" && op.kind !== "archive") return
     const from = normalizePath(op.path)
+    // A source that is already archived, or not a usable memory path, is refused for itself, so its
+    // edges have nowhere to go.
+    if (activeRecordPathViolation(from) !== undefined) return
     // A put at a move's source is a new record there, which the edges may name. A put at an
     // archive's source after the archive is a claim edit, refused whatever the edges; one before it
     // is the record the archive takes, so its edges follow it to the slot.

@@ -30,6 +30,8 @@ import { FIXTURE_ENTITY, mapHead, memory, recordFrom, STRICT_BAR } from "./helpe
  *   whose article is not the source's".
  * - archive slot twice: drop the `archiveDestinations.has(...)` reason -> "archives over an earlier
  *   archived copy of its own path, and writes one slot once per batch" (the doubled archive passes).
+ * - archive source path: drop the `activeRecordPathViolation(op.path)` reason -> "refuses an archive
+ *   op whose source is under archive/, even one put earlier in the batch" (the pair passes).
  * - link target: drop the `view.get(target) === undefined` check -> "a link must point at a record
  *   in the head or in the batch" (the missing target passes).
  * - unlink edge: drop the `!edgesOf(op.path).has(...)` reason -> "an unlink must name an edge the
@@ -369,6 +371,18 @@ describe("validateOps", () => {
         path: "areas/inbox/alpha.html",
         reasons: ["rel `bogus` is outside the edge vocabulary", "href is not root-relative"]
       }
+    ])
+  })
+
+  it("refuses an archive op whose source is under archive/, even one put earlier in the batch", () => {
+    // A put under archive/ is a record the index reads as archived, and the batch's own put makes the
+    // active-record check find it, so the source's path is judged on its own. Archived again, it would
+    // land under archive/<YYYY>/archive/.
+    const html = memory("A widget note", "The widget pool holds eight.")
+    const path = "archive/2031/areas/inbox/a-widget-note.html"
+    const archive: OverlayOp = { kind: "archive", path, to: `archive/2031/${path}`, html }
+    expect(validateOps(mapHead("0".repeat(40), []), [put(path, html), archive])).toEqual([
+      { kind: "format", path, reasons: [`archive source: already archived at ${path}`] }
     ])
   })
 
