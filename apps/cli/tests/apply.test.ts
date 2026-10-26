@@ -1063,6 +1063,19 @@ describe("a prose body holding HTML block markup", () => {
     })
     // A tag on the claim's own first line is prose the writer typed, and gets the usual reason.
     expect(markupInProse("Use <ul> for lists:\n\nthen more.")?.unended).toBeUndefined()
+    // A claim that ran past a blank line with no fence: the reason names the run-on and still
+    // offers backticks, and says nothing of code the body does not hold.
+    const prose = decodeApply(
+      line({ title: "T", body: "No end here\n\nThen the list uses <ul> and <li>." })
+    )
+    expect(prose.ok).toBe(false)
+    if (prose.ok) return
+    expect(prose.failure.error).toContain("`<ul>` on its line 3")
+    expect(prose.failure.error).toContain("first sentence never ends before the tag")
+    expect(prose.failure.error).toContain("backticks that open and close on its line")
+    expect(prose.failure.error).not.toContain("before the code")
+    // An emoji's variation selector does not make the tag after it a word.
+    expect(markupInProse("We love it ❤️<p>Two.")).toMatchObject({ line: 1, tag: "<p>" })
 
     const decoded = decodeApply(
       line({ title: "T", body: `The template renders this markup:\n\n${fence}` })

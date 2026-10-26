@@ -79,6 +79,20 @@ describe("blockTagInRun", () => {
       expect(blockTagInRun(prose), prose).toBeUndefined()
     }
     expect(blockTagInRun("Then «<p>» quoted.")?.tag).toBe("<p>")
+    // A mark counts only after a letter, digit, or `_`, and an emoji's selector or keycap mark
+    // never does, so the tag after it is a tag, as it is after an emoji with no mark.
+    for (const prose of [
+      "Love ❤️<p>next",
+      "Done ✔️<li>",
+      "Watch ⚠️<ul>",
+      "Press 1️⃣<p>",
+      "Thumbs 👍🏽<p>",
+      "Smile 😀<p>"
+    ]) {
+      expect(blockTagInRun(prose), prose).toBeDefined()
+    }
+    expect(blockTagInRun("Love ❤️<p>next")?.tag).toBe("<p>")
+    expect(blockTagInRun("Done ✔️<li>")?.tag).toBe("<li>")
   })
 
   it("takes a slash after an opening name only where it ends the tag", () => {
@@ -284,6 +298,13 @@ describe("blockTagInArticle", () => {
     expect(
       blockTagInArticle(withArticle("<p><mark>Run <code>make</code>, then &lt;ul&gt;.</mark></p>"))
     ).toEqual({ element: "p", tag: "<ul>" })
+  })
+
+  it("reads an escaped tag after an emoji with a variation selector as a tag", () => {
+    expect(blockTagInArticle(withArticle("<p><mark>Love ❤️&lt;p&gt; next.</mark></p>"))).toEqual({
+      element: "p",
+      tag: "<p>"
+    })
   })
 
   it("reads a fence that shares its paragraph with prose as that paragraph's text", () => {

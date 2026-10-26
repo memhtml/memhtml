@@ -36,11 +36,14 @@ import {
 const BLOCK_NAME = /(?:p|ul|ol|li|dl|dt|dd|figure|table|article|section|h[1-6])/y
 
 /**
- * Text that ends in a letter, a mark, a digit, or `_`, in any script: what may not sit right
- * before an opening tag, so `x<p`, `List<li>`, and `é<p>` are not tags. Read over the two code
- * units before the tag, so a letter outside the Basic Multilingual Plane counts too.
+ * Text that ends in a letter, a digit, or `_`, in any script, with up to three combining marks
+ * after it: what may not sit right before an opening tag, so `x<p`, `List<li>`, `é<p>`, and an
+ * `e` with a combining accent before `<p>` are not tags. A mark counts only after such a base,
+ * and the emoji selectors (U+FE0E, U+FE0F) and the keycap mark (U+20E3) never count, so a tag
+ * after `❤️` or `1️⃣` is still a tag. Read over the eight code units before the tag, enough for a
+ * base outside the Basic Multilingual Plane and its marks.
  */
-const ENDS_IN_WORD = /[\p{L}\p{M}\p{N}_]$/u
+const ENDS_IN_WORD = /[\p{L}\p{N}_](?:(?![\uFE0E\uFE0F\u20E3])\p{M}){0,3}$/u
 
 /** Whitespace, which may follow a tag's name and open its attributes. */
 const WHITESPACE = /\s/
@@ -68,7 +71,7 @@ const tagEnd = (line: string, at: number, open: number): number | undefined => {
   if (name === null) return undefined
   cursor += name[0].length
   if (closing) return closeAfterSpaces(line, cursor)
-  if (ENDS_IN_WORD.test(line.slice(Math.max(0, at - 2), at))) return undefined
+  if (ENDS_IN_WORD.test(line.slice(Math.max(0, at - 8), at))) return undefined
   const next = line[cursor]
   if (next === ">") return cursor + 1
   if (line.startsWith("&gt;", cursor)) return cursor + 4

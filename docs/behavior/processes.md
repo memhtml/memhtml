@@ -229,7 +229,7 @@ A session is a base commit plus a log of overlay ops at `.memhtml/sessions/<id>.
 
 ### Related
 
-- `packages/session/src/validate.ts:181` (`validateOps`)
+- `packages/session/src/validate.ts:206` (`validateOps`)
 - `packages/head/src/overlay.ts:147` (`withOverlay`)
 - `apps/cli/src/head-protocol.ts:273` (`NeighborsRequest`)
 - `apps/cli/src/head-cache.ts:177` (`loadVersion`)

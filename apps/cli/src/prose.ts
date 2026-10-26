@@ -182,7 +182,7 @@ export const markupInProseReason = (refusal: {
 }): string => {
   const found = `\`body\` holds the HTML block tag \`${refusal.tag}\` on its line ${String(refusal.line)}, outside code: \`body\` is prose and is stored as escaped text, so the tag would reach the claim and the paragraphs as literal characters.`
   return refusal.unended === true
-    ? `${found} The body's first sentence never ends before the tag: the claim runs to the first . ! or ? followed by a space or a line break, so it takes in what follows, blank lines and fences included, as text. End the first sentence before the code, or send the article as markup in \`article_html\` instead, with its own <mark> in the first <p>`
+    ? `${found} The body's first sentence never ends before the tag: the claim runs to the first . ! or ? followed by a space or a line break, so it takes in what follows, blank lines and fences included, as text. End the first sentence before the tag, put a tag the record discusses in backticks that open and close on its line, or send the article as markup in \`article_html\` instead, with its own <mark> in the first <p>`
     : `${found} Send the article as markup in \`article_html\` instead, with its own <mark> in the first <p>, or put a tag the record discusses in backticks that open and close on its line. A fenced block counts as code only as a paragraph of its own, with a blank line before and after it, once the body's first sentence has ended with . ! or ? and then a space or a line break`
 }
 
