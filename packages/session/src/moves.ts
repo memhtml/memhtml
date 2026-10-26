@@ -19,11 +19,12 @@ import { BATCH_CAP, type CommitScope, isReservedPath, type Violation } from "./v
  * moves is edited at its old path and the edit travels with it. A holder the batch archives is left
  * alone (its archived copy keeps the edge as history, which `validateOps` allows), an edge the batch
  * already unlinks (at the holder's path, or at the path the batch moved it to) is left to the batch,
- * and a source the batch puts a new record at again needs nothing. So is a holder `scope`
- * may not write ({@link isReservedPath}: an arc or a people record under `session`), whose edge is
- * the curator's to repoint; `validateOps` lets an archive leave it and names it on a move. Edges a
- * batch's own puts or `link`s aim at the old path are not the view's to know; `validateOps` names
- * them.
+ * and a move's source the batch puts a new record at needs nothing, nor does an archive's source
+ * the batch puts at after the archive (a claim edit, refused whatever the edges). A holder `scope`
+ * may not write ({@link isReservedPath}: an arc or a people record under `session`) is left alone
+ * too, its edge the curator's to repoint; `validateOps` lets an archive leave it and names it on a
+ * move. Edges a batch's own puts or `link`s aim at the old path are not the view's to know;
+ * `validateOps` names them.
  */
 export const withRepoints = (
   view: HeadView,
@@ -98,9 +99,13 @@ const repointsByVacate = (
   const leaving = new Set(
     ops.flatMap((op) => (op.kind === "archive" ? [normalizePath(op.path)] : []))
   )
-  const reoccupied = new Set(
-    ops.flatMap((op) => (op.kind === "put" ? [normalizePath(op.path)] : []))
-  )
+  // The op indices at which the batch puts each path.
+  const putsAt = new Map<string, Array<number>>()
+  ops.forEach((op, index) => {
+    if (op.kind !== "put") return
+    const path = normalizePath(op.path)
+    putsAt.set(path, [...(putsAt.get(path) ?? []), index])
+  })
   // An edge the batch unlinks, keyed by the path its holder had when the batch began: an unlink at
   // the destination of a holder the batch moved is that holder's edge, so a repoint written there
   // (by an earlier exec of the log, over the overlaid view) is not made again at the old path.
@@ -119,9 +124,11 @@ const repointsByVacate = (
   ops.forEach((op, index) => {
     if (op.kind !== "move" && op.kind !== "archive") return
     const from = normalizePath(op.path)
-    // A put at the source is a new record there, which the edges may name. (After an archive the put
-    // is a claim edit, so that batch is refused whatever its edges.)
-    if (reoccupied.has(from)) return
+    // A put at a move's source is a new record there, which the edges may name. A put at an
+    // archive's source after the archive is a claim edit, refused whatever the edges; one before it
+    // is the record the archive takes, so its edges follow it to the slot.
+    const puts = putsAt.get(from) ?? []
+    if (op.kind === "move" ? puts.length > 0 : puts.some((at) => at > index)) return
     const href = pathToHref(from)
     const pairs: Array<OverlayOp> = []
     for (const holder of [...view.inbound(href)].sort()) {

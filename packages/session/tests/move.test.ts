@@ -62,6 +62,10 @@ import {
  * - withRepoints, moved holders (2026-10-26): batch unlinks keyed by the path they name, not the
  *   path the holder had when the batch began -> "takes an unlink at the path the batch moved a
  *   holder to as that holder's repoint" (a second pair is added at the old path).
+ * - withRepoints, puts at a source (2026-10-26): every source the batch puts at skipped, whatever
+ *   the kind and order -> "repoints a live holder's edge to a path the batch puts and then
+ *   archives, and not one it puts at after the archive" (the archive comes back alone); only a
+ *   move's source skipped -> the same case (the archive before the claim edit gains a pair).
  */
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect)
@@ -437,6 +441,50 @@ describe("withRepoints completes an archive", () => {
       link(SUCCESSOR, "supersedes", `/${SLOT}`)
     ])
     expect(validateOps(head, travels)).toEqual([])
+  })
+
+  it("repoints a live holder's edge to a path the batch puts and then archives, and not one it puts at after the archive", async () => {
+    const note = "resources/acme-widget/c.html"
+    const noteHtml = addLink(
+      memory("Widget packing note", "Widget batches are packed by hand.", {
+        entities: ["project:acme-widget"]
+      }),
+      "relates_to",
+      `/${RETIRED}`
+    )
+    // The note's edge names a path the head does not hold; the batch writes a record there and
+    // retires it, so the edge follows the record to its slot.
+    const head = mapHead(SHA, [await recordFrom(note, noteHtml)])
+    const written: OverlayOp = { kind: "put", path: RETIRED, html: RETIRED_HTML }
+    const archived = retire(RETIRED, RETIRED_HTML)
+    const completed = withRepoints(head, [written, archived])
+    expect(completed).toEqual([
+      written,
+      unlink(note, "relates_to", `/${RETIRED}`),
+      link(note, "relates_to", `/${SLOT}`),
+      archived
+    ])
+    expect(validateOps(head, completed)).toEqual([])
+    expect(missingRepoints(head, [written, archived]).ops).toEqual(completed.slice(1, 3))
+    expect(missingRepoints(head, completed)).toEqual({ ops: [], overflow: [] })
+    // A put at the path after the archive is a claim edit, refused whatever the edges, so the
+    // archive gets no pairs for it.
+    const live = mapHead(SHA, [
+      await recordFrom(RETIRED, RETIRED_HTML),
+      await recordFrom(note, noteHtml)
+    ])
+    const again: OverlayOp = {
+      kind: "put",
+      path: RETIRED,
+      html: memory("Widget batch size, again", "The acme widget ships in batches of thirty.", {
+        entities: ["project:acme-widget"]
+      })
+    }
+    expect(withRepoints(live, [archived, again])).toEqual([archived, again])
+    expect(missingRepoints(live, [archived, again])).toEqual({ ops: [], overflow: [] })
+    expect(validateOps(live, [archived, again]).map((violation) => violation.kind)).toContain(
+      "claim-edit"
+    )
   })
 
   it("leaves a holder the scope may not write to the curator, and repoints it under curate", async () => {
