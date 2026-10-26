@@ -17,7 +17,7 @@ import { FTS_INDEX_NAME, SNIPPET_MAX_CHARS, STATE_SCHEMA } from "./schema-const.
  * ```
  *
  * Weights are inlined as numeric literals rather than bound. They come from trusted configuration,
- * not from a caller, and inlining keeps the tuple stable at four regardless of how many arms fire.
+ * not from a caller, and inlining keeps the numbered prefix at four slots however many arms fire.
  */
 
 /** The bound-parameter positions, named so a reader never counts question marks. */

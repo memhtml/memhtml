@@ -40,10 +40,10 @@ export const wordCountOf = (bodyText: string): number =>
 /**
  * The single FTS column, holding title, gist, and body joined by newlines.
  *
- * Denormalized because a multi-column FTS index on this driver returns rowid order rather than
- * relevance order and scopes MATCH to the named column alone (probed 2026-08-02). Newline-joined
- * rather than space-joined so a term at the end of the title cannot fuse with one at the start of
- * the gist into a phrase neither states.
+ * Denormalized so one MATCH finds a term wherever it lives, and because a multi-column FTS5 table
+ * would make `bm25()` weight the columns against each other, a ranking decision RRF already owns
+ * (`FTS_COLUMN` in `schema-const.ts`). Newline-joined rather than space-joined so a term at the
+ * end of the title cannot fuse with one at the start of the gist into a phrase neither states.
  */
 export const ftsTextFor = (doc: MemoryDoc): string =>
   [doc.title, doc.article.gist, doc.article.bodyText].filter((part) => part !== "").join("\n")
