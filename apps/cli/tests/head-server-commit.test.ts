@@ -82,6 +82,8 @@ import { writeStoreConfig } from "./strict-store.js"
  *   or the round drops a chain" (a note lands citing the record at the held path, or loses its
  *   label); the chain stopped at the vacate's own source -> the two "aims ..." cases there (the
  *   edge names a path nothing wrote).
+ * - `v2.ts` `commitOverHead` (2026-10-26): a dropped pair keyed by its own path -> "does not list a
+ *   pair the round took at a dropped move's destination that comes back where the holder stays".
  */
 
 const run_ = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect)
@@ -1441,6 +1443,42 @@ describe("a --drop-refused round that drops an archive or a move", () => {
       const links = await linksAt(repo, succ)
       expect(links).toContain(edge("supersedes", harbor))
       expect(links).not.toContain(edge("supersedes", placedSlot))
+    }, 120_000)
+
+    // Mutation: key a dropped pair by its own path in the drop loop and `dropped` lists the pair
+    // the round took at the move's destination, though it lands at the holder's path.
+    it("does not list a pair the round took at a dropped move's destination that comes back where the holder stays", async () => {
+      const repo = await corpus()
+      await writeStoreConfig(repo.root, { commit: true })
+      // A project record, anchored by its path, that the log moves where nothing anchors it.
+      const project = "projects/acme/p.html"
+      const moved = "areas/inbox/p.html"
+      const projectHtml = addLink(
+        renderTemplate({
+          title: "Project note",
+          claim: "The project note cites the harbor.",
+          memoryType: "semantic",
+          at: AT,
+          entities: []
+        }),
+        "relates_to",
+        `/${harbor}`
+      )
+      await commitFiles(repo, [{ path: project, html: projectHtml }], "a project citer")
+      await writeLog(repo.root, 3, [
+        { kind: "move", path: project, to: moved, html: projectHtml },
+        { kind: "archive", path: harbor, to: slot, html: await htmlAt(repo, harbor) },
+        { kind: "unlink", path: moved, rel: "relates_to", href: `/${harbor}` },
+        { kind: "link", path: moved, rel: "relates_to", href: `/${slot}` }
+      ])
+      const dropped = await dropRefused(repo)
+      expect(kindsOf(dropped)).toEqual([`move ${project}`])
+      const paths = await treeOf(repo)
+      expect(paths).toContain(slot)
+      expect(paths).not.toContain(harbor)
+      expect(paths).toContain(project)
+      expect(paths).not.toContain(moved)
+      expect(await linksAt(repo, project)).toEqual([edge("relates-to", slot)])
     }, 120_000)
   })
 })

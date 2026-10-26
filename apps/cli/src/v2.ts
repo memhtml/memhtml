@@ -1,7 +1,13 @@
 import { access, appendFile } from "node:fs/promises"
 import { join } from "node:path"
 
-import { type HeadView, type OverlayOp, pathToHref, type WriteBarPolicy } from "@memhtml/contracts"
+import {
+  type HeadView,
+  normalizePath,
+  type OverlayOp,
+  pathToHref,
+  type WriteBarPolicy
+} from "@memhtml/contracts"
 import {
   DirtyTree,
   InvalidMemory,
@@ -1025,17 +1031,25 @@ export const commitOverHead = (input: {
       const again = missingRepoints(input.base, settled.keep, scope)
       const next = [...settled.keep, ...again.ops]
       if (JSON.stringify(next) === JSON.stringify(session.ops)) break
+      // A repoint the completion makes again is not reported, including one the round dropped at a
+      // dropped move's destination that comes back at the path the record still has.
+      const pairKey = (op: OverlayOp | undefined, at: (path: string) => string) =>
+        op?.kind === "link" || op?.kind === "unlink"
+          ? `${op.kind}\n${at(normalizePath(op.path))}\n${op.rel}\n${op.href}`
+          : undefined
       const back = new Map<string, number>()
-      for (const op of again.ops)
-        back.set(JSON.stringify(op), (back.get(JSON.stringify(op)) ?? 0) + 1)
+      for (const op of again.ops) {
+        const key = pairKey(op, (path) => path)
+        if (key !== undefined) back.set(key, (back.get(key) ?? 0) + 1)
+      }
       const reasonsOf = (vacate: OverlayOp): ReadonlyArray<string> =>
         round.drop[round.ops.indexOf(vacate)]?.reasons ?? []
       const gone: Array<DroppedOp> = []
       round.drop.forEach((entry, at) => {
         const op = round.ops[at]
-        const key = JSON.stringify(op)
-        const count = back.get(key) ?? 0
-        if (count > 0) {
+        const key = pairKey(op, (path) => settled.homes.get(path) ?? path)
+        const count = key === undefined ? 0 : (back.get(key) ?? 0)
+        if (key !== undefined && count > 0) {
           back.set(key, count - 1)
           return
         }
