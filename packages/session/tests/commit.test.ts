@@ -57,9 +57,11 @@ import {
  *   two titles contradict ...". The supersedes check answers false -> "a put that supersedes its
  *   live rival ..." and "... the archived copy its batch makes ..." (`archived`, not
  *   `superseded`); the batch's archive destination left out of it -> "... the archived copy its
- *   batch makes ..."; any archive path read as the path it was archived from -> "a put that
- *   supersedes an earlier record archived from its rival's path ...". The archive check answers
- *   false -> "a rival the batch archives ...".
+ *   batch makes ..."; the rival where the commit leaves it left out of it
+ *   (`superseded.has(against)`) -> "a put that supersedes its live rival ..." and "a put that
+ *   supersedes its rival at the path the batch moves it to ..."; any archive path read as the path
+ *   it was archived from -> "a put that supersedes an earlier record archived from its rival's
+ *   path ...". The archive check answers false -> "a rival the batch archives ...".
  * - step 4: drop `updateIndexRemove` -> "archives through the index ..." (source still in tree).
  * - step 4: `archiveBody` returns `html` unchanged -> same test (stamps missing).
  * - stage: archive body from `op.html` instead of the head's copy -> "an archive carries a link ...".
@@ -91,7 +93,7 @@ afterEach(async () => {
 const CAPITAL = memory("Capital of India", "The capital of India is New Delhi.")
 const ALPHA = memory("Alpha", "Alpha is the first letter of the Greek alphabet.")
 
-/** CAPITAL's claim over more prose, so the article and its hash differ and the frame value does not. */
+/** CAPITAL's claim over more prose: a different article and hash, and the same frame value. */
 const RESTATED = memory("Capital of India, restated", "The capital of India is New Delhi.", {
   body: ["This record restates the claim with a second sentence."]
 })
@@ -507,6 +509,33 @@ describe("commitSession", () => {
       {
         path: "areas/inbox/capital-corrected.html",
         against: "areas/inbox/capital.html",
+        reason: "superseded"
+      }
+    ])
+    expect(await fileAt(root, outcome.sha, "areas/inbox/capital-corrected.html")).not.toContain(
+      "memhtml-contradicts"
+    )
+  })
+
+  it("a put that supersedes its rival at the path the batch moves it to gets no contradicts edge", async () => {
+    const { root, head } = await seeded()
+    const successor = addLink(CORRECTED, "supersedes", "/resources/geo/capital.html")
+    const session = await start(root, "sup-moved", head, [
+      {
+        kind: "move",
+        path: "areas/inbox/capital.html",
+        to: "resources/geo/capital.html",
+        html: CAPITAL
+      },
+      putOp("areas/inbox/capital-corrected.html", successor)
+    ])
+    const outcome = await run(commitSession({ session, head, message: "correct the filed one" }))
+    if (outcome.kind !== "committed") throw new Error(JSON.stringify(outcome))
+    expect(outcome.contradictions).toEqual([])
+    expect(outcome.restatements).toEqual([
+      {
+        path: "areas/inbox/capital-corrected.html",
+        against: "resources/geo/capital.html",
         reason: "superseded"
       }
     ])

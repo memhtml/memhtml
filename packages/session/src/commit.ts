@@ -30,10 +30,10 @@ export type { CommitScope } from "./validate.js"
  */
 
 /**
- * Why step 3 left a frame-key rival unlinked: it agrees with the put (`same-value`: one value or one
- * claim, and for two verdicts one ruling), the put carries a `supersedes` edge to it or to where the
- * batch archives it (`superseded`), or the batch archives it (`archived`). A pair that meets more
- * than one is reported with the first, in that order.
+ * Why step 3 left a frame-key rival unlinked: it agrees with the put (`same-value`: one value or
+ * one claim, and for two verdicts one ruling), the put carries a `supersedes` edge to it or to
+ * where the batch archives it (`superseded`), or the batch archives it (`archived`). A pair that
+ * meets more than one is reported with the first, in that order.
  */
 export const RESTATEMENT_REASONS = ["same-value", "superseded", "archived"] as const
 export type RestatementReason = (typeof RESTATEMENT_REASONS)[number]
@@ -43,7 +43,7 @@ export type CommitOutcome =
       readonly kind: "committed"
       readonly sha: string
       readonly paths: ReadonlyArray<string>
-      /** Each put linked by step 3 to a frame-key rival (`against`, at its destination when moved). */
+      /** Each put step 3 linked to a frame-key rival (`against`, its destination when moved). */
       readonly contradictions: ReadonlyArray<{ readonly path: string; readonly against: string }>
       /**
        * Each frame-key rival step 3 left unlinked, named the way `contradictions` names one, with
@@ -210,10 +210,12 @@ const stage = (head: HeadView, ops: ReadonlyArray<OverlayOp>, archivedAt: string
  * the rival agrees with the put by `frameGroupAgrees`, the rule the curator's planner reads before
  * it folds a frame-key group (one value or one claim, and two verdicts agree only under one title,
  * which carries the ruling); the put, as the batch left it, carries a `supersedes` edge to the
- * rival's path, to its destination when the batch moves it, or to the archive path the batch moves
- * it to (a successor does not contradict what it replaces); or the batch archives the rival (the
- * edge would name a path the commit empties). A `supersedes` edge to any other archive path names
- * an earlier record, even one archived from the rival's path, and the rival is still linked.
+ * rival where the commit leaves it (its path, or its destination when the batch moves it) or to
+ * the archive path the batch moves it to (a successor does not contradict what it replaces); or
+ * the batch archives the rival (the edge would name a path the commit empties). An edge to the old
+ * path of a moved rival names what the batch puts there, if anything (`validateOps` refuses it
+ * otherwise). A `supersedes` edge to any other archive path names an earlier record, even one
+ * archived from the rival's path, and the rival is still linked.
  */
 const markContradictions = (
   head: HeadView,
@@ -258,9 +260,7 @@ const markContradictions = (
         const archivedAs = archivedTo.get(other)
         const reason: RestatementReason | null = frameGroupAgrees([put, record])
           ? "same-value"
-          : superseded.has(other) ||
-              superseded.has(against) ||
-              (archivedAs !== undefined && superseded.has(archivedAs))
+          : superseded.has(against) || (archivedAs !== undefined && superseded.has(archivedAs))
             ? "superseded"
             : archivedAs !== undefined
               ? "archived"
