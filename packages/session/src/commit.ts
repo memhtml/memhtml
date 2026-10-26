@@ -107,7 +107,7 @@ export const archiveBody = (html: string, archivedAt: string): string =>
 interface StagedTree {
   readonly writes: Map<string, string>
   readonly removes: Set<string>
-  /** One violation per head op whose editor handed back the file unchanged ({@link changedNothing}). */
+  /** A violation per head op whose editor left its file unchanged ({@link changedNothing}). */
   readonly unchanged: ReadonlyArray<Violation>
 }
 
@@ -115,9 +115,10 @@ interface StagedTree {
  * A head op that was meant to change its file and left it as it found it. `validateOps` passes an
  * `unlink` only when the file as the batch left it carries the edge, a `label` only when it lacks
  * the entity, and an `unlabel` only when it carries the entity, so an editor that changes nothing
- * there disagrees with the reader about what the file holds. A `link` of an edge the file already carries is idempotent by design,
- * so a `link` counts only when the reader does not find the edge on the bytes it was given.
- * Landing either would commit a change the log describes and the tree does not hold.
+ * there disagrees with the reader about what the file holds. A `link` of an edge the file already
+ * carries is idempotent by design, so a `link` counts only when the reader does not find the edge
+ * on the bytes it was given. Landing such an op would commit a change the log describes and the
+ * tree does not hold.
  */
 const changedNothing = (path: string, what: string): Violation => ({
   kind: "format",
@@ -510,7 +511,8 @@ export const commitSession = (input: {
       }
 
       // 3. Stage the ops. A head op that changed nothing refuses the batch the way a step-1
-      //    violation does; then frame-key contradictions, marked on the new file's head before hashing.
+      //    violation does; then frame-key contradictions, marked on the new file's head before
+      //    hashing.
       const staged = stage(head, session.ops, input.archivedAt ?? nowIso())
       if (staged.unchanged.length > 0) {
         return { kind: "refused", violations: staged.unchanged } as const
