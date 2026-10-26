@@ -9,6 +9,7 @@ import {
   isSlug,
   SLUG_FALLBACK,
   SLUG_MAX_LENGTH,
+  SLUG_MIN_WORD_CUT,
   slugify,
   withCollisionOrdinal
 } from "../src/slug.js"
@@ -50,6 +51,58 @@ describe("slugify", () => {
     expect(slug).toHaveLength(SLUG_MAX_LENGTH - 1)
     expect(slug.endsWith("abcd")).toBe(true)
     expect(isSlug(slug)).toBe(true)
+  })
+
+  /**
+   * A long title is cut at the last word boundary that keeps {@link SLUG_MIN_WORD_CUT} characters,
+   * so the slug ends on a whole word. The plain 80-character cut leaves `staged-ro`, a fragment a
+   * reader cannot tell from a word and a tool that cuts at words would not reproduce.
+   */
+  it("cuts a long title at the last word boundary inside the budget", () => {
+    const slug = slugify(
+      "The acme-widget release checklist covers signing, packaging, smoke tests, staged rollout and rollback drills for every region"
+    )
+    expect(slug).toBe(
+      "the-acme-widget-release-checklist-covers-signing-packaging-smoke-tests-staged"
+    )
+    expect(isSlug(slug)).toBe(true)
+    expect(isSlug(withCollisionOrdinal(slug, 2))).toBe(true)
+  })
+
+  it("keeps a boundary at exactly the budget and at exactly the floor", () => {
+    // A hyphen at index 80 ends the 80 characters before it on a whole word.
+    const atBudget = `${"w".repeat(70)} ${"x".repeat(9)} tail`
+    expect(slugify(atBudget)).toBe(`${"w".repeat(70)}-${"x".repeat(9)}`)
+    // A boundary that leaves exactly the floor is taken.
+    const atFloor = `${"a".repeat(SLUG_MIN_WORD_CUT)} ${"b".repeat(30)}`
+    expect(slugify(atFloor)).toBe("a".repeat(SLUG_MIN_WORD_CUT))
+  })
+
+  it("cuts at the budget when the last boundary would leave fewer than the floor", () => {
+    // One character short of the floor: the word cut would give up too much of the title.
+    const belowFloor = `${"a".repeat(SLUG_MIN_WORD_CUT - 1)} ${"b".repeat(30)}`
+    expect(slugify(belowFloor)).toBe(
+      `${"a".repeat(SLUG_MIN_WORD_CUT - 1)}-${"b".repeat(SLUG_MAX_LENGTH - SLUG_MIN_WORD_CUT)}`
+    )
+    expect(slugify(belowFloor)).toHaveLength(SLUG_MAX_LENGTH)
+  })
+
+  it("ends a cut slug on a whole word when a boundary keeps the floor, else at the budget", () => {
+    fc.assert(
+      fc.property(wordyTitle, (title) => {
+        // A word-shaped title kebabs to its lowercased words joined by hyphens.
+        const kebab = title.toLowerCase().split(" ").join("-")
+        const slug = slugify(title)
+        if (kebab.length <= SLUG_MAX_LENGTH) {
+          expect(slug).toBe(kebab)
+          return
+        }
+        expect(kebab.startsWith(slug)).toBe(true)
+        const boundary = kebab.lastIndexOf("-", SLUG_MAX_LENGTH)
+        expect(slug).toHaveLength(boundary >= SLUG_MIN_WORD_CUT ? boundary : SLUG_MAX_LENGTH)
+      }),
+      { numRuns: 1000 }
+    )
   })
 
   it("always produces a valid slug, so its output is its own fixed point", () => {
@@ -131,10 +184,11 @@ describe("withCollisionOrdinal", () => {
 
   /**
    * **A slug at the cap whose own tail is the suffix.** The case above found this with a random
-   * seed, so it is pinned here as a value: the counterexample's title kebabs to exactly
-   * {@link SLUG_MAX_LENGTH} characters ending in `-2`, and cutting it to 78 to make room for `-2`
-   * rebuilds the slug itself — so ordinals 1 and 2 named one file and the store's loop re-proposed
-   * the name that had collided.
+   * seed, so it is pinned here as a value: the title kebabs to more than
+   * {@link SLUG_MAX_LENGTH} characters with a word boundary at exactly the budget, so its slug is
+   * the first 80 characters, ending in `-2`, and cutting it to 78 to make room for `-2` rebuilds
+   * the slug itself: ordinals 1 and 2 would name one file and the store's loop would re-propose the
+   * name that had collided.
    *
    * Asserted as a value rather than left to the property, because a property test that only fails
    * on 1 seed in N is not a regression lock. The suffixed form stays a valid slug inside the budget,
@@ -145,7 +199,7 @@ describe("withCollisionOrdinal", () => {
    */
   it("distinguishes ordinal 2 from ordinal 1 for a capped slug already ending in -2", () => {
     const slug = slugify(
-      "A00Aa0a aaaAAaA0A aa00AAA0aAAA AAaAa0Aa AaAAAA00Aa aAAa AaAaaaaa0AA 0aa000AA 0 2A A"
+      "A00Aa0a aaaAAaA0A aa00AAA0aAAA AAaAa0Aa AaAAAA00Aa aAAa AaAaaaaa0AA 0aa000AA 0 2 A A"
     )
     expect(slug.length).toBe(SLUG_MAX_LENGTH)
     expect(slug.endsWith("-2")).toBe(true)
@@ -189,6 +243,37 @@ describe("withCollisionOrdinal", () => {
         expect(outputs.size, `len ${length} tail ${tail}`).toBe(12)
       }
     }
+  })
+
+  /**
+   * The stem gives up whole words to make room for the suffix, by the rule `slugify` cuts with, so a
+   * `-N` twin reads as its first claimant's title minus its last words rather than minus a few
+   * letters (`…-smoke-tests-100`, not `…-tests-stage-100`).
+   */
+  it("cuts its stem at a word boundary when the suffix needs room", () => {
+    const slug = "the-acme-widget-release-checklist-covers-signing-packaging-smoke-tests-staged"
+    expect(withCollisionOrdinal(slug, 2)).toBe(`${slug}-2`)
+    expect(withCollisionOrdinal(slug, 100)).toBe(
+      "the-acme-widget-release-checklist-covers-signing-packaging-smoke-tests-100"
+    )
+    expect(withCollisionOrdinal(slug, 1000)).toBe(
+      "the-acme-widget-release-checklist-covers-signing-packaging-smoke-tests-1000"
+    )
+    // A boundary that would leave fewer than the floor is not taken: the stem is cut at the room.
+    const longWord = `${"a".repeat(50)}-${"b".repeat(29)}`
+    expect(withCollisionOrdinal(longWord, 2)).toBe(`${"a".repeat(50)}-${"b".repeat(27)}-2`)
+  })
+
+  it("keeps every suffixed name's stem a prefix of the slug", () => {
+    fc.assert(
+      fc.property(anyTitle, fc.integer({ min: 2, max: 1000 }), (title, ordinal) => {
+        const slug = slugify(title)
+        const suffix = `-${ordinal}`
+        const stem = withCollisionOrdinal(slug, ordinal).slice(0, -suffix.length)
+        expect(stem === SLUG_FALLBACK || slug.startsWith(stem)).toBe(true)
+      }),
+      { numRuns: 1000 }
+    )
   })
 
   it("produces 12 distinct names for any slugified title, whatever its length", () => {

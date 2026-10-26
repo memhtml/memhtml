@@ -1508,7 +1508,8 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
       {
         name: "title",
         type: "string",
-        description: "The write's title, as a write line gives it. Its slug is the filename stem.",
+        description:
+          "The write's title, as a write line gives it. Its slug is the filename stem: kebab-case, at most 80 characters, a longer title cut at its last word boundary that keeps at least 60, else at 80.",
         required: true
       },
       {

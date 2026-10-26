@@ -1565,7 +1565,7 @@ Prints the path a write with these fields would land at, and the collision ordin
 
 Flags:
 
-- `--title` (string, required): "The write's title, as a write line gives it. Its slug is the filename stem."
+- `--title` (string, required): "The write's title, as a write line gives it. Its slug is the filename stem: kebab-case, at most 80 characters, a longer title cut at its last word boundary that keeps at least 60, else at 80."
 - `--type` (string, required, one of `episodic`, `semantic`, `procedural`, `agent_insight`, `user_preference`, `error_pattern`, `verdict`, `precedent`, `arc`, `task`): "The memory type, as a write line gives it. `episodic` takes the `YYYYMMDD-` prefix of the current UTC day, `task` routes to `tasks/` under its workspace or the inbox, and `arc` to `areas/arcs/`."
 - `--workspace` (string): "Routes the write to `projects/<slug>/`, as a write line's `workspace` does."
 - `--tag` (string, repeatable): "A tag, as a write line's `tags` holds one. Repeatable; the first routes a semantic, procedural, or precedent write with no workspace to `resources/<slug>/`."

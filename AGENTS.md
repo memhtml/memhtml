@@ -591,7 +591,7 @@ Retrieval over the version at HEAD, or over the head server's version of its ref
 
 Print the path a write with these fields would land at over the version at HEAD, and the collision ordinal it took, by the placement `session put` runs. Writes nothing.
 
-- `--title` (string) — The write's title, as a write line gives it. Its slug is the filename stem. _(**required**)_
+- `--title` (string) — The write's title, as a write line gives it. Its slug is the filename stem: kebab-case, at most 80 characters, a longer title cut at its last word boundary that keeps at least 60, else at 80. _(**required**)_
 - `--type` (string) — The memory type, as a write line gives it. `episodic` takes the `YYYYMMDD-` prefix of the current UTC day, `task` routes to `tasks/` under its workspace or the inbox, and `arc` to `areas/arcs/`. _(**required**; one of: `episodic`, `semantic`, `procedural`, `agent_insight`, `user_preference`, `error_pattern`, `verdict`, `precedent`, `arc`, `task`)_
 - `--workspace` (string) — Routes the write to projects/<slug>/, as a write line's `workspace` does.
 - `--tag` (string) — A tag, as a write line's `tags` holds one. Repeatable; the first routes a semantic, procedural, or precedent write with no workspace to resources/<slug>/. _(repeatable)_

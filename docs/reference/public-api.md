@@ -412,15 +412,13 @@ export const slugify = (title: string): string => {
 
   if (kebab === "") return SLUG_FALLBACK
 
-  return kebab.length <= SLUG_MAX_LENGTH
-    ? kebab
-    : kebab.slice(0, SLUG_MAX_LENGTH).replace(/-+$/, "") || SLUG_FALLBACK
+  return cutSlug(kebab, SLUG_MAX_LENGTH) || SLUG_FALLBACK
 }
 ```
 
-Kebab-cases a title into `[a-z0-9-]`. It applies NFKD, strips combining marks so diacritics fold to base letters, and lowercases. Then it replaces each run of other characters with one hyphen and trims hyphens from both ends. A title that reduces to nothing returns `SLUG_FALLBACK`, which is `untitled`. A result longer than `SLUG_MAX_LENGTH` (80) is cut there, and any exposed trailing hyphen is trimmed (`packages/contracts/src/slug.ts:7-15`). A slug fed back in comes out unchanged.
+Kebab-cases a title into `[a-z0-9-]`. It applies NFKD, strips combining marks so diacritics fold to base letters, and lowercases. Then it replaces each run of other characters with one hyphen and trims hyphens from both ends. A title that reduces to nothing returns `SLUG_FALLBACK`, which is `untitled`. A result longer than `SLUG_MAX_LENGTH` (80) is cut at its last hyphen at or before 80 when that leaves at least `SLUG_MIN_WORD_CUT` (60) characters, so it ends on a whole word, and at 80 otherwise, with any exposed trailing hyphen trimmed (`cutSlug` at `packages/contracts/src/slug.ts:24-34`). `withCollisionOrdinal` cuts its stem by the same rule to make room for a `-N` suffix. A slug fed back in comes out unchanged. A slug is computed only when a record is minted, so the rule decides new paths and never moves an existing one.
 
-`packages/contracts/src/slug.ts:28-44`, 7 importer files
+`packages/contracts/src/slug.ts:50-64`, 7 importer files
 
 ### DirtyTree
 
