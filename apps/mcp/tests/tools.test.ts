@@ -692,6 +692,40 @@ describe("the derived JSON Schema", () => {
     }
   })
 
+  it("publishes memory_reinforce's singular path beside paths, and decodes either", () => {
+    /**
+     * `memory_read` and `memory_archive` name one memory as `path`, so an agent reinforcing the one
+     * memory it just read sends `path` here too. The published schema has to say that works, or a
+     * client that validates refuses the call before it is sent. Neither key can be `required` while
+     * the other may stand in for it, so `signal` is the only one, and a call naming no path is the
+     * handler's refusal (see `tests/roundtrip.test.ts`).
+     */
+    const reinforce = schemaFor("memory_reinforce")
+    expect(reinforce.required).toEqual(["signal"])
+    const properties = reinforce.properties ?? {}
+    expect((properties.path as JsonSchemaObject).anyOf).toEqual([
+      { type: "string" },
+      { type: "null" }
+    ])
+    expect(Object.keys(properties).sort()).toEqual(["path", "paths", "signal"])
+
+    const parameters = MemhtmlToolkit.tools.memory_reinforce.parametersSchema
+    for (const input of [
+      { paths: ["areas/inbox/a-fact.html"], signal: "positive" },
+      { path: "areas/inbox/a-fact.html", signal: "positive" },
+      { paths: ["areas/inbox/a-fact.html"], path: "areas/inbox/b-fact.html", signal: "negative" },
+      { paths: null, path: "areas/inbox/a-fact.html", signal: "neutral" }
+    ]) {
+      const decoded = Effect.runSync(Effect.result(Schema.decodeUnknownEffect(parameters)(input)))
+      expect(decoded._tag, JSON.stringify(input)).toBe("Success")
+    }
+
+    // The description is what an agent fills the call from, so the singular is named there too.
+    const description = MemhtmlToolkit.tools.memory_reinforce.description ?? ""
+    expect(description).toContain("`paths`")
+    expect(description).toContain("`path`")
+  })
+
   it("publishes the hop chain's two halves on memory_search's SUCCESS schema", () => {
     /**
      * The roundtrip contract, at the published response. A hit's `entities` is what the next call's

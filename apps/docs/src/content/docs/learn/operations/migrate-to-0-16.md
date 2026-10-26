@@ -130,14 +130,14 @@ Set `MEMHTML_MCP_HEAD=off` in the MCP server's environment and restart the serve
 
 ## Keep the index fresh
 
-A session commit doesn't update `index.db`. `memhtml search`, `memhtml recall`, and any MCP call that answers from the index see a session's records after the next `memhtml index update`. Keep the `index update` line from [the cron schedule](/learn/operations/run-the-store-day-to-day/#the-cron-schedule). `memhtml status` reports `indexFresh: false` while the index is behind.
+A session commit doesn't update `index.db`. `memhtml search`, `memhtml recall`, and any MCP call that answers from the index see a session's records after the next `memhtml index update`. Keep the `index update` line from [the upkeep commands](/learn/operations/run-the-store-day-to-day/#the-upkeep-commands). `memhtml status` reports `indexFresh: false` while the index is behind.
 
 ## Prune session state
 
 Each session leaves a small log under `.memhtml/sessions/`, and only `session prune` removes it. Add a weekly prune:
 
-```cron
-0 5 * * 0  cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml session prune --older-than 7d --dense >> /var/log/memhtml/prune.jsonl 2>> /var/log/memhtml/prune.err
+```bash
+memhtml session prune --repo $HOME/memhtml --older-than 7d --dense >> /var/log/memhtml/prune.jsonl 2>> /var/log/memhtml/prune.err
 ```
 
 `session prune` never removes a log that still holds operations. It lists one past the cutoff under `unlanded`, and you can land it with `memhtml session rebase --id <id>` and then `memhtml session commit --id <id> --message <summary> --drop-refused`. Run `memhtml session prune --older-than 7d --dry-run` first to see what it would remove.
