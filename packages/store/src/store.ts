@@ -557,8 +557,9 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
    *
    * Archive, correct and supersede each ask this before they read their source, so a refusal opens no
    * journal: the compensation's `git reset -- <paths>` would otherwise unstage whatever the caller had
-   * staged on those paths. It is also asked before the read, so a `..` spelling never reaches the
-   * filesystem.
+   * staged on those paths. It also comes before the store's own read of the source, so that read
+   * never follows a `..` spelling. A caller that reads the path itself first, as the CLI's `correct`
+   * and `task status` do, has already read it by then.
    */
   const archiveSourceRefusal = (path: string): Effect.Effect<void, InvalidMemory> =>
     Effect.suspend(() => {
