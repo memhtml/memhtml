@@ -251,7 +251,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "article-html",
         type: "string",
         description:
-          "Raw <article> markup used verbatim in place of --claim/--body. Must contain exactly one <mark> in the first <p> or <li>; the first <time datetime> becomes the memory's event time. The store refuses format violations before any commit. Exactly one of --claim or --article-html."
+          "Raw <article> markup used verbatim in place of --claim/--body. Must contain exactly one <mark> in the first <p> or <li>; the first <time datetime> becomes the memory's event time. The store refuses format violations, and a <p> whose text holds a block tag such as &lt;li&gt; as characters, before any commit. Exactly one of --claim or --article-html."
       },
       {
         name: "type",
@@ -442,7 +442,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "article-html",
         type: "string",
         description:
-          "Raw <article> markup for the superseding memory, used verbatim in place of --claim/--body. Must contain exactly one <mark> in the first <p> or <li>; the first <time datetime> becomes the memory's event time. The store refuses format violations before any commit. Exactly one of --claim or --article-html."
+          "Raw <article> markup for the superseding memory, used verbatim in place of --claim/--body. Must contain exactly one <mark> in the first <p> or <li>; the first <time datetime> becomes the memory's event time. The store refuses format violations, and a <p> whose text holds a block tag such as &lt;li&gt; as characters, before any commit. Exactly one of --claim or --article-html."
       },
       {
         name: "type",
@@ -1924,14 +1924,17 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "and the markup form is `article_html`. " +
       "Prose is stored as escaped text, so a `body` on an `apply` or `session put` line that holds an HTML " +
       "block tag (`<p>`, `<ul>`, `<li>`, `<dl>`, `<table>`, `<h2>` and the like, raw or escaped as " +
-      "`&lt;p&gt;`) outside a fenced block or backticks is refused at exit 2 with ERR_INVALID_FLAG naming " +
-      "the line: send that article as `article_html`, and put a tag the memory discusses in backticks. " +
-      "When you supply markup you own two constraints. It must contain EXACTLY ONE `<mark>`, and that " +
+      "`&lt;p&gt;`) outside code is refused at exit 2 with ERR_INVALID_FLAG naming the line: send that " +
+      "article as `article_html`. A tag the memory discusses counts as code in backticks that open and " +
+      "close on one line, or in a fenced block that is a paragraph of its own, set off by blank lines. " +
+      "When you supply markup you own three constraints. It must contain EXACTLY ONE `<mark>`, and that " +
       "`<mark>` must sit in the article's first `<p>` or `<li>` and not inside an `<aside>` or " +
       "`<details>`. The claim leads the article and is never a caveat or behind a fold. And the first " +
       "`<time datetime>` in your markup becomes the memory's event time, which is what recency ranks " +
       "on, so a memory about something that happened last year should say so rather than being ranked " +
-      "as today's news. " +
+      "as today's news. And no `<p>`, nor a `<mark>` outside a `<p>`, may hold a block tag as text: " +
+      "`&lt;li&gt;` typed into a paragraph is refused, because markup goes in as elements, and a tag the " +
+      "memory discusses goes in `<code>` or in backticks on one line. " +
       "Markup is checked before anything is written: the store renders your article, runs the format " +
       "check, and refuses with the list of violations before it creates a file, stages it, or commits. " +
       "A refused write leaves the tree byte-identical, so a failed attempt costs nothing and you can fix " +

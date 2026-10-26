@@ -1,4 +1,3 @@
-import { closesFence, fenceOpeningOf } from "./fences.js"
 import type { Element, Node } from "./tree.js"
 import {
   childrenOf,
@@ -13,42 +12,92 @@ import {
  * Block-tag-shaped text: an HTML block element written where the format expects text.
  *
  * The prose path escapes every claim and paragraph (`template.ts`), so a writer that sends
- * `<p>One.</p>` as prose, meaning markup, gets a file whose `<mark>` reads `&lt;p&gt;One.`. The
- * render gate accepts it, because escaped text is valid content. The doors refuse such a body
- * before it is rendered ({@link blockTagInText}), and `validateOps` refuses a put whose `<p>` or
- * `<mark>` text holds one ({@link blockTagInArticle}), which reads that text with the same function,
- * so the two hold one rule about what counts.
+ * `<p>One.</p>` as prose, meaning markup, gets a file whose `<mark>` reads `&lt;p&gt;One.`. Every
+ * format constraint accepts that file, because escaped text is valid content. So a `<p>` whose
+ * text holds a block tag is refused: by the doors before they render a prose body (over the
+ * paragraphs `proseParagraphs` says the template will render), and by `validateOps` and the
+ * store's render gate over the article itself ({@link blockTagInArticle}). Both read each
+ * paragraph's text with {@link blockTagInRun}, so they hold one rule.
  *
- * Code is exempt however it is written, because a record that discusses markup has to be able to
- * name a tag: lines inside a backtick fence (the grammar `fences.ts` owns), a closed backtick span
- * on one line, and, in an article, the text of `<code>`, `<pre>`, `<kbd>`, and `<samp>`.
+ * Code is exempt, because a record that discusses markup has to be able to name a tag: a closed
+ * backtick span on one line, and in an article the text of `<code>`, `<pre>`, `<kbd>`, and
+ * `<samp>`. A fenced block is code only as a paragraph of its own, which the template renders as
+ * a `<figure>` and so never reaches a `<p>`; a fence sharing a paragraph with prose is escaped
+ * into the `<p>` as text, and is read as text here too.
  */
 
 /**
  * The block elements whose tag, written as text, means the writer meant markup. These are the
  * elements an article is built from; inline ones such as `<time>` or `<em>` stay prose that the
- * path escapes.
+ * path escapes. Lowercase only, as markup is written: `<Table>`, `React.FC<P>`, and
+ * `List<Article>` are code, not tags.
  */
-const BLOCK_NAMES = "p|ul|ol|li|dl|dt|dd|figure|table|article|section|h[1-6]"
+const BLOCK_NAME = /(?:p|ul|ol|li|dl|dt|dd|figure|table|article|section|h[1-6])/y
+
+/** A character that may not sit right before an opening tag: `x<p` and `List<li>` are not tags. */
+const WORD_CHARACTER = /\w/
+
+/** A character that may follow a tag's name: whitespace, `/`, or the tag's close. */
+const AFTER_NAME = /[\s/>]/
+
+/** The most of a tag a refusal quotes. A tag with a long attribute list is cut here. */
+const TAG_SHOWN = 80
 
 /**
- * A block tag, raw or entity-escaped, case-insensitively. The name must end at whitespace, `/`, or
- * the tag's close, so `<pre>`, `<param>`, and `<details>` are not read as `<p>` or `<dd>`.
+ * Where the tag opened at `at` ends, exclusive, or `undefined` when no block tag opens there.
+ * `open` is the opener's length: 1 for `<`, 4 for `&lt;`. Hand-written rather than a regular
+ * expression, because a pattern over the escaped spelling keeps one backtrack frame per
+ * character and overflows the stack on a line of a few million characters.
  *
- * Each attempt stops at the next `<` (or, escaped, the next `&lt;`) rather than scanning to the end
- * of the text, so a run of unclosed openers costs one pass instead of a quadratic rescan. That is a
- * cost property of unbounded caller input on the write path, locked by the cost-curve test.
+ * An opening tag is the name, then whitespace, `/`, or the close, then anything up to the first
+ * `>` or `&gt;`; a closing tag is `/`, the name, optional spaces, and the close. The attribute
+ * scan stops at the next `<` or `&lt;`, where the next attempt starts, so a line is read once
+ * however many unclosed openers it holds.
  */
-const BLOCK_TAG = new RegExp(
-  `<\\/?(?:${BLOCK_NAMES})(?=[\\s/>])[^<>]*>` +
-    `|&lt;\\/?(?:${BLOCK_NAMES})(?=[\\s/]|&gt;)(?:[^&<>]|&(?!lt;|gt;))*&gt;`,
-  "i"
-)
+const tagEnd = (line: string, at: number, open: number): number | undefined => {
+  let cursor = at + open
+  const closing = line[cursor] === "/"
+  if (closing) cursor += 1
+  BLOCK_NAME.lastIndex = cursor
+  const name = BLOCK_NAME.exec(line)
+  if (name === null) return undefined
+  cursor += name[0].length
+  if (closing) {
+    while (line[cursor] === " " || line[cursor] === "\t") cursor += 1
+    if (line[cursor] === ">") return cursor + 1
+    return line.startsWith("&gt;", cursor) ? cursor + 4 : undefined
+  }
+  const before = line[at - 1]
+  if (before !== undefined && WORD_CHARACTER.test(before)) return undefined
+  const next = line[cursor]
+  if (next === undefined || !(AFTER_NAME.test(next) || line.startsWith("&gt;", cursor))) {
+    return undefined
+  }
+  for (; cursor < line.length; cursor += 1) {
+    const character = line[cursor]
+    if (character === ">") return cursor + 1
+    if (character === "<") return undefined
+    if (character === "&") {
+      if (line.startsWith("&gt;", cursor)) return cursor + 4
+      if (line.startsWith("&lt;", cursor)) return undefined
+    }
+  }
+  return undefined
+}
 
-/** Where a block tag sits in a text: its 1-based line and the tag as written. */
-export interface BlockTagText {
-  readonly line: number
-  readonly tag: string
+/** The first block tag in one line, raw or escaped, as its start and end in the line. */
+const tagIn = (line: string): { readonly start: number; readonly end: number } | undefined => {
+  let raw = line.indexOf("<")
+  let escaped = line.indexOf("&lt;")
+  while (raw !== -1 || escaped !== -1) {
+    const isRaw = escaped === -1 || (raw !== -1 && raw < escaped)
+    const at = isRaw ? raw : escaped
+    const end = tagEnd(line, at, isRaw ? 1 : 4)
+    if (end !== undefined) return { start: at, end }
+    if (isRaw) raw = line.indexOf("<", at + 1)
+    else escaped = line.indexOf("&lt;", at + 1)
+  }
+  return undefined
 }
 
 /** A run of backticks in one line: where it starts and where it ends, exclusive. */
@@ -58,20 +107,22 @@ interface Run {
 }
 
 /**
- * One line with its closed backtick spans replaced by a space, per CommonMark's rule: a run of N
- * backticks opens a span that the next run of exactly N closes, and a run with no such partner is
- * literal text. A space rather than nothing, so text split around a span cannot join into a tag.
+ * One line with its closed backtick spans blanked, per CommonMark's rule: a run of N backticks
+ * opens a span that the next run of exactly N closes, and a run with no such partner is literal
+ * text. Each span becomes as many spaces as it had characters, so text split around a span cannot
+ * join into a tag and every position still names the same character of the line.
  *
  * Linear: the runs are listed once, grouped by length, and each length keeps a cursor into its
  * group, so finding a partner never rescans the line.
  */
-const withoutCodeSpans = (line: string): string => {
+const blankCodeSpans = (line: string): string => {
   const runs: Array<Run> = []
   for (let at = line.indexOf("`"); at !== -1; at = line.indexOf("`", at)) {
     const start = at
     while (line[at] === "`") at += 1
     runs.push({ start, end: at })
   }
+  if (runs.length < 2) return line
   const byLength = new Map<number, Array<number>>()
   for (const [index, run] of runs.entries()) {
     const group = byLength.get(run.end - run.start)
@@ -94,31 +145,69 @@ const withoutCodeSpans = (line: string): string => {
       index += 1
       continue
     }
-    out += `${line.slice(from, run.start)} `
-    from = (runs[partner] as Run).end
+    const end = (runs[partner] as Run).end
+    out += `${line.slice(from, run.start)}${" ".repeat(end - run.start)}`
+    from = end
     index = partner + 1
   }
   return out + line.slice(from)
 }
 
 /**
- * The first block tag in a text outside code, or `undefined` when there is none.
- *
- * Read line by line, so the answer names the line a writer can find. A fence opens on a line that
- * {@link fenceOpeningOf} recognizes and closes on one {@link closesFence} accepts; a fence that
- * never closes runs to the end of the text, as CommonMark reads it.
+ * A text without its NUL characters, with the way back to the text's own positions. The HTML
+ * parser drops a NUL from body text, so the text a `<p>` holds once read is the text without
+ * them, and `<\0p>` written as prose reads as `<p>`.
  */
-export const blockTagInText = (text: string): BlockTagText | undefined => {
-  let opening: string | undefined
-  for (const [index, line] of text.split("\n").entries()) {
-    if (opening !== undefined) {
-      if (closesFence(line, opening)) opening = undefined
-      continue
+const withoutNul = (
+  text: string
+): { readonly text: string; readonly at: (index: number) => number } => {
+  if (!text.includes("\0")) return { text, at: (index) => index }
+  const kept: Array<number> = []
+  let out = ""
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] === "\0") continue
+    kept.push(index)
+    out += text[index]
+  }
+  return { text: out, at: (index) => kept[index] ?? text.length }
+}
+
+/** Line breaks as the HTML parser reads them: CR LF, a lone CR, and LF are each one break. */
+const LINE_BREAK = /\r\n|\r|\n/g
+
+/** Where a block tag sits in a text: the position it starts at, and the tag as written. */
+export interface BlockTagInRun {
+  readonly offset: number
+  readonly tag: string
+}
+
+/**
+ * The first block tag in a paragraph's text outside a backtick span, or `undefined` when there is
+ * none. The text is read as the HTML parser will hold it in a `<p>`: line breaks in all three
+ * spellings, NULs dropped. A backtick span opens and closes on one line, so a tag on a line of its
+ * own is prose even when the lines around it carry backticks.
+ *
+ * `offset` is the tag's position in `text` as given, and `tag` is the tag sliced from the line as
+ * the parser reads it (backticks kept, NULs dropped), cut to {@link TAG_SHOWN} characters.
+ */
+export const blockTagInRun = (text: string): BlockTagInRun | undefined => {
+  const read = withoutNul(text)
+  const source = read.text
+  for (let start = 0; start <= source.length; ) {
+    LINE_BREAK.lastIndex = start
+    const lineBreak = LINE_BREAK.exec(source)
+    const end = lineBreak === null ? source.length : lineBreak.index
+    const line = source.slice(start, end)
+    const found = tagIn(blankCodeSpans(line))
+    if (found !== undefined) {
+      const written = line.slice(found.start, found.end)
+      return {
+        offset: read.at(start + found.start),
+        tag: written.length > TAG_SHOWN ? `${written.slice(0, TAG_SHOWN - 3)}...` : written
+      }
     }
-    opening = fenceOpeningOf(line)
-    if (opening !== undefined) continue
-    const tag = BLOCK_TAG.exec(withoutCodeSpans(line))?.[0]
-    if (tag !== undefined) return { line: index + 1, tag }
+    if (lineBreak === null) break
+    start = end + lineBreak[0].length
   }
   return undefined
 }
@@ -126,15 +215,24 @@ export const blockTagInText = (text: string): BlockTagText | undefined => {
 /** Elements whose text is code, and so may name any tag. */
 const CODE_ELEMENTS: ReadonlySet<string> = new Set(["code", "pre", "kbd", "samp"])
 
-/** An element's text with code subtrees left out, line breaks kept so fences still read. */
+/**
+ * An element's text with each code subtree read as one space, line breaks kept. The space keeps
+ * the text on either side of the code from joining: `&lt;<code>Tab</code>p&gt;` reads as
+ * `< p>`, not as `<p>`.
+ */
 const proseTextOf = (root: Element): string => {
   let out = ""
   const stack: Array<Node> = [...childrenOf(root)].reverse()
   while (stack.length > 0) {
     const node = stack.pop()
     if (node === undefined) break
-    if (isTextNode(node)) out += node.value
-    else if (isElement(node) && !CODE_ELEMENTS.has(node.tagName)) {
+    if (isTextNode(node)) {
+      out += node.value
+    } else if (isElement(node)) {
+      if (CODE_ELEMENTS.has(node.tagName)) {
+        out += " "
+        continue
+      }
       const children = childrenOf(node)
       for (let at = children.length - 1; at >= 0; at -= 1) {
         const child = children[at]
@@ -155,20 +253,32 @@ export interface BlockTagInArticle {
  * The first `<p>`, or `<mark>` outside any `<p>`, in a memory file's article whose text holds a
  * block tag outside code, or `undefined` when none does.
  *
- * A `<p>` is read whole, its `<mark>` included, because that is the text the prose path rendered
- * from one paragraph of the writer's body, so a backtick span the claim boundary falls inside is
- * still one span here. A `<mark>` outside a `<p>` (the first `<li>` of authored markup) is read on
- * its own. The text is what a reader sees, so `&lt;p&gt;` in the file reads as `<p>` here.
+ * A `<p>` is read whole, its `<mark>` included, because that is the paragraph the prose path
+ * rendered: the claim, a space, and the first body paragraph. A `<mark>` outside a `<p>` (the
+ * first `<li>` of authored markup) is read on its own. The text is what a reader sees, so
+ * `&lt;p&gt;` in the file reads as `<p>` here.
  */
 export const blockTagInArticle = (html: string): BlockTagInArticle | undefined => {
   const [article] = elementsNamed(parseDocument(html), "article")
   if (article === undefined) return undefined
   for (const element of elementsNamed(article, "p", "mark")) {
     if (element.tagName === "mark" && hasAncestor(element, "p")) continue
-    const found = blockTagInText(proseTextOf(element))
+    const found = blockTagInRun(proseTextOf(element))
     if (found !== undefined) {
       return { element: element.tagName === "mark" ? "mark" : "p", tag: found.tag }
     }
   }
   return undefined
+}
+
+/**
+ * The format violation a file's article earns from {@link blockTagInArticle}, or `undefined`.
+ * One sentence for every gate that holds a file to the rule, `validateOps` and the store's render
+ * gate alike, so a writer reads the same refusal from either.
+ */
+export const blockTagViolation = (html: string): string | undefined => {
+  const found = blockTagInArticle(html)
+  return found === undefined
+    ? undefined
+    : `a <${found.element}>'s text holds the block tag \`${found.tag}\` as characters, outside code: markup goes in as elements (\`article_html\` on a write line), and a tag the record discusses goes in <code>, or in backticks that open and close on one line`
 }

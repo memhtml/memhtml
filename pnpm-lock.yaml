@@ -124,6 +124,9 @@ importers:
       '@types/node':
         specifier: 26.6.5
         version: 26.6.5
+      fast-check:
+        specifier: 'catalog:'
+        version: 4.10.2
       typescript:
         specifier: 7.0.2
         version: 7.0.2

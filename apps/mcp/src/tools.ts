@@ -158,13 +158,15 @@ const RETRIEVES = () => [Retrieval, DatabaseService, Roots]
 const ARTICLE_HTML_CONTRACT =
   "Supply EXACTLY ONE of `body` or `article_html`. Both or neither is refused. " +
   "`body` is prose and is stored as escaped text, so a body holding an HTML block tag (<p>, <ul>, <li>, <dl>, <table>, <h2> and the like, raw or escaped as &lt;p&gt;) " +
-  "outside a fenced block or backticks is refused with ERR_INVALID_FLAG: send markup as `article_html`, and put a tag the memory discusses in backticks. " +
+  "outside code is refused with ERR_INVALID_FLAG: send markup as `article_html`. A tag the memory discusses counts as code in backticks that open and close on one line, " +
+  "or in a fenced block that is a paragraph of its own, set off by blank lines. " +
   "`article_html` is raw <article> inner markup used verbatim, and the caller owns the format: exactly one <mark>, " +
   "inside the first <p> or the first <li>, and never inside <aside> or <details>; only elements from the closed " +
   "vocabulary in docs/format.md; no class attribute, no style attribute, no <script>, no event handlers. " +
   'The FIRST <time datetime="…"> element becomes the memory\'s event time, which is what the recency arm ranks ' +
   "by, so an episodic memory about last week should carry last week's date, not today's. Markup that violates " +
-  "the format is refused before any file is written or committed. " +
+  "the format is refused before any file is written or committed, and so is a <p>, or a <mark> outside a <p>, " +
+  "whose text holds a block tag as characters (&lt;li&gt; typed into a paragraph): markup goes in as elements, and a tag the memory discusses goes in <code>. " +
   "Code snippets: in `body` prose, a paragraph that is entirely a fenced code block (```ts … ```) becomes " +
   '<figure><pre><code data-lang="ts">, whitespace verbatim, and the language promotes to a `lang:ts` entity; ' +
   "a blank line inside the fence does not split it. In `article_html`, author the same markup yourself: " +

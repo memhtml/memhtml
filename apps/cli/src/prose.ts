@@ -23,7 +23,13 @@
  * reason: {@link MarkupInProse}, a body holding an HTML block tag outside code.
  */
 
-import { blockTagInText, closesFence, fenceOpeningOf } from "@memhtml/html"
+import {
+  blockTagInRun,
+  closesFence,
+  fenceOpeningOf,
+  proseParagraphs,
+  proseParagraphText
+} from "@memhtml/html"
 import { Schema } from "effect"
 
 /**
@@ -84,14 +90,14 @@ export const proseTail = (prose: string): ReadonlyArray<string> => {
 /**
  * A prose body that holds an HTML block tag outside code: the refusal both doors give before a
  * body is rendered. `line` is the body's own 1-based line and `tag` the tag as written, raw or
- * entity-escaped.
+ * entity-escaped, cut to 80 characters.
  *
  * Prose is escaped as text, so `<p>One.</p>` in a body would land as the characters `&lt;p&gt;One.`
- * inside the claim's `<mark>`, and the render gate accepts that because escaped text is valid
- * content. A block tag outside code in prose is almost never meant as text, and the door is the
- * last place that still knows the writer sent it, so the door refuses and names `article_html`, the
- * field that takes markup. A tag the record discusses goes in backticks or a fenced block, which the
- * check reads as code (`blockTagInText` in `@memhtml/html`, the detector `validateOps` shares).
+ * inside the claim's `<mark>`, and the format accepts that because escaped text is valid content.
+ * A block tag outside code in prose is almost never meant as text, and the door is the last place
+ * that still knows the writer sent it, so the door refuses and names `article_html`, the field that
+ * takes markup. A tag the record discusses goes in backticks that open and close on its line, or in
+ * a fenced block that is a paragraph of its own.
  *
  * A typed error rather than a door-local failure because the MCP tools raise it inside a handler,
  * where `codeFor`, `messageFor`, and each door's suggestions give it its envelope; `memhtml apply`
@@ -102,10 +108,50 @@ export class MarkupInProse extends Schema.TaggedError<MarkupInProse>()("MarkupIn
   tag: Schema.String
 }) {}
 
-/** The refusal for a prose body holding a block tag outside code, or `undefined` for none. */
+/** Line breaks as the HTML parser reads them, for naming a body's line. */
+const LINE_BREAKS = /\r\n|\r|\n/g
+
+/** The 1-based line of a body that holds the character at `offset`. */
+const lineAt = (prose: string, offset: number): number =>
+  (prose.slice(0, offset).match(LINE_BREAKS)?.length ?? 0) + 1
+
+/**
+ * The refusal for a prose body holding a block tag outside code, or `undefined` for none.
+ *
+ * The body is judged as it renders, not line by line: the claim and tail the door derives are
+ * planned into paragraphs by `proseParagraphs`, the plan the template renders, and each `<p>`'s
+ * text is read by `blockTagInRun`, the reading `blockTagInArticle` gives the written file. So the
+ * claim's line and the next line of the body join with a space, as they do in the `<p>`, and a
+ * fenced block is code only when it is a paragraph of its own. The door refuses exactly the
+ * bodies whose rendered file `validateOps` would refuse.
+ *
+ * The claim and each tail paragraph are trimmed runs of the body in order, so each is found in
+ * the body from where the one before it ended, and the hit's position in the `<p>` maps back to
+ * the body's line.
+ */
 export const markupInProse = (prose: string): MarkupInProse | undefined => {
-  const found = blockTagInText(prose)
-  return found === undefined ? undefined : new MarkupInProse(found)
+  const claim = claimFromProse(prose)
+  const tail = proseTail(prose)
+  const claimAt = prose.length - prose.trimStart().length
+  const tailAt: Array<number> = []
+  let cursor = claimAt + claim.length
+  for (const text of tail) {
+    const at = prose.indexOf(text, cursor)
+    tailAt.push(at)
+    cursor = at + text.length
+  }
+  for (const paragraph of proseParagraphs(claim, tail)) {
+    if (paragraph.kind !== "p") continue
+    const found = blockTagInRun(proseParagraphText(paragraph))
+    if (found === undefined) continue
+    const lead = paragraph.claim === undefined ? 0 : paragraph.claim.length + 1
+    const offset =
+      found.offset < lead
+        ? claimAt + found.offset
+        : (tailAt[paragraph.index ?? 0] ?? 0) + found.offset - lead
+    return new MarkupInProse({ line: lineAt(prose, offset), tag: found.tag })
+  }
+  return undefined
 }
 
 /** The reason a {@link MarkupInProse} refusal gives, the same words on every door. */
@@ -113,14 +159,14 @@ export const markupInProseReason = (refusal: {
   readonly line: number
   readonly tag: string
 }): string =>
-  `\`body\` holds the HTML block tag \`${refusal.tag}\` on its line ${String(refusal.line)}, outside a code fence or backticks: \`body\` is prose and is stored as escaped text, so the tag would reach the claim and the paragraphs as literal characters. Send the article as markup in \`article_html\` instead, with its own <mark> in the first <p>, or put a tag the record discusses in backticks`
+  `\`body\` holds the HTML block tag \`${refusal.tag}\` on its line ${String(refusal.line)}, outside code: \`body\` is prose and is stored as escaped text, so the tag would reach the claim and the paragraphs as literal characters. Send the article as markup in \`article_html\` instead, with its own <mark> in the first <p>, or put a tag the record discusses in backticks that open and close on its line. A fenced block counts as code only as a paragraph of its own, with a blank line before and after it`
 
 /**
  * What a JSONL writer does about a {@link MarkupInProse} refusal: the same line with the markup in
- * `article_html`, or the tag kept as prose in backticks. Neither entry holds a backtick itself,
- * because the reference site renders each suggestion inside a code span.
+ * `article_html`, or the tag kept in `body` as code. Neither entry holds a backtick itself, because
+ * the reference site renders each suggestion inside a code span.
  */
 export const MARKUP_IN_PROSE_SUGGESTIONS: ReadonlyArray<string> = [
   '{"op":"write","title":"<title>","type":"semantic","article_html":"<p><mark><the claim></mark></p><ul><li><an item></li></ul>"}',
-  "keep body and put a tag the record discusses in backticks or a fenced block, which the check reads as code"
+  "keep body and put a tag the record discusses in backticks that open and close on one line, or in a fenced block set off by blank lines"
 ]

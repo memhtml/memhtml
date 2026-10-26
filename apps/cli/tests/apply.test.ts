@@ -3,13 +3,15 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { Git } from "@memhtml/cli"
+import { blockTagInArticle, renderTemplate } from "@memhtml/html"
 import { Effect } from "effect"
+import fc from "fast-check"
 import { afterEach, describe, expect, it } from "vitest"
 
 import { decodeApply, decodeSessionPut } from "../src/apply.js"
 import { GUIDE, GUIDE_OP_EXAMPLE, GUIDE_TOPICS } from "../src/commands.js"
 import { EXIT_OK, EXIT_USAGE } from "../src/envelope.js"
-import { claimFromProse, proseTail } from "../src/prose.js"
+import { claimFromProse, markupInProse, proseTail } from "../src/prose.js"
 import { run } from "../src/run.js"
 import { type Cli, makeCli } from "./harness.js"
 
@@ -923,6 +925,191 @@ describe("a prose body holding HTML block markup", () => {
     expect(parse(put.stdout).data).toMatchObject({ appended: 1, violations: [] })
     const committed = await session(["session", "commit", "--id", "tags", "--message", "m"])
     expect(parse(committed.stdout).data).toMatchObject({ kind: "committed" })
+  })
+
+  /** The fenced list below, in the claim's paragraph because no blank line sets it off. */
+  const FENCE_IN_PARAGRAPH =
+    "The list markup is below.\n```html\n<ul>\n  <li>x</li>\n</ul>\n```\nIt renders one item."
+
+  it("judges the body as it renders: the claim's line joins the next, and a fence is code alone", () => {
+    /**
+     * The template builds the first `<p>` as the claim, a space, and the first body paragraph, and
+     * renders a fence as code only when it is a paragraph of its own. Each body below reads one way
+     * line by line and the other way rendered, and the door gives the rendered reading, the one
+     * `validateOps` gives the file.
+     */
+    expect(markupInProse(FENCE_IN_PARAGRAPH)).toMatchObject({ line: 3, tag: "<ul>" })
+    // The claim's backtick and the next line's first one pair up once the lines join.
+    expect(markupInProse("Run `make.\n`<p>` is the paragraph element.")).toMatchObject({
+      line: 2,
+      tag: "<p>"
+    })
+    expect(markupInProse("Run `make.\n<p>` is the paragraph element.")).toBeUndefined()
+    // Set off by blank lines, the same fence is a paragraph of its own and renders as code.
+    expect(
+      markupInProse(
+        "The list markup is below.\n\n```html\n<ul>\n  <li>x</li>\n</ul>\n```\n\nIt renders one item."
+      )
+    ).toBeUndefined()
+    // A line names the body's own line in any of the three line-break spellings.
+    expect(markupInProse("A claim.\r\nNext.\r\n\r\nThen <ul> here.")).toMatchObject({ line: 4 })
+    expect(markupInProse("  A claim.\rThen <ul> here.")).toMatchObject({ line: 2 })
+  })
+
+  it("refuses a fence in the claim's paragraph at both doors, and passes what renders as code", async () => {
+    const cli = await withApply()
+    const refused = await cli.fromFile([line({ title: "List markup", body: FENCE_IN_PARAGRAPH })])
+    expect(refused.exitCode).toBe(EXIT_USAGE)
+    expect(parse(refused.stdout).code).toBe("ERR_INVALID_FLAG")
+    expect(parse(refused.stdout).error).toContain("`<ul>` on its line 3")
+    expect(await htmlOnDisk(cli.root)).toEqual([])
+
+    const session = (argv: ReadonlyArray<string>, input = "") =>
+      run([...argv, "--repo", cli.root], undefined, () => Promise.resolve(input), false)
+    expect((await session(["session", "start", "--id", "fences"])).exitCode).toBe(EXIT_OK)
+    const put = (body: string) =>
+      session(
+        ["session", "put", "--id", "fences", "--file", "-", "--no-server"],
+        `${line({ title: "Make", body })}\n`
+      )
+    const fenced = await put(FENCE_IN_PARAGRAPH)
+    expect(fenced.exitCode).toBe(EXIT_USAGE)
+    expect(parse(fenced.stdout).code).toBe("ERR_INVALID_FLAG")
+    const spanned = await put("Run `make.\n<p>` is the paragraph element.")
+    expect(spanned.exitCode, spanned.stdout).toBe(EXIT_OK)
+    expect(parse(spanned.stdout).data).toMatchObject({ appended: 1, violations: [] })
+    const committed = await session(["session", "commit", "--id", "fences", "--message", "m"])
+    expect(parse(committed.stdout).data).toMatchObject({ kind: "committed" })
+  })
+
+  it("quotes the tag as written, cut to 80 characters", () => {
+    const quoted = decodeApply(line({ title: "T", body: "A <p data-x=`v`> tag." }))
+    expect(quoted.ok).toBe(false)
+    if (quoted.ok) return
+    expect(quoted.failure.error).toContain("`<p data-x=`v`>` on its line 1")
+    const long = decodeApply(line({ title: "T", body: `A <p ${"a".repeat(1_000_000)}> tag.` }))
+    expect(long.ok).toBe(false)
+    if (long.ok) return
+    expect(long.failure.error).toContain(`\`<p ${"a".repeat(74)}...\` on its line 1`)
+    expect(long.failure.error.length).toBeLessThan(1000)
+  })
+
+  it("decodes a body naming a component, a generic, or a comparison that looks like a tag", () => {
+    for (const body of [
+      "A <Table> component renders the rows.",
+      "Typed as React.FC<P>, it returns List<Article>.",
+      "So x<p and q>0 holds for every row."
+    ]) {
+      expect(decodeApply(line({ title: "T", body })).ok, body).toBe(true)
+    }
+  })
+
+  it("reads a 10M-character body line without running out of stack", async () => {
+    const size = 10_000_000
+    expect(decodeApply(line({ title: "T", body: `&lt;p ${"a".repeat(size)}` })).ok).toBe(true)
+    const cli = await withApply()
+    const refused = await cli.fromFile([
+      line({ title: "T", body: `A claim. &lt;p ${"a".repeat(size)}&gt; ends it.` })
+    ])
+    expect(refused.exitCode).toBe(EXIT_USAGE)
+    expect(parse(refused.stdout).code).toBe("ERR_INVALID_FLAG")
+    expect(parse(refused.stdout).error).toContain(`\`&lt;p ${"a".repeat(71)}...\` on its line 1`)
+    expect(refused.stdout.length).toBeLessThan(5000)
+  }, 120_000)
+
+  it("refuses article_html whose <p> holds a block tag as text at apply, as session put does", async () => {
+    const cli = await withApply()
+    const asText = "<p><mark>Scraped rooms are each an &lt;li&gt; with an h3 title.</mark></p>"
+    const result = await cli.fromFile([line({ title: "Rooms", article_html: asText })])
+    expect(result.exitCode).toBe(EXIT_OK)
+    const data = applied(result.stdout)
+    expect(data.results[0]?.code).toBe("ERR_INVALID_MEMORY")
+    expect(data.results[0]?.error).toContain("holds the block tag `<li>` as characters")
+    expect(data.summary.written).toBe(0)
+    expect(await htmlOnDisk(cli.root)).toEqual([])
+
+    const session = (argv: ReadonlyArray<string>, input = "") =>
+      run([...argv, "--repo", cli.root], undefined, () => Promise.resolve(input), false)
+    expect((await session(["session", "start", "--id", "rooms"])).exitCode).toBe(EXIT_OK)
+    const put = await session(
+      ["session", "put", "--id", "rooms", "--file", "-", "--no-server"],
+      `${line({ title: "Rooms", article_html: asText })}\n`
+    )
+    expect(parse(put.stdout).code).toBe("ERR_INVALID_MEMORY")
+    expect(parse(put.stdout).error).toContain("holds the block tag `<li>` as characters")
+  })
+})
+
+/**
+ * Prose built from the pieces that move a tag in or out of code: backticks, fences, sentence
+ * ends, line breaks in three spellings, NULs, both spellings of a tag, and names that only look
+ * like one.
+ */
+const prosePiece = fc.constantFrom(
+  "word",
+  "List",
+  "x",
+  " ",
+  ".",
+  "!",
+  "\n",
+  "\n\n",
+  "\r",
+  "\r\n",
+  "\0",
+  "\t",
+  "`",
+  "``",
+  "```",
+  "```html",
+  "<",
+  ">",
+  "/",
+  "&",
+  "&lt;",
+  "&gt;",
+  "p",
+  "ul",
+  "li",
+  "h2",
+  "pre",
+  "Table",
+  "<p>",
+  "</p>",
+  "<li ",
+  "&lt;p&gt;",
+  "a=`v`"
+)
+
+describe("the prose door and the rendered file", () => {
+  it("refuses a body exactly when the file it renders holds a block tag as text", () => {
+    /**
+     * The door derives the claim and tail, judges what the template will render from them, and
+     * names a line of the body; `blockTagInArticle` reads the file the template does render. For
+     * any body, the two find the same tag or none, and the line the door names holds the tag's
+     * opening. Only the opening, up to its first space: a tag can run from the claim into the
+     * next line, which the `<p>` joins with a space.
+     */
+    fc.assert(
+      fc.property(
+        fc.array(prosePiece, { maxLength: 40 }).map((pieces) => pieces.join("")),
+        (body) => {
+          const refusal = markupInProse(body)
+          const file = renderTemplate({
+            title: "A fact",
+            claim: claimFromProse(body),
+            body: proseTail(body),
+            memoryType: "semantic",
+            at: "2031-01-01T00:00:00Z"
+          })
+          expect(refusal?.tag).toBe(blockTagInArticle(file)?.tag)
+          if (refusal === undefined) return
+          const named = body.split(/\r\n|\r|\n/)[refusal.line - 1] ?? ""
+          expect(named.replaceAll("\0", "")).toContain(refusal.tag.split(/\s/)[0])
+        }
+      ),
+      { numRuns: 3000 }
+    )
   })
 })
 

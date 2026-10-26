@@ -275,6 +275,35 @@ describe("validateOps", () => {
     ).toEqual([])
   })
 
+  it("reads a code element as a space and lowercase names only, as the doors do", async () => {
+    const view = await head()
+    const authored = (path: string, articleHtml: string): OverlayOp =>
+      put(
+        path,
+        renderTemplate({
+          title: "Authored",
+          claim: "",
+          articleHtml,
+          entities: [FIXTURE_ENTITY],
+          memoryType: "semantic",
+          at: "2031-01-01T00:00:00Z"
+        })
+      )
+    expect(
+      validateOps(view, [
+        authored(
+          "areas/inbox/tab.html",
+          "<p><mark>Type a &lt;<code>Tab</code>p&gt; to indent.</mark></p>"
+        ),
+        authored(
+          "areas/inbox/table.html",
+          "<p><mark>A &lt;Table&gt; component renders rows.</mark></p>"
+        ),
+        authored("areas/inbox/generic.html", "<p><mark>It returns List&lt;Article&gt;.</mark></p>")
+      ])
+    ).toEqual([])
+  })
+
   it("holds only a put to the block-tag rule, so an existing record carrying one still archives", async () => {
     const legacy = memory("Legacy", "<p>Old.</p>")
     const view = await mapHead("0".repeat(40), [

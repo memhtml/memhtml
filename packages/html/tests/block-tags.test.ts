@@ -1,36 +1,38 @@
+import fc from "fast-check"
 import { describe, expect, it } from "vitest"
 
-import { blockTagInArticle, blockTagInText } from "../src/block-tags.js"
-import { renderTemplate } from "../src/template.js"
+import { blockTagInArticle, blockTagInRun, blockTagViolation } from "../src/block-tags.js"
+import { proseParagraphs, proseParagraphText, renderTemplate } from "../src/template.js"
 
 /**
- * Block-tag-shaped text: the check both prose doors run on a `body` and `validateOps` runs on a
- * put's `<p>` and `<mark>` text. The properties that matter: a block tag written as text is found
- * in either spelling with the line it sits on, code is exempt however it is written (a fence, a
- * backtick span, a `<code>` element), and nothing that is not a block tag is found.
+ * Block-tag-shaped text: the check both prose doors run on the paragraphs a `body` renders to, and
+ * `validateOps` and the store's render gate run on an article's `<p>` and `<mark>` text. The
+ * properties that matter: a block tag written as text is found in either spelling, as written,
+ * with its position; code is exempt (a backtick span on one line, a `<code>` element, a fenced
+ * block that renders as a `<figure>`); nothing that is not a block tag is found; and the doors'
+ * reading of a body is the same as the reading of the file it renders.
  */
 
-describe("blockTagInText", () => {
-  it("finds a block tag and its escaped form, naming the 1-based line and the text", () => {
-    expect(blockTagInText("<p>One.</p><p>Two.</p>")).toEqual({ line: 1, tag: "<p>" })
-    expect(blockTagInText("First line.\n\nThen </ul> on line three.")).toEqual({
-      line: 3,
+describe("blockTagInRun", () => {
+  it("finds a block tag and its escaped form, with its position and the tag as written", () => {
+    expect(blockTagInRun("<p>One.</p><p>Two.</p>")).toEqual({ offset: 0, tag: "<p>" })
+    expect(blockTagInRun("First line.\n\nThen </ul> on line three.")).toEqual({
+      offset: 18,
       tag: "</ul>"
     })
-    expect(blockTagInText('A heading <h2 id="x"> here.')).toEqual({
-      line: 1,
+    expect(blockTagInRun('A heading <h2 id="x"> here.')).toEqual({
+      offset: 10,
       tag: '<h2 id="x">'
     })
-    expect(blockTagInText("Upper case <LI> is the same element.")?.tag).toBe("<LI>")
-    expect(blockTagInText("&lt;p&gt;One.&lt;/p&gt;")).toEqual({ line: 1, tag: "&lt;p&gt;" })
-    expect(blockTagInText("Rows:\n&lt;/table&gt;")).toEqual({ line: 2, tag: "&lt;/table&gt;" })
+    expect(blockTagInRun("&lt;p&gt;One.&lt;/p&gt;")).toEqual({ offset: 0, tag: "&lt;p&gt;" })
+    expect(blockTagInRun("Rows:\n&lt;/table&gt;")).toEqual({ offset: 6, tag: "&lt;/table&gt;" })
   })
 
   it("finds every element in the block list", () => {
     const names = ["p", "ul", "ol", "li", "dl", "dt", "dd", "figure", "table", "article"]
     for (const name of [...names, "section", "h1", "h2", "h3", "h4", "h5", "h6"]) {
-      expect(blockTagInText(`x <${name}> y`)?.tag, name).toBe(`<${name}>`)
-      expect(blockTagInText(`x &lt;/${name}&gt; y`)?.tag, name).toBe(`&lt;/${name}&gt;`)
+      expect(blockTagInRun(`x <${name}> y`)?.tag, name).toBe(`<${name}>`)
+      expect(blockTagInRun(`x &lt;/${name}&gt; y`)?.tag, name).toBe(`&lt;/${name}&gt;`)
     }
   })
 
@@ -45,34 +47,60 @@ describe("blockTagInText", () => {
       "p < 0.05 and q > 1, so a<b>c is not a tag either: 3 <p 4",
       "&lt; and &gt; on their own, and &lt;pre&gt; is not in the list."
     ]) {
-      expect(blockTagInText(prose), prose).toBeUndefined()
+      expect(blockTagInRun(prose), prose).toBeUndefined()
     }
   })
 
-  it("treats a fenced block as code, blank lines and an unclosed fence included", () => {
-    expect(blockTagInText("Markup:\n\n```html\n<ul>\n\n  <li>x</li>\n</ul>\n```")).toBeUndefined()
-    // A fence that never closes runs to the end of the prose, as CommonMark reads it.
-    expect(blockTagInText("Markup:\n\n```html\n<p>x</p>")).toBeUndefined()
-    // A fence closes on a run at least as long as the one that opened it, and text after is prose.
-    expect(blockTagInText("````\n```\n<p>\n````\nAfter </p> the fence.")).toEqual({
-      line: 5,
-      tag: "</p>"
-    })
+  it("matches lowercase names only, and no opening tag right after a letter, digit, or _", () => {
+    for (const prose of [
+      "A <Table> component renders the rows.",
+      "Typed as React.FC<P> in the view.",
+      "It returns List<Article> sorted by date.",
+      "Upper case <LI> and &lt;UL&gt; are not how markup is written.",
+      "So x<p and q>0 holds for every row.",
+      "A List<li> type and a Map<p, q> type.",
+      "Call f_<p> once."
+    ]) {
+      expect(blockTagInRun(prose), prose).toBeUndefined()
+    }
+    // A closing tag after a word is how markup is written, and an opening one after punctuation.
+    expect(blockTagInRun("It ends here</p>")?.tag).toBe("</p>")
+    expect(blockTagInRun("Items:(<ul>)")?.tag).toBe("<ul>")
   })
 
-  it("treats a backtick span as code, and only a closed one", () => {
-    expect(blockTagInText("The `<p>` element holds one paragraph.")).toBeUndefined()
-    expect(blockTagInText("Escaped it reads `&lt;p&gt;`.")).toBeUndefined()
+  it("quotes the tag sliced from the text, cut to 80 characters", () => {
+    // A backtick span inside the tag is quoted as written, not as the blank the scan read.
+    expect(blockTagInRun("A <p data-x=`v`> tag.")).toEqual({ offset: 2, tag: "<p data-x=`v`>" })
+    const found = blockTagInRun(`See <p ${"a".repeat(1_000_000)}> here.`)
+    expect(found?.offset).toBe(4)
+    expect(found?.tag).toHaveLength(80)
+    expect(found?.tag).toBe(`<p ${"a".repeat(74)}...`)
+  })
+
+  it("reads text as the HTML parser holds it: three line-break spellings, NULs dropped", () => {
+    // A span ends on the line it opened on, and CR LF and a lone CR end a line as LF does.
+    for (const lineBreak of ["\n", "\r\n", "\r"]) {
+      expect(blockTagInRun(`Open \` here <p>${lineBreak}and \` close.`)?.tag).toBe("<p>")
+      expect(blockTagInRun(`Open \` here${lineBreak}<p>\` close.`)?.tag).toBe("<p>")
+    }
+    // The parser drops a NUL from body text, so `<\0p>` reads as `<p>`. The offset counts the NUL.
+    expect(blockTagInRun("Then <\0p> here.")).toEqual({ offset: 5, tag: "<p>" })
+    expect(blockTagInRun("\0\0<ul>")).toEqual({ offset: 2, tag: "<ul>" })
+  })
+
+  it("treats a closed backtick span on one line as code, and nothing else", () => {
+    expect(blockTagInRun("The `<p>` element holds one paragraph.")).toBeUndefined()
+    expect(blockTagInRun("Escaped it reads `&lt;p&gt;`.")).toBeUndefined()
     // A double-backtick span may hold a single backtick, and its end is the matching double run.
-    expect(blockTagInText("Write `` `<li>` `` to show the backticks.")).toBeUndefined()
+    expect(blockTagInRun("Write `` `<li>` `` to show the backticks.")).toBeUndefined()
     // A run with no matching run is literal text, so a tag after it is still prose.
-    expect(blockTagInText("An odd ` tick, then <p> as prose.")?.tag).toBe("<p>")
-    // A span ends on the line it opened on: a backtick on the next line does not close it.
-    expect(blockTagInText("Open ` here <p>\nand ` close here.")?.tag).toBe("<p>")
+    expect(blockTagInRun("An odd ` tick, then <p> as prose.")?.tag).toBe("<p>")
     // Splitting the tag around a span does not make one.
-    expect(blockTagInText("<`x`p>")).toBeUndefined()
+    expect(blockTagInRun("<`x`p>")).toBeUndefined()
     // A tag beside a span is still found.
-    expect(blockTagInText("The `x` value and a </li> after it.")?.tag).toBe("</li>")
+    expect(blockTagInRun("The `x` value and a </li> after it.")?.tag).toBe("</li>")
+    // Fence lines in a paragraph's text are text: a fence is code only as a paragraph of its own.
+    expect(blockTagInRun("```html\n<ul>\n```")?.tag).toBe("<ul>")
   })
 
   it("stays linear on the shapes that would make a tag pattern backtrack", () => {
@@ -81,10 +109,10 @@ describe("blockTagInText", () => {
      * unbounded caller input on the write path, and the obvious `<p\b[^>]*>` scans to the end of the
      * text from every `<p` when no `>` follows, which is quadratic. Measured on the raw shape below,
      * that pattern took 181 ms, 742 ms, and 2967 ms at 10k, 20k, and 40k openers (the escaped one,
-     * with `.*?&gt;`, 169, 681, and 2818 ms), where the pattern that ships took under 1 ms at each.
-     * It stops each attempt at the next `<` (escaped, the next `&lt;`), so a run of openers is one
-     * pass. The bound sits an order of magnitude below the quadratic cost at 40k, so a loaded host
-     * cannot turn a pass into a fail.
+     * with `.*?&gt;`, 169, 681, and 2818 ms). The scan stops each attempt at the next `<` or
+     * `&lt;`, where the next attempt starts, so a run of openers is one pass. The bound sits an
+     * order of magnitude below the quadratic cost at 40k, so a loaded host cannot turn a pass into
+     * a fail.
      */
     const shapes = [
       { name: "raw openers", text: "<p ".repeat(40_000) },
@@ -93,15 +121,40 @@ describe("blockTagInText", () => {
       { name: "one long line of words", text: "word ".repeat(40_000) }
     ]
     for (const { name, text } of shapes) {
-      expect(blockTagInText(text), name).toBeUndefined()
+      expect(blockTagInRun(text), name).toBeUndefined()
       const started = process.hrtime.bigint()
-      for (let i = 0; i < 5; i++) blockTagInText(text)
+      for (let i = 0; i < 5; i++) blockTagInRun(text)
       const perCallMs = Number(process.hrtime.bigint() - started) / 5e6
-      expect(perCallMs, `blockTagInText took ${perCallMs.toFixed(1)}ms on ${name}`).toBeLessThan(
-        250
-      )
+      expect(perCallMs, `blockTagInRun took ${perCallMs.toFixed(1)}ms on ${name}`).toBeLessThan(250)
     }
   })
+
+  it("reads a line of 10M characters without running out of stack", () => {
+    /**
+     * A regular expression over the escaped spelling, `(?:[^&<>]|&(?!lt;|gt;))*`, keeps one
+     * backtrack frame per character and throws `RangeError: Maximum call stack size exceeded`
+     * from about 8.5M characters after an `&lt;p` opener. The scan is a loop and keeps none.
+     * Measured on an idle host, each shape here took 40 to 560 ms; the bound is generous because
+     * the failure it guards is a throw or a quadratic, and neither finishes inside it.
+     */
+    const size = 10_000_000
+    const shapes = [
+      { name: "escaped opener, then letters", text: `&lt;p ${"a".repeat(size)}` },
+      { name: "escaped opener, then ampersands", text: `&lt;p ${"&".repeat(size)}` },
+      { name: "raw opener, then letters", text: `<p ${"a".repeat(size)}` },
+      { name: "ampersands", text: "&".repeat(size) },
+      { name: "raw openers", text: "<p ".repeat(size / 3) },
+      { name: "escaped openers", text: "&lt;p ".repeat(size / 6) },
+      { name: "backtick runs", text: "` ``".repeat(size / 4) }
+    ]
+    for (const { name, text } of shapes) {
+      const started = process.hrtime.bigint()
+      expect(blockTagInRun(text), name).toBeUndefined()
+      const ms = Number(process.hrtime.bigint() - started) / 1e6
+      expect(ms, `blockTagInRun took ${ms.toFixed(0)}ms on ${name}`).toBeLessThan(5000)
+    }
+    expect(blockTagInRun(`&lt;p ${"a".repeat(size)}&gt;`)?.tag).toBe(`&lt;p ${"a".repeat(71)}...`)
+  }, 120_000)
 })
 
 /** A file whose article is `article`, through the template's markup path. */
@@ -161,7 +214,107 @@ describe("blockTagInArticle", () => {
     ).toBeUndefined()
   })
 
+  it("reads a code element as one space, so the text around it does not join into a tag", () => {
+    expect(
+      blockTagInArticle(
+        withArticle("<p><mark>Type a &lt;<code>Tab</code>p&gt; to indent.</mark></p>")
+      )
+    ).toBeUndefined()
+    expect(
+      blockTagInArticle(withArticle("<p><mark>Run <code>make</code>, then &lt;ul&gt;.</mark></p>"))
+    ).toEqual({ element: "p", tag: "<ul>" })
+  })
+
+  it("reads a fence that shares its paragraph with prose as that paragraph's text", () => {
+    const body = ["```html\n<ul>\n  <li>x</li>\n</ul>\n```\nIt renders one item."]
+    expect(blockTagInArticle(fromProse("The list markup is below.", body))).toEqual({
+      element: "p",
+      tag: "<ul>"
+    })
+  })
+
   it("reads only the article, so a head or a missing article holds nothing", () => {
     expect(blockTagInArticle("<html><head><title>&lt;p&gt;</title></head></html>")).toBeUndefined()
+  })
+})
+
+describe("blockTagViolation", () => {
+  it("names the element and the tag, and names nothing for a clean article", () => {
+    const violation = blockTagViolation(
+      withArticle("<p><mark>Scraped rooms are each an &lt;li&gt; with an h3 title.</mark></p>")
+    )
+    expect(violation).toContain("a <p>'s text holds the block tag `<li>` as characters")
+    expect(violation).toContain("article_html")
+    expect(blockTagViolation(withArticle("<p><mark>A claim.</mark></p>"))).toBeUndefined()
+  })
+})
+
+/**
+ * Prose built from the pieces that move a tag in or out of code: backticks, fences, line breaks
+ * in three spellings, NULs, both spellings of a tag, and names that only look like one.
+ */
+const piece = fc.constantFrom(
+  "word",
+  "List",
+  "x",
+  " ",
+  ".",
+  "!",
+  "\n",
+  "\n\n",
+  "\r",
+  "\r\n",
+  "\0",
+  "\t",
+  "`",
+  "``",
+  "```",
+  "```html",
+  "<",
+  ">",
+  "/",
+  "&",
+  "&lt;",
+  "&gt;",
+  "p",
+  "ul",
+  "li",
+  "h2",
+  "pre",
+  "Table",
+  "<p>",
+  "</p>",
+  "<li ",
+  "&lt;p&gt;",
+  "a=`v`"
+)
+const prose = fc.array(piece, { maxLength: 24 }).map((pieces) => pieces.join(""))
+
+describe("proseParagraphs", () => {
+  it("joins the claim and the first body paragraph with a space, and keeps a whole fence apart", () => {
+    expect(
+      proseParagraphs("Run `make.", ["`<p>` is the paragraph element.", "```\n<p>\n```"])
+    ).toEqual([
+      { kind: "p", claim: "Run `make.", text: "`<p>` is the paragraph element.", index: 0 },
+      { kind: "figure", block: { code: "<p>" }, index: 1 }
+    ])
+    const [first] = proseParagraphs("Run `make.", ["`<p>` is the paragraph element."])
+    expect(first?.kind === "p" && proseParagraphText(first)).toBe(
+      "Run `make. `<p>` is the paragraph element."
+    )
+  })
+
+  it("plans the paragraphs the template renders, so reading the plan reads the file", () => {
+    fc.assert(
+      fc.property(prose, fc.array(prose, { maxLength: 4 }), (claim, body) => {
+        const planned = proseParagraphs(claim, body)
+          .map((paragraph) =>
+            paragraph.kind === "p" ? blockTagInRun(proseParagraphText(paragraph))?.tag : undefined
+          )
+          .find((tag) => tag !== undefined)
+        expect(planned).toBe(blockTagInArticle(fromProse(claim, body))?.tag)
+      }),
+      { numRuns: 3000 }
+    )
   })
 })

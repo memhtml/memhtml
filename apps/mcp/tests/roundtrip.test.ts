@@ -812,6 +812,27 @@ describe("a tool call through the toolkit layer", () => {
     )
   })
 
+  it("refuses article_html whose <p> holds a block tag as text, and writes one naming it in <code>", async () => {
+    /**
+     * The store's render gate holds supplied markup to the rule `validateOps` holds a session's
+     * puts to, so a block tag typed into a paragraph is refused here as it is on `session put`.
+     */
+    await expect(
+      call("memory_write", {
+        title: "Rooms as text",
+        article_html: "<p><mark>Scraped rooms are each an &lt;li&gt; with an h3 title.</mark></p>",
+        memory_type: "semantic"
+      })
+    ).rejects.toThrow(/^ERR_INVALID_MEMORY: .*holds the block tag `<li>` as characters/)
+    const written = await call("memory_write", {
+      title: "Rooms in code",
+      article_html:
+        "<p><mark>Scraped rooms are each an <code>&lt;li&gt;</code> with an h3 title.</mark></p>",
+      memory_type: "semantic"
+    })
+    expect(written.created).toBe(true)
+  })
+
   it("memory_correct supersedes through article_html, and refuses both or neither", async () => {
     const original = await call("memory_write", {
       title: "The stale claim a correction will replace",

@@ -83,6 +83,8 @@ A drop is only safe where the `files` table owns a default, and an instant has n
 
 The store therefore runs `checkMemory` (`packages/html/src/parse.ts:349`) over the rendered bytes and refuses before writing anything (`packages/store/src/store.ts:459-466`). Without that check a bad file would land in a commit and the indexer would then decline to project it, leaving a memory present in the tree, absent from every search, and visible only as a log line.
 
+For supplied markup the gate also runs `blockTagViolation` (`packages/html/src/block-tags.ts`). It refuses a `<p>`, or a `<mark>` outside one, whose text holds a block tag such as `&lt;li&gt;` as characters outside code. That is the rule `validateOps` holds a session's puts to, so `article_html` is judged the same at every door. A prose `body` is judged by the same reading before it renders, at the MCP tools and the `memhtml apply` and `memhtml session put` lines.
+
 A batch write gets the same treatment. Each operation goes through render-then-reparse individually, so one bad operation out of twenty is refused with its own list of violations, and in the default atomic mode the whole batch is refused before any file exists.
 
 ## 7. Fences and `data-lang`

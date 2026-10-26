@@ -850,6 +850,43 @@ describe("the render gate refuses a file checkMemory rejects", () => {
     expect((await run(repo.store.readMemory(result.path))).doc.article.gist).toBe("Claim.")
     expect(await run(repo.store.dirtyPaths())).toEqual([])
   })
+
+  it("refuses articleHtml whose <p> holds a block tag as text, the rule a session's puts meet", async () => {
+    /**
+     * `validateOps` refuses this article on a session put, so the store refuses it on a write and
+     * a correction too, and `article_html` reads the same at every door. A tag named in `<code>`
+     * is the article discussing it and still writes.
+     */
+    const repo = await fixture()
+    const commitsBefore = await commitCount(repo)
+    const asText = "<p><mark>Scraped rooms are each an &lt;li&gt; with an h3 title.</mark></p>"
+    const failure = await runErr(
+      repo.store.writeMemory(writeInput({ claim: "", articleHtml: asText }))
+    )
+    expect(failure).toBeInstanceOf(InvalidMemory)
+    expect((failure as InvalidMemory).reason).toContain("holds the block tag `<li>` as characters")
+    expect(await candidatePathsOnDisk(repo)).toEqual([])
+    expect(await commitCount(repo)).toBe(commitsBefore)
+
+    const original = await run(repo.store.writeMemory(writeInput({ title: "Rooms" })))
+    const corrected = await runErr(
+      repo.store.correctMemory(original.path, writeInput({ claim: "", articleHtml: asText }))
+    )
+    expect(corrected).toBeInstanceOf(InvalidMemory)
+    expect((await run(repo.store.readMemory(original.path))).doc.metas.status).toBe("active")
+
+    const discussed = await run(
+      repo.store.writeMemory(
+        writeInput({
+          title: "Rooms in code",
+          claim: "",
+          articleHtml: "<p><mark>Scraped rooms are each an <code>&lt;li&gt;</code>.</mark></p>"
+        })
+      )
+    )
+    expect(discussed.path).not.toBe("")
+    expect(await run(repo.store.dirtyPaths())).toEqual([])
+  })
 })
 
 describe("archiveMemory", () => {
