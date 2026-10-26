@@ -86,7 +86,7 @@ The policy can only add refusals to the write bar. These hold for every session 
 - a reserved path: `.memhtml/`, `memhtml.config.json`, any `index.html` or `sitemap.xml`, and outside curation `areas/arcs/` and `resources/people/`
 - more than 200 operations in one `session commit`
 
-At commit, a put whose claim has the same [frame key](/glossary/#conflict-assist-and-frame-key) as an active record at another path and a different value gets a `memhtml-contradicts` link to it, and both records stay live.
+At commit, a put whose claim has the same [frame key](/glossary/#conflict-assist-and-frame-key) as an active record at another path gets a `memhtml-contradicts` link to it, and both records stay live. A record that agrees with the put, that the put supersedes, or that the same batch archives gets no link.
 
 ## A strict store
 

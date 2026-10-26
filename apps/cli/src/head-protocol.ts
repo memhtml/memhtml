@@ -723,7 +723,7 @@ const DroppedOpSchema = Schema.Struct({
 
 /**
  * The frame-key rivals a commit left unlinked (`restatements` in `CommitOutcome`, `commit.ts`): a
- * rival stating the put's value, one the put supersedes, or one the batch archives. Absent from an
+ * rival that agrees with the put, one the put supersedes, or one the batch archives. Absent from an
  * older server, which links every rival, so its answer decodes as none.
  */
 const RestatementsSchema = Schema.Array(

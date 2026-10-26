@@ -4,6 +4,7 @@
  * `tests/layering.test.ts` is the standing proof.
  */
 export type { InvalidMemory } from "@memhtml/contracts/errors"
+export * from "./agreement.js"
 export * from "./cosine.js"
 export * from "./decay.js"
 export * from "./frame.js"

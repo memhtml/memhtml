@@ -7,11 +7,10 @@ import {
   hrefToPath,
   isEdgeRel,
   normalizePath,
-  originalPathFor,
   pathToHref,
   StorageFailure
 } from "@memhtml/contracts"
-import { frameOf, frameValueOf } from "@memhtml/domain"
+import { frameGroupAgrees, frameKeyOf } from "@memhtml/domain"
 import { addLink, addMeta, parseMemory, removeLink, removeMeta, setMeta } from "@memhtml/html"
 import { Effect } from "effect"
 
@@ -31,9 +30,10 @@ export type { CommitScope } from "./validate.js"
  */
 
 /**
- * Why step 3 left a frame-key rival unlinked: it states the put's value (`same-value`), the put
- * carries a `supersedes` edge to it or to its archive slot (`superseded`), or the batch archives it
- * (`archived`). A pair that meets more than one is reported with the first, in that order.
+ * Why step 3 left a frame-key rival unlinked: it agrees with the put (`same-value`: one value or one
+ * claim, and for two verdicts one ruling), the put carries a `supersedes` edge to it or to where the
+ * batch archives it (`superseded`), or the batch archives it (`archived`). A pair that meets more
+ * than one is reported with the first, in that order.
  */
 export const RESTATEMENT_REASONS = ["same-value", "superseded", "archived"] as const
 export type RestatementReason = (typeof RESTATEMENT_REASONS)[number]
@@ -207,10 +207,13 @@ const stage = (head: HeadView, ops: ReadonlyArray<OverlayOp>, archivedAt: string
  *
  * A rival is left unlinked, and reported as a restatement instead, when the edge would assert a
  * disagreement the batch does not hold. The checks run in the order of {@link RestatementReason}:
- * the rival states the put's value (one key and one value is a restatement, which the curator's
- * planner folds rather than keeps apart); the put, as the batch left it, carries a `supersedes`
- * edge to the rival or to the rival's archive slot (a successor does not contradict what it
- * replaces); or the batch archives the rival (the edge would name a path the commit empties).
+ * the rival agrees with the put by `frameGroupAgrees`, the rule the curator's planner reads before
+ * it folds a frame-key group (one value or one claim, and two verdicts agree only under one title,
+ * which carries the ruling); the put, as the batch left it, carries a `supersedes` edge to the
+ * rival's path, to its destination when the batch moves it, or to the archive path the batch moves
+ * it to (a successor does not contradict what it replaces); or the batch archives the rival (the
+ * edge would name a path the commit empties). A `supersedes` edge to any other archive path names
+ * an earlier record, even one archived from the rival's path, and the rival is still linked.
  */
 const markContradictions = (
   head: HeadView,
@@ -226,10 +229,10 @@ const markContradictions = (
     // A rival this batch moves is linked at its destination, so the edge never names a path the
     // commit empties; one it archives is not linked at all.
     const movedTo = new Map<string, string>()
-    const archived = new Set<string>()
+    const archivedTo = new Map<string, string>()
     for (const op of ops) {
       if (op.kind === "move") movedTo.set(op.path, op.to)
-      else if (op.kind === "archive") archived.add(op.path)
+      else if (op.kind === "archive") archivedTo.set(op.path, normalizePath(op.to))
     }
     for (const op of ops) {
       if (op.kind !== "put") continue
@@ -237,29 +240,31 @@ const markContradictions = (
       if (html === undefined) continue
       // Step 1 already parsed every put, so a failure here is a defect, not a violation.
       const doc = yield* parseMemory(html).pipe(Effect.orDie)
-      const frame = frameOf(doc.article.gist)
-      if (frame === null) continue
-      // The paths the put's `supersedes` edges name, an archive slot read as the path it holds.
-      const superseded = new Set<string>()
-      for (const link of doc.links) {
-        if (link.rel !== "supersedes") continue
-        const target = normalizePath(hrefToPath(link.href))
-        superseded.add(originalPathFor(target) ?? target)
-      }
+      const key = frameKeyOf(doc.article.gist)
+      if (key === null) continue
+      const put = { memoryType: doc.metas.memoryType, title: doc.title, claim: doc.article.gist }
+      // The paths the put's `supersedes` edges name, as written.
+      const superseded = new Set(
+        doc.links
+          .filter((link) => link.rel === "supersedes")
+          .map((link) => normalizePath(hrefToPath(link.href)))
+      )
       let linked = html
-      for (const other of head.byFrameKey(frame.key)) {
+      for (const other of head.byFrameKey(key)) {
         if (other === op.path) continue
         const record = head.get(other)
         if (record === undefined || record.archived) continue
         const against = movedTo.get(other) ?? other
-        const reason: RestatementReason | null =
-          frameValueOf(record.claim) === frame.value
-            ? "same-value"
-            : superseded.has(other) || superseded.has(against)
-              ? "superseded"
-              : archived.has(other)
-                ? "archived"
-                : null
+        const archivedAs = archivedTo.get(other)
+        const reason: RestatementReason | null = frameGroupAgrees([put, record])
+          ? "same-value"
+          : superseded.has(other) ||
+              superseded.has(against) ||
+              (archivedAs !== undefined && superseded.has(archivedAs))
+            ? "superseded"
+            : archivedAs !== undefined
+              ? "archived"
+              : null
         if (reason !== null) {
           restatements.push({ path: op.path, against, reason })
           continue
@@ -425,8 +430,8 @@ const overlappingPaths = (
  *    `rebase-needed` whether or not the changed paths overlap: duplicate hashes and frame keys are
  *    collisions between different paths, so a path-disjoint advance can still carry one, and only
  *    a head rebuilt at the tip can judge it. `overlapping` still names the path collisions.
- * 3. Frame-key contradictions, marked on the new file's head before hashing. A rival that states
- *    the put's value, that the put supersedes, or that the batch archives is reported under
+ * 3. Frame-key contradictions, marked on the new file's head before hashing. A rival that agrees
+ *    with the put, that the put supersedes, or that the batch archives is reported under
  *    `restatements` and left unlinked.
  * 4. Blobs, index, tree, commit object, through a temporary index file removed on every outcome.
  * 5. Write `pending: commit` to the log, BEFORE anything shared is touched: from here on a process
