@@ -12,11 +12,11 @@ The server is one Effect layer, `layerServer` (`apps/mcp/src/server.ts:40-63`). 
 
 The server shares the CLI's app layer, so an agent's `memory_write` and an operator's `memhtml search` resolve to one database, one git root, and one vector space (`apps/mcp/src/server.ts:13-19`).
 
-The transport is `McpServer.layerStdio` at protocol revision `v2025_06_18` (`apps/mcp/src/server.ts:44-51`). Effect `4.0.5` ships five protocol adapters: `v2026_07_28`, `v2025_11_25`, `v2025_06_18`, `v2025_03_26`, and `v2024_11_05`. The server names one, so a new revision is an explicit, reviewable choice and never a default that moves the wire format. The initialize result reports `serverInfo` as `memhtml` with `SERVER_VERSION`, a literal the release tooling rewrites at each release through its `x-release-please-version` marker (`apps/mcp/src/server.ts:10-11`).
+The transport is `McpServer.layerStdio` at protocol revision `v2025_06_18` (`apps/mcp/src/server.ts:44-51`). Effect `4.0.6` ships five protocol adapters: `v2026_07_28`, `v2025_11_25`, `v2025_06_18`, `v2025_03_26`, and `v2024_11_05`. The server names one, so a new revision is an explicit, reviewable choice and never a default that moves the wire format. The initialize result reports `serverInfo` as `memhtml` with `SERVER_VERSION`, a literal the release tooling rewrites at each release through its `x-release-please-version` marker (`apps/mcp/src/server.ts:10-11`).
 
 Logs go to stderr through `Logger.LogToStderr`. Stdout carries the NDJSON-RPC frames, and Effect's default logger writes to stdout (`apps/mcp/src/server.ts:21-23`, `apps/mcp/src/server.ts:62`). `bin.ts` runs the layer with `Layer.launch` for the life of the process, because a built-then-released layer would close stdin under the client (`apps/mcp/src/bin.ts:7-15`).
 
-The server passes no `instructions` to `layerStdio`, so the initialize result carries none. Tool descriptions are the only guidance channel. That's why shared contracts such as `BATCH_GUIDANCE` and `ARTICLE_HTML_CONTRACT` are appended to every description they apply to (`apps/mcp/src/server.ts:25-38`). The source gives the reason as effect offering no way to set the field, which held at rc.109. At 4.0.5, `layerStdio` accepts an `instructions` option.
+The server passes no `instructions` to `layerStdio`, so the initialize result carries none. Tool descriptions are the only guidance channel. That's why shared contracts such as `BATCH_GUIDANCE` and `ARTICLE_HTML_CONTRACT` are appended to every description they apply to (`apps/mcp/src/server.ts:25-38`). The source gives the reason as effect offering no way to set the field, which held at rc.109. At 4.0.6, `layerStdio` accepts an `instructions` option.
 
 Every tool binds its handler by name in `MemhtmlToolkit.toLayer({...})` (`apps/mcp/src/handlers.ts:330-334`). A handler decodes the snake_case wire parameters, calls the same operation function the matching CLI command calls, and renames the result back to snake_case (`apps/mcp/src/handlers.ts:40-50`).
 
@@ -40,7 +40,7 @@ Each entry quotes its registration block verbatim, with two mechanical elisions.
 
 ### How a call fails
 
-A tool call fails in one of three wire shapes at effect `4.0.5` (`pnpm-workspace.yaml:61`).
+A tool call fails in one of three wire shapes at effect `4.0.6` (`pnpm-workspace.yaml:65`).
 
 - A parameter that doesn't decode is a JSON-RPC error with code `-32602` and the message `Invalid parameters for tool '<name>': ...`. It carries no `ERR_*` code, and the handler never ran. A `memory_type` outside the writable types, a missing required key, and a `rel` outside the nine memory rels all fail this way.
 - A typed failure is a tool result with `isError: true` and one text block, `ERR_<CODE>: <reason>. Try: <suggestion>; <suggestion>`. The `Try:` clause is left out when there are no suggestions (`apps/mcp/src/failure.ts:183-191`).
@@ -855,7 +855,7 @@ const MemoryStatus = Tool.make("memory_status", {
 
 Reports corpus health in one call. It returns HEAD, dirty state, counts by type, edge totals, whether the index describes the current commit, and how much of the index the vector arm can see. It reads the git root and the index, and it doesn't ask the head server.
 
-**Input:** none. `parameters` is `Tool.EmptyParams`, which publishes `{"type":"object","additionalProperties":false}` and refuses any key with `-32602`. An empty `Schema.Struct({})` wouldn't publish "an object with no fields". At 4.0.5 it derives `{"not":{"type":"null"}}`. The source comment records rc.109's derivation, an `anyOf` with an array branch (`apps/mcp/src/tools.ts:997-1007`).
+**Input:** none. `parameters` is `Tool.EmptyParams`, which publishes `{"type":"object","additionalProperties":false}` and refuses any key with `-32602`. An empty `Schema.Struct({})` wouldn't publish "an object with no fields". At 4.0.6 it derives `{"not":{"type":"null"}}`. The source comment records rc.109's derivation, an `anyOf` with an array branch (`apps/mcp/src/tools.ts:997-1007`).
 
 **Output:** nine fields.
 

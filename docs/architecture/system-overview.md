@@ -99,7 +99,7 @@ flowchart LR
 | ------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
 | Language      | TypeScript 7.0.2 (`apps/docs` pins 6.0.3)                                                        | `package.json:38`, `apps/docs/package.json:51`                                 |
 | Runtime       | Node.js >= 24, pinned to 24                                                                      | `package.json:7-9`, `mise.toml:37`                                             |
-| Framework     | Effect 4.0.5, one catalog set of four packages                                                   | `pnpm-workspace.yaml:60-64`                                                    |
+| Framework     | Effect 4.0.6, one catalog set of four packages                                                   | `pnpm-workspace.yaml:64-68`                                                    |
 | Storage       | `node:sqlite` `DatabaseSync` over 12 SQL migrations plus 2 state-plane migrations                | `packages/index/src/database.ts:4`, `packages/index/src/schema-const.ts:11-18` |
 | Storage       | git as the system of record for the root                                                         | `packages/index/src/indexer.ts:19`                                             |
 | Snapshots     | apache-arrow 21.2.0, one Arrow IPC file per commit and one vector cache per model                | `packages/snapshot/package.json:27`, `packages/snapshot/src/snapshot.ts:2`     |
@@ -110,10 +110,10 @@ flowchart LR
 | Curator model | AI SDK `ai` 7.0.146 with `@ai-sdk/amazon-bedrock` 5.0.120 and `@ai-sdk/openai-compatible` 3.0.74 | `packages/curator/package.json:28-38`                                          |
 | Collapse plan | graphology 0.26.0, graphology-communities-louvain 2.0.2, graphology-metrics 2.4.2                | `packages/curator/package.json:40-42`                                          |
 | Sandbox       | just-bash 3.4.2 for `exec` and `session exec`                                                    | `apps/cli/package.json:56`                                                     |
-| Head server   | `@effect/platform-node` 4.0.5, HTTP over the store's Unix socket                                 | `pnpm-workspace.yaml:62`, `apps/cli/src/head-client.ts:30-33`                  |
+| Head server   | `@effect/platform-node` 4.0.6, HTTP over the store's Unix socket                                 | `pnpm-workspace.yaml:66`, `apps/cli/src/head-client.ts:30-33`                  |
 | Tracing       | Effect's own `OtlpTracer`, opt-in                                                                | `packages/telemetry/src/index.ts:14-18`                                        |
 | Build tooling | turbo 2.11.9, pnpm 11.21.0, biome 2.5.15, tsdown 0.23.1                                          | `package.json:6`, `package.json:32-36`                                         |
-| Test tooling  | vitest 5.0.5, `@effect/vitest`, fast-check 4.10.2                                                | `apps/cli/package.json:60-67`, `pnpm-workspace.yaml:64-65`                     |
+| Test tooling  | vitest 5.0.5, `@effect/vitest`, fast-check 4.10.2                                                | `apps/cli/package.json:60-67`, `pnpm-workspace.yaml:68-69`                     |
 | Docs site     | astro ^7.4.1, `@astrojs/starlight` ^0.42.6                                                       | `apps/docs/package.json:24`, `apps/docs/package.json:19`                       |
 
 ## See also
