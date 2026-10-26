@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.18.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.17.0...memhtml-v0.18.0) (2026-10-26)
+
+
+### Features
+
+* preview where a write will land and cut long filename slugs at a word boundary ([#340](https://github.com/memhtml/memhtml/issues/340)) ([a795862](https://github.com/memhtml/memhtml/commit/a795862db5a9258395dafe93cf73cc5ab09517c8))
+
+
+### Bug Fixes
+
+* **archive:** take the year's next generation slot, never a held one ([#341](https://github.com/memhtml/memhtml/issues/341)) ([3406f70](https://github.com/memhtml/memhtml/commit/3406f7089918528856905902284309cc11fc065d))
+* **cli:** publish removes the listing of a directory with no record ([#334](https://github.com/memhtml/memhtml/issues/334)) ([7986c4f](https://github.com/memhtml/memhtml/commit/7986c4f43618499d3a0b1934ddab44971623f77e))
+* **curator:** brief the moot detected tasks and archive them ([#332](https://github.com/memhtml/memhtml/issues/332)) ([09089ac](https://github.com/memhtml/memhtml/commit/09089acf27c8a2d8927bd02667ed4be503afe096))
+* **deps:** move the Effect set to 4.0.6 ([#344](https://github.com/memhtml/memhtml/issues/344)) ([90ca051](https://github.com/memhtml/memhtml/commit/90ca051de823efc4f0b10c086b12f0618f479308))
+* **html:** match links in every rel spelling the reader accepts ([#331](https://github.com/memhtml/memhtml/issues/331)) ([be09176](https://github.com/memhtml/memhtml/commit/be09176624389d2027a5becc809ecb1c3f3cf628))
+* **mcp:** accept a singular path on memory_reinforce ([#335](https://github.com/memhtml/memhtml/issues/335)) ([587543e](https://github.com/memhtml/memhtml/commit/587543e48eac83bbe2f27eac6183ad664442f874))
+* **session:** mark contradicts only where a frame-key rival disagrees ([#333](https://github.com/memhtml/memhtml/issues/333)) ([f86dde6](https://github.com/memhtml/memhtml/commit/f86dde62d50cecc8efff66d772c4cdb7253f683e))
+* **session:** repoint inbound edges when an archive vacates a path ([#338](https://github.com/memhtml/memhtml/issues/338)) ([f196d59](https://github.com/memhtml/memhtml/commit/f196d592fba9bdb3f850ac086a65ed2978657157))
+* **store:** answer expected git exits without an Error log ([#337](https://github.com/memhtml/memhtml/issues/337)) ([2735810](https://github.com/memhtml/memhtml/commit/273581067dce09c818eea822ac09087d87885249))
+* **store:** refuse to archive a record that is already archived ([#336](https://github.com/memhtml/memhtml/issues/336)) ([3a332ca](https://github.com/memhtml/memhtml/commit/3a332cac6003c63583eed3da5ace7f18715265f0))
+* **write:** refuse HTML block tags in a prose body instead of escaping them into the claim ([#339](https://github.com/memhtml/memhtml/issues/339)) ([8a5aa09](https://github.com/memhtml/memhtml/commit/8a5aa09865a817888f041270d8156fb3ad995b13))
+
 ## [0.17.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.16.2...memhtml-v0.17.0) (2026-10-23)
 
 
