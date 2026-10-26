@@ -364,6 +364,8 @@ describe("memhtml path and session put --dry-run preview a write's path, writing
   }
 
   const aFact = { op: "write", title: "A fact", type: "semantic", body: "A second fact." }
+  const LONG_WORKSPACE =
+    "Acme widget release engineering, packaging, signing and staged rollout coordination workstream"
 
   it("steps past a path the head holds, with the ordinal it took", async () => {
     const repo = await corpus()
@@ -417,6 +419,14 @@ describe("memhtml path and session put --dry-run preview a write's path, writing
       ...["--title", "A fact", "--type", "task", "--workspace", "acme-widget"]
     ])
     expect(task).toMatchObject({ path: "projects/acme-widget/tasks/a-fact.html", ordinal: 1 })
+    // A long workspace keeps the folder its earlier records sit in: folder names keep the plain cut.
+    const longWorkspace = await data(repo, [
+      "path",
+      ...["--title", "A fact", "--type", "semantic", "--workspace", LONG_WORKSPACE]
+    ])
+    expect(longWorkspace.path).toBe(
+      "projects/acme-widget-release-engineering-packaging-signing-and-staged-rollout-coordinatio/a-fact.html"
+    )
     const episodic = await data(repo, ["path", "--title", "A fact", "--type", "episodic"])
     expect(String(episodic.path)).toMatch(/^areas\/inbox\/\d{8}-a-fact\.html$/)
     expect(await stateOf(repo)).toBe(before)

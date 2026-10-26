@@ -400,25 +400,32 @@ The path of one session's log, `.memhtml/sessions/<id>.json` under the root (`pa
 
 ```ts
 export const slugify = (title: string): string => {
-  const folded = title
-    .normalize("NFKD")
-    .replace(/\p{Mn}+/gu, "")
-    .toLowerCase()
-
-  const kebab = folded
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+/, "")
-    .replace(/-+$/, "")
-
+  const kebab = kebabOf(title)
   if (kebab === "") return SLUG_FALLBACK
 
-  return cutSlug(kebab, SLUG_MAX_LENGTH) || SLUG_FALLBACK
+  return kebab.length <= SLUG_MAX_LENGTH
+    ? kebab
+    : kebab.slice(0, SLUG_MAX_LENGTH).replace(/-+$/, "") || SLUG_FALLBACK
 }
 ```
 
-Kebab-cases a title into `[a-z0-9-]`. It applies NFKD, strips combining marks so diacritics fold to base letters, and lowercases. Then it replaces each run of other characters with one hyphen and trims hyphens from both ends. A title that reduces to nothing returns `SLUG_FALLBACK`, which is `untitled`. A result longer than `SLUG_MAX_LENGTH` (80) is cut at its last hyphen at or before 80 when that leaves at least `SLUG_MIN_WORD_CUT` (60) characters, so it ends on a whole word, and at 80 otherwise, with any exposed trailing hyphen trimmed (`cutSlug` at `packages/contracts/src/slug.ts:24-34`). `withCollisionOrdinal` cuts its stem by the same rule to make room for a `-N` suffix. A slug fed back in comes out unchanged. A slug is computed only when a record is minted, so the rule decides new paths and never moves an existing one.
+Kebab-cases a title into `[a-z0-9-]`. `kebabOf` applies NFKD, strips combining marks so diacritics fold to base letters, and lowercases. Then it replaces each run of other characters with one hyphen and trims hyphens from both ends (`packages/contracts/src/slug.ts:36-44`). A title that reduces to nothing returns `SLUG_FALLBACK`, which is `untitled`. A result longer than `SLUG_MAX_LENGTH` (80) is cut there, and any exposed trailing hyphen is trimmed (`packages/contracts/src/slug.ts:7-22`). A slug fed back in comes out unchanged. This is the slug of every name that is recomputed each time it's used, such as a workspace's `projects/<slug>/` folder and a tag's `resources/<slug>/`, so its cut never changes and a long workspace or tag stays one folder. A new record's filename stem is `slugifyStem`'s.
 
-`packages/contracts/src/slug.ts:50-64`, 7 importer files
+`packages/contracts/src/slug.ts:62-69`, 5 importer files
+
+### slugifyStem
+
+```ts
+export const slugifyStem = (title: string): string => {
+  const kebab = kebabOf(title)
+  if (kebab === "") return SLUG_FALLBACK
+  return cutAtWord(kebab, SLUG_MAX_LENGTH) || SLUG_FALLBACK
+}
+```
+
+The filename stem a new record takes from its title, which `memoryPathFor` and both collision loops use (`packages/contracts/src/paths.ts:199`, `packages/store/src/store.ts:460`, `apps/cli/src/v2.ts:338`). It kebab-cases as `slugify` does, and a result longer than 80 is cut at its last hyphen at or before 80 when that leaves at least `SLUG_MIN_WORD_CUT` (60) characters, so it ends on a whole word, and at 80 otherwise (`cutAtWord` at `packages/contracts/src/slug.ts:24-34`). It equals `slugify` for every title whose slug fits the budget. `withCollisionOrdinal` cuts its stem by the same rule to make room for a `-N` suffix. A stem is computed only when a record is minted, and the path is the record's id from then on, so the rule decides new filenames and never moves an existing file.
+
+`packages/contracts/src/slug.ts:82-86`, 2 importer files
 
 ### DirtyTree
 

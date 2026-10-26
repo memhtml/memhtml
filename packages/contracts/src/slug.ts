@@ -26,12 +26,22 @@ export const SLUG_FALLBACK = "untitled"
  * when that leaves at least {@link SLUG_MIN_WORD_CUT} characters, so the result ends on a whole
  * word, else at `limit`. Any hyphen the cut exposes is trimmed, so the result is still well formed.
  */
-const cutSlug = (kebab: string, limit: number): string => {
+const cutAtWord = (kebab: string, limit: number): string => {
   if (kebab.length <= limit) return kebab
   const boundary = kebab.lastIndexOf("-", limit)
   const end = boundary >= SLUG_MIN_WORD_CUT ? boundary : limit
   return kebab.slice(0, end).replace(/-+$/, "")
 }
+
+/** A title folded and kebab-cased, uncut: `""` when nothing in it is sluggable. */
+const kebabOf = (title: string): string =>
+  title
+    .normalize("NFKD")
+    .replace(/\p{Mn}+/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "")
 
 /**
  * Kebab-case a title into `[a-z0-9-]`, at most {@link SLUG_MAX_LENGTH} characters.
@@ -41,29 +51,41 @@ const cutSlug = (kebab: string, limit: number): string => {
  * carries no leading or trailing hyphen, which makes the function idempotent: a slug fed
  * back in comes out unchanged.
  *
- * A longer title is cut at its last word boundary inside the budget when that keeps at least
- * {@link SLUG_MIN_WORD_CUT} characters, else at {@link SLUG_MAX_LENGTH} itself, and any hyphen
- * the cut exposed is trimmed, so a cut slug is still a valid slug and, when it can be, ends on a
- * whole word rather than a fragment of one. A slug is computed only when a record is minted, and
- * the path is the record's id from then on, so these rules decide new paths and never move one.
+ * Truncation cuts at {@link SLUG_MAX_LENGTH} and then trims any hyphen the cut exposed, so
+ * a truncated slug is still a valid slug rather than one ending mid-separator.
+ *
+ * This is the slug of every name that is recomputed each time it is used: a workspace's
+ * `projects/<slug>/` folder, a tag's `resources/<slug>/`, and the names the curator matches
+ * against them. Its cut never changes, so a long workspace or tag stays one folder. A new
+ * record's filename stem, computed once when the record is minted, is {@link slugifyStem}'s.
  */
 export const slugify = (title: string): string => {
-  const folded = title
-    .normalize("NFKD")
-    .replace(/\p{Mn}+/gu, "")
-    .toLowerCase()
-
-  const kebab = folded
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+/, "")
-    .replace(/-+$/, "")
-
+  const kebab = kebabOf(title)
   if (kebab === "") return SLUG_FALLBACK
 
-  return cutSlug(kebab, SLUG_MAX_LENGTH) || SLUG_FALLBACK
+  return kebab.length <= SLUG_MAX_LENGTH
+    ? kebab
+    : kebab.slice(0, SLUG_MAX_LENGTH).replace(/-+$/, "") || SLUG_FALLBACK
 }
 
-/** True when a string is already a valid slug, the fixed point of {@link slugify}. */
+/**
+ * The filename stem a new record takes from its title: {@link slugify}'s kebab-case, with a
+ * longer title cut at its last word boundary inside {@link SLUG_MAX_LENGTH} when that keeps at
+ * least {@link SLUG_MIN_WORD_CUT} characters, else at {@link SLUG_MAX_LENGTH} itself. A cut stem
+ * is still a valid slug and, when it can be, ends on a whole word rather than a fragment of one.
+ * Equal to {@link slugify} for every title whose slug fits the budget.
+ *
+ * Only a filename stem takes this cut, because a stem is computed once, when a record is minted,
+ * and the path is the record's id from then on: the rule decides new filenames and never moves an
+ * existing file. A folder name is recomputed on every write and keeps {@link slugify}'s cut.
+ */
+export const slugifyStem = (title: string): string => {
+  const kebab = kebabOf(title)
+  if (kebab === "") return SLUG_FALLBACK
+  return cutAtWord(kebab, SLUG_MAX_LENGTH) || SLUG_FALLBACK
+}
+
+/** True when a string is already a valid slug, the fixed point of {@link slugify} and {@link slugifyStem}. */
 export const isSlug = (value: string): boolean =>
   value.length > 0 && value.length <= SLUG_MAX_LENGTH && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)
 
@@ -71,7 +93,7 @@ export const isSlug = (value: string): boolean =>
  * Append a collision suffix. `ordinal` is a 1-based ordinal for display in the filename;
  * ordinal 1 is the unsuffixed slug, 2 becomes `-2`, and so on, matching the `-2`/`-3`
  * convention. The suffix is added inside the length budget, so a maximum-length slug is
- * shortened rather than overflowed, and the stem is cut by the rule {@link slugify} cuts with:
+ * shortened rather than overflowed, and the stem is cut by the rule {@link slugifyStem} cuts with:
  * at its last word boundary inside the room left when that keeps {@link SLUG_MIN_WORD_CUT}
  * characters, else at the room itself.
  *
@@ -87,8 +109,8 @@ export const isSlug = (value: string): boolean =>
 export const withCollisionOrdinal = (slug: string, ordinal: number): string => {
   if (ordinal <= 1) return slug
   const suffix = `-${ordinal}`
-  /** The slug cut to at most `upTo` characters, the way {@link slugify} cuts a title. */
-  const stemAt = (upTo: number): string => cutSlug(slug, upTo)
+  /** The slug cut to at most `upTo` characters, the way {@link slugifyStem} cuts a title. */
+  const stemAt = (upTo: number): string => cutAtWord(slug, upTo)
   let stem = stemAt(SLUG_MAX_LENGTH - suffix.length)
   while (stem.length > 0 && `${stem}${suffix}` === slug) {
     stem = stemAt(stem.length - 1)
