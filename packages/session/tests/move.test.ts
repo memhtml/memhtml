@@ -56,9 +56,9 @@ import {
  * - withRepoints, scope (2026-10-26): the `isReservedPath(holder, scope)` skip dropped -> "leaves a
  *   holder the scope may not write to the curator, and repoints it under curate" (the arc is
  *   repointed under `session`).
- * - commit, step 3 (2026-10-26): the `archiving` skip dropped from `markContradictions` -> "marks no
- *   contradiction against a rival the same batch archives" (the successor is marked against the
- *   path the archive empties).
+ * - commit, step 3 (2026-10-26): `markContradictions` made to link a rival the batch archives like
+ *   any other -> "marks no contradiction against a rival the same batch archives" (the successor is
+ *   marked against the path the archive empties).
  * - withRepoints, moved holders (2026-10-26): batch unlinks keyed by the path they name, not the
  *   path the holder had when the batch began -> "takes an unlink at the path the batch moved a
  *   holder to as that holder's repoint" (a second pair is added at the old path).
