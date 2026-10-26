@@ -827,9 +827,11 @@ const checkCodebasePage = (file) => {
   else if (sha === null) fail(file, stamp.line, `commit ${stamp.sha} does not exist in this clone`)
   else if (!isAncestor(sha)) {
     fail(file, stamp.line, `commit ${stamp.sha} is not an ancestor of HEAD`)
-  }
-  // A page whose commit cannot be read has no lines to read its citations against.
-  if (sha === null || !isAncestor(sha)) return
+  } else collectPageCitations(file, text, sha)
+}
+
+/** Queue every line citation on a page stamped at `sha`, to be read at that commit. */
+const collectPageCitations = (file, text, sha) => {
   stamps.add(sha)
   // The file the block last named, which a bare `:N` continues, as in a hand doc.
   let named = { block: -1, path: "" }

@@ -393,7 +393,9 @@ describe("scripts/doc-citations.mjs", () => {
       `# Debt\n\n> Built from commit [${head.slice(0, 7)}](x).\n\n${stale}`
     const forms = [
       `\`${store}:7\`, \`${store}:6-11\`, \`:3\`, and \`:2-4\`;`,
-      `\`${store}:9 makeStore\` and \`README.md:1\`; \`${store}\` at \`:12\`.`
+      `\`${store}:9 makeStore\` and \`README.md:1\`; \`${store}\` at \`:12\`.`,
+      // A column past the file's last line is a column, never read as a line of its own.
+      `\`${store}:2:1-4:${LINES + 9}\` and \`${store}#L2C1-L4C${LINES + 9}\`.`
     ].join("\n")
     const run = runCheck(
       await tree((head) => ({
@@ -410,7 +412,7 @@ describe("scripts/doc-citations.mjs", () => {
     )
     expect(run.status, run.stderr).toBe(0)
     expect(run.stdout).toContain(
-      "2 codebase pages stamped at 1 commit, 8 line citations read there"
+      "2 codebase pages stamped at 1 commit, 10 line citations read there"
     )
   })
 
