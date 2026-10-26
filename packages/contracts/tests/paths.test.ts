@@ -7,6 +7,7 @@ import {
   archivePathFor,
   archiveSlotFor,
   archiveYearOf,
+  compareArchivings,
   INBOX_DIR,
   isArchivePath,
   isValidMemoryPath,
@@ -233,6 +234,37 @@ describe("archive generation slots", () => {
         expect(originalPathFor(slot)).toBe(path)
         expect(archiveYearOf(slot)).toBe(y)
       }),
+      { numRuns: 500 }
+    )
+  })
+
+  it("compareArchivings orders a path's archivings by year, then generation, as numbers", () => {
+    const path = "areas/inbox/a-fact.html"
+    // String order would put .10 before .9, and every generation before its own bare year.
+    expect(
+      compareArchivings(archivePathFor(path, 2031, 10), archivePathFor(path, 2031, 9))
+    ).toBeGreaterThan(0)
+    expect(
+      compareArchivings(archivePathFor(path, 2031, 2), archivePathFor(path, 2031, 1))
+    ).toBeGreaterThan(0)
+    expect(
+      compareArchivings(archivePathFor(path, 2031, 1), archivePathFor(path, 2030, 9))
+    ).toBeGreaterThan(0)
+    expect(compareArchivings(archivePathFor(path, 2031, 3), archivePathFor(path, 2031, 3))).toBe(0)
+    expect(compareArchivings(path, archivePathFor(path, 2031, 1))).toBeLessThan(0)
+    fc.assert(
+      fc.property(
+        memoryPath,
+        fc.array(fc.tuple(year, generation), { minLength: 1, maxLength: 12 }),
+        (p, slots) => {
+          const sorted = slots
+            .map(([y, n]) => archivePathFor(p, y, n))
+            .sort(compareArchivings)
+            .map((slot) => [archiveYearOf(slot) ?? 0, archiveGenerationOf(slot) ?? 0] as const)
+          const expected = [...slots].sort(([ya, na], [yb, nb]) => ya - yb || na - nb)
+          expect(sorted).toEqual(expected)
+        }
+      ),
       { numRuns: 500 }
     )
   })

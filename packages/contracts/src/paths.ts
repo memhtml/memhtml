@@ -288,3 +288,18 @@ export const archiveGenerationOf = (path: string): number | undefined => {
   if (match === null) return undefined
   return match[2] === undefined ? 1 : Number(match[2])
 }
+
+/**
+ * Order two archive paths by the archiving each records, for `sort`: negative when `a` is the
+ * earlier, positive when it is the later, 0 for the same year and generation. A later year is later,
+ * and within a year a higher generation is, since each archive takes its year's first free slot. A
+ * path that is not an archive path sorts before every one that is.
+ *
+ * Not the paths' string order, which puts `archive/2031.2/` before `archive/2031/` (`.` sorts before
+ * `/`) and `archive/2031.10/` before `archive/2031.9/`.
+ */
+export const compareArchivings = (a: string, b: string): number => {
+  const year = (archiveYearOf(a) ?? -1) - (archiveYearOf(b) ?? -1)
+  if (year !== 0) return year
+  return (archiveGenerationOf(a) ?? 0) - (archiveGenerationOf(b) ?? 0)
+}

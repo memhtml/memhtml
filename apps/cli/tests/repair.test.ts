@@ -111,7 +111,7 @@ describe("the archive lookup", () => {
 
   it("prefers a year's newest generation, in this year or an earlier one", () => {
     // The string order of these paths is the wrong order: `.` sorts before `/`, and `2031.10`
-    // before `2031.9`. Generations fill from the bare year up, so the newest ends the run.
+    // before `2031.9`.
     const run = Array.from({ length: 10 }, (_, index) =>
       index === 0 ? "archive/2031/areas/x.html" : `archive/2031.${String(index + 1)}/areas/x.html`
     )
@@ -123,6 +123,29 @@ describe("the archive lookup", () => {
         2031
       )
     ).toBe("archive/2030.2/areas/x.html")
+  })
+
+  it("takes a year's highest generation even when a lower slot is missing from the index", () => {
+    // The bare slot can hold a file the index skipped because it fails to parse, so the index
+    // lists only the later copy. A walk from the bare year that stopped at the first gap would
+    // call the target gone and have doctor --fix drop the link.
+    expect(archivedFormOf("areas/x.html", new Set(["archive/2031.2/areas/x.html"]), 2031)).toBe(
+      "archive/2031.2/areas/x.html"
+    )
+    expect(
+      archivedFormOf(
+        "areas/x.html",
+        new Set(["archive/2031.2/areas/x.html", "archive/2031.4/areas/x.html"]),
+        2031
+      )
+    ).toBe("archive/2031.4/areas/x.html")
+    // Outside the lookback window, and in a year after the run's, nothing is taken.
+    expect(
+      archivedFormOf("areas/x.html", new Set(["archive/2032.2/areas/x.html"]), 2031)
+    ).toBeUndefined()
+    expect(
+      archivedFormOf("areas/x.html", new Set(["archive/2020.2/areas/x.html"]), 2031)
+    ).toBeUndefined()
   })
 
   it("returns undefined for a target that is genuinely gone", () => {

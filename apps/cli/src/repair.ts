@@ -1,6 +1,11 @@
 import type { EdgeRel } from "@memhtml/contracts/edges"
 import type { StorageFailure } from "@memhtml/contracts/errors"
-import { archivePathFor, normalizePath } from "@memhtml/contracts/paths"
+import {
+  archiveYearOf,
+  compareArchivings,
+  normalizePath,
+  originalPathFor
+} from "@memhtml/contracts/paths"
 import { addLink, addMeta, removeLink, setMeta } from "@memhtml/html"
 import type { DatabaseShape } from "@memhtml/index"
 import type { Effect } from "effect"
@@ -50,29 +55,49 @@ export const applyHeadEdits = (html: string, edits: ReadonlyArray<HeadEdit>): st
 export const ARCHIVE_LOOKBACK_YEARS = 10
 
 /**
+ * Every archive path in a `known` set, grouped by the path it was archived from. Built once per set
+ * and kept beside it, because doctor asks {@link archivedFormOf} once per dangling edge over one set.
+ */
+const archivesByOrigin = new WeakMap<ReadonlySet<string>, ReadonlyMap<string, Array<string>>>()
+
+const archivesIn = (known: ReadonlySet<string>): ReadonlyMap<string, Array<string>> => {
+  const cached = archivesByOrigin.get(known)
+  if (cached !== undefined) return cached
+  const byOrigin = new Map<string, Array<string>>()
+  for (const path of known) {
+    const origin = originalPathFor(path)
+    if (origin === undefined) continue
+    const slots = byOrigin.get(origin)
+    if (slots === undefined) byOrigin.set(origin, [path])
+    else slots.push(path)
+  }
+  archivesByOrigin.set(known, byOrigin)
+  return byOrigin
+}
+
+/**
  * The archive path a missing target now lives at, or `undefined` when it is genuinely gone.
  *
- * Years are tried newest-first from the given year back over {@link ARCHIVE_LOOKBACK_YEARS}, and
- * within a year the newest generation wins, so the most recent archiving of a path that was
- * archived more than once wins. That is the one a live edge means, since an earlier archiving was
- * superseded by a later restore. A year's generations fill from the bare year up (`archiveSlotFor`
- * takes the first free one), so the newest is the last of the unbroken run of slots the tree holds.
+ * The latest archiving wins among the target's archive paths from the given year back over
+ * {@link ARCHIVE_LOOKBACK_YEARS}: the latest year, then that year's highest generation
+ * (`compareArchivings`). That is the one a live edge means, since an earlier archiving was
+ * superseded by a later restore. Every slot `known` holds is a candidate, with no walk from the bare
+ * year that would stop at the first one missing: a year's slots can have a gap, since a writer that
+ * judges "held" by the parsed head does not see a file that fails to parse, and the index skips
+ * such a file too.
  */
 export const archivedFormOf = (
   target: string,
   known: ReadonlySet<string>,
   runYear: number
 ): string | undefined => {
-  for (let back = 0; back <= ARCHIVE_LOOKBACK_YEARS; back += 1) {
-    let newest: string | undefined
-    for (let generation = 1; ; generation += 1) {
-      const candidate = archivePathFor(target, runYear - back, generation)
-      if (!known.has(candidate)) break
-      newest = candidate
-    }
-    if (newest !== undefined) return newest
+  let newest: string | undefined
+  for (const slot of archivesIn(known).get(normalizePath(target)) ?? []) {
+    const year = archiveYearOf(slot) ?? Number.NaN
+    if (!(year <= runYear && year >= runYear - ARCHIVE_LOOKBACK_YEARS)) continue
+    if (newest === undefined || compareArchivings(slot, newest) > 0) newest = slot
   }
-  return undefined
+  return newest
 }
 
 /** A `<link rel="memhtml-*">` whose target is not in the tree. The repair's input. */
