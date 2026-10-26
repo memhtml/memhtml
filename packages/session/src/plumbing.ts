@@ -25,8 +25,9 @@ interface ProcessResult {
  * hanging a headless process, `GIT_OPTIONAL_LOCKS=0` stops a read from taking the index lock, and
  * `LC_ALL=C` pins the message locale so the raced-ref classification reads the same words everywhere.
  * The four `*_PATHSPECS` variables are pinned to `0`, git's default, as the store's git service pins
- * them: each changes how every pathspec matches, and `dirtyPaths` hands its paths to git as
- * pathspecs spelled for that default.
+ * them, because each changes how every pathspec matches. `dirtyPaths` passes its paths as
+ * `:(literal)` pathspecs, which `GIT_LITERAL_PATHSPECS=1` would read as part of the path, so that
+ * nothing matched, and `GIT_ICASE_PATHSPECS=1` would match in any case.
  */
 const GIT_ENV: Readonly<Record<string, string>> = {
   GIT_TERMINAL_PROMPT: "0",
@@ -108,6 +109,20 @@ interface RunOptions {
 /** A full 40-hex object name. */
 const FULL_SHA = /^[0-9a-f]{40}$/
 
+/**
+ * Each path as a `:(literal)` pathspec, so `[`, `*` and `?` in a record's path match only
+ * themselves; the rule of `literalPathspecs` in `packages/store/src/git.ts`. An empty path fails as
+ * a `GitFailure` naming `command` before git runs: git refuses a bare `""`, but `:(literal)` with
+ * nothing after it matches every path.
+ */
+const literalPathspecs = (
+  command: string,
+  paths: ReadonlyArray<string>
+): Effect.Effect<ReadonlyArray<string>, GitFailure> =>
+  paths.includes("")
+    ? Effect.fail(GitFailure.make({ command, exitCode: null }))
+    : Effect.succeed(paths.map((path) => `:(literal)${path}`))
+
 export interface Plumbing {
   /** `read-tree <sha>` into the session index file. */
   readTree(sha: string): Effect.Effect<void, GitFailure>
@@ -154,6 +169,7 @@ export interface Plumbing {
   /**
    * The subset of `paths` that `status --porcelain` reports over the shared index and working tree:
    * staged, modified, or untracked. Empty when every named path is clean and absent when untracked.
+   * Each path is read as itself, never as a pattern, and an empty one fails before git runs.
    */
   dirtyPaths(paths: ReadonlyArray<string>): Effect.Effect<ReadonlyArray<string>, GitFailure>
   /** `merge-base --is-ancestor sha ref`: true when `sha` is reachable from `ref`. */
@@ -378,15 +394,18 @@ export const makePlumbing = (input: {
     dirtyPaths: (paths) =>
       paths.length === 0
         ? Effect.succeed([])
-        : run(sharedEnv, "status", [
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--no-renames",
-            "--untracked-files=all",
-            "--",
-            ...paths
-          ]).pipe(
+        : literalPathspecs("status", paths).pipe(
+            Effect.flatMap((pathspecs) =>
+              run(sharedEnv, "status", [
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--no-renames",
+                "--untracked-files=all",
+                "--",
+                ...pathspecs
+              ])
+            ),
             // `-z` records are `XY<space><path>NUL`; `--no-renames` keeps each to one path.
             Effect.map((result) =>
               text(result)
