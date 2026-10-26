@@ -684,8 +684,11 @@ export const sessionPut = (input: {
               ops: session.ops,
               lines: input.ops,
               at,
-              // Sent only when true, so a call outside a run stays readable by an older server.
-              ...(input.runBound === true ? { runBound: true } : {})
+              // Sent only when true; absent is false.
+              ...(input.runBound === true ? { runBound: true } : {}),
+              // Always sent: a server that predates `placements` refuses the request rather than
+              // answer with paths placed by the old cut (`NeighborsRequest`).
+              placements: true
             }
           })
     let prepared: PreparedPuts
