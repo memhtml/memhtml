@@ -6,7 +6,7 @@ These diagrams show the call order of six commands. `memhtml write` and `memhtml
 
 Every flow acts on the memhtml root, the separate memory tree that `--repo` or `MEMHTML_ROOT` names (`apps/cli/src/api-layer.ts:96-109`). `DatabaseService` is one connection to that root's `.memhtml/index.db` with `state.db` attached (`apps/cli/src/api-layer.ts:119-129`). `Git` runs `git` subprocesses in that root (`packages/store/src/git.ts:241-250`).
 
-The two v1 commands run their dispatch arm over `layerApp`, the one production composition (`apps/cli/src/run.ts:2414-2431`, `apps/cli/src/api-layer.ts:409-419`). A handler in the MCP server reaches the same operations through the same layer. For example, `memory_write` calls `writeMemory` at `apps/mcp/src/handlers.ts:340`, and `memory_search` asks the head server first and calls `searchMemories` when it gets no answer (`apps/mcp/src/handlers.ts:581`). The MCP door itself is drawn in `architecture/data-flow.md`.
+The two v1 commands run their dispatch arm over `layerApp`, the one production composition (`apps/cli/src/run.ts:2414-2431`, `apps/cli/src/api-layer.ts:409-419`). A handler in the MCP server reaches the same operations through the same layer. For example, `memory_write` calls `writeMemory` at `apps/mcp/src/handlers.ts:371`, and `memory_search` asks the head server first and calls `searchMemories` when it gets no answer (`apps/mcp/src/handlers.ts:612`). The MCP door itself is drawn in `architecture/data-flow.md`.
 
 The v2 commands build no `layerApp`. `run` hands them to `runV2`, which calls the session, head, snapshot, and curator packages as plain functions (`apps/cli/src/run.ts:2345-2373`, `apps/cli/src/v2.ts:122-128`).
 
