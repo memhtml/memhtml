@@ -15,30 +15,30 @@ Which file receives the link follows from the rel. A directional rel is written 
 
 ## 2. The `derived` column is the firewall
 
-The retention scorer's `contestedStatus` signal in `@memhtml/domain` counts authored contradictions only, meaning rows with `derived = 0` (`packages/contracts/src/edges.ts:122-128`, `packages/domain/src/retention.ts:164-166`). An uncorroborated machine suspicion therefore can't lower a memory's retention score. No 0.16 command evicts by that score, and the rule stays in the scorer for any caller that does.
+The retention scorer's `contestedStatus` signal in `@memhtml/domain` counts authored contradictions only, meaning rows with `derived = 0` (`packages/contracts/src/edges.ts::Edge`, `packages/domain/src/retention.ts::RetentionInput`). An uncorroborated machine suspicion therefore can't lower a memory's retention score. No 0.16 command evicts by that score, and the rule stays in the scorer for any caller that does.
 
-One fact in this area does not survive a rebuild: the counter recording how many times a contradiction has been detected. It lives in the state plane. A SQL CHECK refuses `derived = 1` outside `provenance = 'sleep'` (`packages/index/migrations/0008_tasks.sql:200`), the provenance value the sleep pipeline stamped before 0.16 removed it and the closed vocabulary keeps, and `isWellFormedEdge` states the same condition once in TypeScript (`packages/contracts/src/edges.ts:146-149`) so a caller can refuse a bad edge before the driver does.
+One fact in this area does not survive a rebuild: the counter recording how many times a contradiction has been detected. It lives in the state plane. A SQL CHECK refuses `derived = 1` outside `provenance = 'sleep'` (`packages/index/migrations/0008_tasks.sql`), the provenance value the sleep pipeline stamped before 0.16 removed it and the closed vocabulary keeps, and `isWellFormedEdge` states the same condition once in TypeScript (`packages/contracts/src/edges.ts::isWellFormedEdge`) so a caller can refuse a bad edge before the driver does.
 
 ## 3. Four classes that never mix
 
-`EDGE_CLASSES` (`packages/contracts/src/edges.ts:9`) is `memory`, `person`, `provenance`, `task`.
+`EDGE_CLASSES` (`packages/contracts/src/edges.ts::EDGE_CLASSES`) is `memory`, `person`, `provenance`, `task`.
 
-| Class        | Rels                                                                                                                         | Source                               |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `memory`     | `supersedes`, `contradicts`, `caused_by`, `leads_to`, `part_of`, `relates_to`, `example_of`, `supports`, `laterally_related` | `packages/contracts/src/edges.ts:19` |
-| `person`     | `about_person`, `authored_by`                                                                                                | `packages/contracts/src/edges.ts:35` |
-| `provenance` | `from_session`                                                                                                               | `packages/contracts/src/edges.ts:41` |
-| `task`       | `blocks`, `subtask_of`                                                                                                       | `packages/contracts/src/edges.ts:54` |
+| Class        | Rels                                                                                                                         | Source                                             |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `memory`     | `supersedes`, `contradicts`, `caused_by`, `leads_to`, `part_of`, `relates_to`, `example_of`, `supports`, `laterally_related` | `packages/contracts/src/edges.ts::MEMORY_RELS`     |
+| `person`     | `about_person`, `authored_by`                                                                                                | `packages/contracts/src/edges.ts::PERSON_RELS`     |
+| `provenance` | `from_session`                                                                                                               | `packages/contracts/src/edges.ts::PROVENANCE_RELS` |
+| `task`       | `blocks`, `subtask_of`                                                                                                       | `packages/contracts/src/edges.ts::TASK_RELS`       |
 
-The class is derived from the rel (`packages/contracts/src/edges.ts:70`) rather than stored beside it, so the two cannot disagree. `relClassFor` is total over `ALL_RELS`, and each rel name appears in exactly one class.
+The class is derived from the rel (`packages/contracts/src/edges.ts::relClassFor`) rather than stored beside it, so the two cannot disagree. `relClassFor` is total over `ALL_RELS`, and each rel name appears in exactly one class.
 
-SQL CHECK constraints pair each class with its vocabulary (`packages/index/migrations/0008_tasks.sql:168-174`), and every memory-graph query filters on `edge_class = 'memory'`. A person edge or a task edge therefore cannot enter PageRank, the diversification pass, or the retention scorer's bridge count.
+SQL CHECK constraints pair each class with its vocabulary (`packages/index/migrations/0008_tasks.sql`), and every memory-graph query filters on `edge_class = 'memory'`. A person edge or a task edge therefore cannot enter PageRank, the diversification pass, or the retention scorer's bridge count.
 
-The HTML `rel` token is the rel with a `memhtml-` prefix and its underscores turned into hyphens (`packages/contracts/src/edges.ts:106-110`), so `laterally_related` becomes `memhtml-laterally-related`. `relForToken` inverts that mapping (`packages/contracts/src/edges.ts:116`).
+The HTML `rel` token is the rel with a `memhtml-` prefix and its underscores turned into hyphens (`packages/contracts/src/edges.ts::relTokenFor`, `packages/contracts/src/edges.ts::REL_TOKEN_PREFIX`), so `laterally_related` becomes `memhtml-laterally-related`. `relForToken` inverts that mapping (`packages/contracts/src/edges.ts::relForToken`).
 
 ## 4. The store checks the endpoint types SQL cannot
 
-SQL cannot check the type of the files at either end of an edge, so the store refuses an edge whose class disagrees with its endpoints (`packages/store/src/store.ts:842-874`). Both directions are refusals, with a distinct failure behind each:
+SQL cannot check the type of the files at either end of an edge, so the store refuses an edge whose class disagrees with its endpoints (`packages/store/src/store.ts::makeStore::requireEndpointClasses`). Both directions are refusals, with a distinct failure behind each:
 
 - a memory rel with a task endpoint would let a to-do list reweight the retention of knowledge;
 - a task rel with a memory endpoint claims a memory `blocks` something that nothing can close.
@@ -47,11 +47,11 @@ SQL cannot check the type of the files at either end of an edge, so the store re
 
 ## 5. Href form
 
-An `href` value is repository-root-relative with a leading slash. That leading slash is a document-reference form, converted at the HTML boundary and never stored (`packages/index/src/project.ts:336-344`). A root-relative href survives a `git mv` of the source file, greps as a fixed string, and resolves without knowing how deep the referring file sits. A self-loop is dropped when the file is projected.
+An `href` value is repository-root-relative with a leading slash. That leading slash is a document-reference form, converted at the HTML boundary and never stored (`packages/index/src/project.ts::authoredEdgesFor`). A root-relative href survives a `git mv` of the source file, greps as a fixed string, and resolves without knowing how deep the referring file sits. A self-loop is dropped when the file is projected.
 
 ## 6. No foreign key on the endpoints
 
-`edges.src_path` and `edges.dst_path` carry no foreign key, on purpose. A `<link>` may name a file the indexer has not reached yet, or an archived path, and a hard foreign key would make indexing depend on the order files arrive in (`packages/index/src/indexer.ts:470-473`).
+`edges.src_path` and `edges.dst_path` carry no foreign key, on purpose. A `<link>` may name a file the indexer has not reached yet, or an archived path, and a hard foreign key would make indexing depend on the order files arrive in (`packages/index/src/indexer.ts::makeIndexer::movePath`).
 
 A dangling href is therefore found and repaired instead of refused at write time. `memhtml doctor` finds them and `memhtml doctor --fix` repairs them in a commit (`apps/cli/src/repair.ts`), distinguishing an archived target, where it rewrites the href to the derived archive path, from a target that is simply gone, where it drops the edge with a warning.
 

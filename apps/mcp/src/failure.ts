@@ -104,7 +104,17 @@ export const mcpSuggestionsFor = (error: unknown): ReadonlyArray<string> => {
     case "InvalidMemory":
       return [
         "fix the violated constraint named above and call the same tool again",
-        "nothing was written and no commit was made — the store refused at the render gate"
+        "nothing was written and no commit was made: the call was refused before it changed anything"
+      ]
+    /*
+     * A prose `body` holding a block tag outside code. The tool takes markup in its other
+     * parameter, so the recovery is the same call with the article moved there; a record that only
+     * discusses a tag keeps `body` and puts the tag in backticks.
+     */
+    case "MarkupInProse":
+      return [
+        "call the same tool with the article as markup in article_html instead of body, with exactly one <mark> in its first <p>",
+        "keep body, end its first sentence with . ! or ? before any code, and put a tag the record discusses in backticks that open and close on one line, or in a fenced block set off by blank lines, if the tag is the subject rather than the markup"
       ]
     case "ModelUnavailable":
       return [
@@ -309,3 +319,26 @@ export const batchAbortFailure = (index: number, code: string, reason: string): 
       `Try: ${suggestions.join("; ")}`
   })
 }
+
+/**
+ * A `memory_reinforce` call that named no path, as the wire failure.
+ *
+ * Composed here rather than raised as `InvalidMemory`, for `batchAbortFailure`'s reason: the
+ * suggestions `mcpSuggestionsFor` gives that tag speak of the render gate, and this call never reached
+ * the store. The code is still `ERR_INVALID_MEMORY`, the one `trace_links` and the authoring XOR answer
+ * for a call missing the parameter their rule needs, so an agent branching on the code meets one
+ * vocabulary.
+ *
+ * The reason names both keys because whatever key the caller DID send is gone by now: the decoder drops
+ * a key the schema does not declare, so a misspelled `paths` arrives as a call with no path, and this
+ * message is the only place that caller learns which spelling the tool reads.
+ */
+export const reinforcePathsMissing = (): ToolFailure =>
+  compose(
+    "ERR_INVALID_MEMORY",
+    "memory_reinforce needs the memories to record the signal for, as `paths` (an array of memory paths) or `path` (one memory path), and the call carried neither; a key the tool does not declare is ignored",
+    [
+      "call memory_reinforce again with paths set to the memory paths you used, or path set to a single one",
+      "nothing was recorded, so the retry counts once"
+    ]
+  )

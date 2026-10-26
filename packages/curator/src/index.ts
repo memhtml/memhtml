@@ -22,6 +22,7 @@ export {
   HEADLINE_CLAIM_TYPES,
   INBOX_PREFIX,
   type LowConfidenceRecord,
+  type MootDetectedTask,
   NEIGHBOR_CLAIM_CHARS,
   type NeighborsOf,
   PEOPLE_PREFIX,

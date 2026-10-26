@@ -20,7 +20,7 @@ The operations pages are task-shaped how-tos, one per section of the runbook. Th
 | [Initialize a store](/learn/operations/initialize-a-store/)                       | Why a fresh clone runs `memhtml init` before its first merge                               |
 | [Wire up your coding agent](/learn/operations/wire-a-coding-agent/)               | What `integrations install` writes per host, and how uninstall removes exactly that        |
 | [Hooks and recall](/learn/operations/hooks-and-recall/)                           | What each hook injects, why a failing hook prints nothing, and how to run one by hand      |
-| [Run the store day to day](/learn/operations/run-the-store-day-to-day/)           | The daily verbs, the cron lines, and what moves the access plane                           |
+| [Run the store day to day](/learn/operations/run-the-store-day-to-day/)           | The everyday commands, the upkeep commands, and what moves the access plane                |
 | [Share one store between a CLI and a server](/learn/operations/share-one-store/)  | Whether a command and a running server can touch one database at once                      |
 | [Write through a session](/learn/operations/write-through-a-session/)             | How many writes land as one commit, and how an agent run binds them with `MEMHTML_SESSION` |
 | [Set the store policy](/learn/operations/set-the-store-policy/)                   | What `memhtml.config.json` controls, its defaults, and why a typo in it stops writes       |
@@ -37,7 +37,7 @@ The operations pages are task-shaped how-tos, one per section of the runbook. Th
 
 ## Before you start
 
-Every command writes exactly one JSON envelope to stdout and nothing else, and sends its logs to stderr. Exit 0 is success, 2 is a usage error you fix by changing the call, and 1 is a runtime failure you fix by changing the repository or the environment (`apps/cli/src/envelope.ts:87`). So every command on this site is safe to pipe into `jq` and safe to run from cron, and the examples show the envelope rather than describing it.
+Every command writes exactly one JSON envelope to stdout and nothing else, and sends its logs to stderr. Exit 0 is success, 2 is a usage error you fix by changing the call, and 1 is a runtime failure you fix by changing the repository or the environment (`apps/cli/src/envelope.ts::EXIT_OK`, `apps/cli/src/envelope.ts::EXIT_USAGE`, `apps/cli/src/envelope.ts::EXIT_RUNTIME`). So every command on this site is safe to pipe into `jq` and safe to run from cron, and the examples show the envelope rather than describing it.
 
 The git tree is the system of record, and `.memhtml/index.db` is a projection of it: delete the index and you lose time rather than memories. That property is why the operations pages read the way they do. Most recovery is a rebuild, and most of what looks like corruption is a stale watermark. [Store layout and path algebra](/internals/store-layout-and-path-algebra/) develops it.
 

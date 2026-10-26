@@ -321,7 +321,7 @@ $MEMHTML_ROOT/                        # its own git repo, one global memory stor
   areas/inbox/                    # where an unplaceable memory lands
   resources/<topic>/
   resources/people/<person>.html  # the person plane
-  archive/<YYYY>/<original-path>  # soft-evicted, path-preserving, injective
+  archive/<YYYY>[.<n>]/<original-path>  # soft-evicted, path-preserving, injective
   .memhtml/
     index.db                      # gitignored, rebuildable from the tree
     state.db                      # gitignored, NOT rebuildable from git

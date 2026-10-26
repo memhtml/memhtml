@@ -18,6 +18,9 @@ docs/.repomix/
 # Agent scratch from a codebase-understanding pass: derived analysis of the tree, not an artifact of
 # the system. The durable version of anything worth keeping is a file under docs/ proper.
 docs/.packets/
+# Working directories a generator leaves under docs/codebase/ while it builds the pages: its
+# scratch, not pages, and not an artifact of the system.
+docs/codebase/.*/
 # mise.toml and mise.lock are committed — these two are the per-machine overrides.
 mise.local.toml
 mise.local.lock

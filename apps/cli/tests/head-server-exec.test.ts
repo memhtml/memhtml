@@ -4,8 +4,9 @@ import { createServer, type Server } from "node:net"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 
+import { archivePathFor } from "@memhtml/contracts/paths"
 import { withOverlay } from "@memhtml/head"
-import { renderTemplate } from "@memhtml/html"
+import { addLink, renderTemplate } from "@memhtml/html"
 import { sessionStateFile } from "@memhtml/session"
 import { type FixtureRepo, makeFixtureRepo } from "@memhtml/store/testing"
 import { Effect, Exit, Scope } from "effect"
@@ -19,7 +20,7 @@ import { type HeadServer, startHeadServer } from "../src/head-server.js"
 import { run } from "../src/run.js"
 import { cacheImage, type GuestJob, seedFor } from "../src/session-exec.js"
 import { loadHeadAt } from "../src/v2.js"
-import { fakeEmbedder } from "./harness.js"
+import { fakeEmbedder, type LogEntry, recordingLogger } from "./harness.js"
 
 /**
  * `session exec` through the head server (`/v1/exec`, `docs/design.md` §22, "Exec"), in
@@ -39,6 +40,8 @@ import { fakeEmbedder } from "./harness.js"
  *   search answers until the loop ends).
  * - `head-server.ts` `execBase`: treat every base as an ancestor -> "declines a base off its ref's
  *   history, and the CLI runs the script itself" (the server serves it).
+ * - `head-server.ts` `execBase`: ask through `git.run` and catch the failure as "no" -> the same
+ *   case (`git merge-base exited 1` at Error, logged by `run`).
  * - `head-server.ts` `execBody`: drop the `MaxBodySize` bound -> "refuses a body over the cap with
  *   413" (the chunked case is read whole and answered 500 for its session).
  * - `run.ts`: drop the `EXEC_BODY_MAX_BYTES` check -> "refuses a script over the cap at exit 2,
@@ -50,6 +53,9 @@ import { fakeEmbedder } from "./harness.js"
  *   label sees the base's head, not the labeled one) and "seeds an overlaid path from the view".
  * - `exec-pool.ts` `post`: drop the deadline `setTimeout` -> "terminates a worker that passes its
  *   deadline, and starts another" (the job never answers; the case times out).
+ * - `v2.ts` `execOverHead` (2026-10-26): the harvest appended without `withRepoints` -> "completes
+ *   an archived file's inbound edges in the harvest, here and through the server" (the archive
+ *   alone, the note's edge left on the vacated path).
  */
 
 const run_ = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect)
@@ -108,17 +114,25 @@ const corpus = async (): Promise<{ repo: FixtureRepo; sha: string }> => {
 /** A server in its own scope, closed after the test. */
 const serve = async (
   root: string,
-  options: { readonly embedder?: EmbedderShape; readonly execWorkerPath?: string } = {}
+  options: {
+    readonly embedder?: EmbedderShape
+    readonly execWorkerPath?: string
+    /** Where the server's log entries go instead of stderr, when given. */
+    readonly logs?: Array<LogEntry>
+  } = {}
 ): Promise<HeadServer> => {
   const scope = Scope.makeUnsafe()
   scopes.push(scope)
+  const started = startHeadServer({
+    root,
+    pollMs: 0,
+    embedder: options.embedder ?? fakeEmbedder(),
+    execWorkerPath: options.execWorkerPath
+  }).pipe(Scope.provide(scope))
   return run_(
-    startHeadServer({
-      root,
-      pollMs: 0,
-      embedder: options.embedder ?? fakeEmbedder(),
-      execWorkerPath: options.execWorkerPath
-    }).pipe(Scope.provide(scope))
+    options.logs === undefined
+      ? started
+      : started.pipe(Effect.provide(recordingLogger(options.logs)))
   )
 }
 
@@ -245,6 +259,59 @@ describe("session exec through the head server", () => {
     expect(server.stats().exec.jobs).toBe(scripts.length + 1)
   })
 
+  it("completes an archived file's inbound edges in the harvest, here and through the server", async () => {
+    const { repo } = await corpus()
+    const retired = memory("orchard").path
+    const slot = archivePathFor(retired, 2031)
+    const holder = "resources/acme-widget/orchard-note.html"
+    await commit(
+      repo,
+      [
+        {
+          path: holder,
+          html: addLink(
+            renderTemplate({
+              title: "Orchard note",
+              claim: "The orchard note supersedes the orchard record.",
+              memoryType: "semantic",
+              at: AT,
+              entities: ["project:acme-widget"]
+            }),
+            "supersedes",
+            `/${retired}`
+          )
+        }
+      ],
+      "a holder"
+    )
+    await serve(repo.root)
+    for (const id of ["srv", "loc"]) {
+      expect((await cli(repo.root, ["session", "start", "--id", id])).exitCode).toBe(0)
+    }
+    // The script archives the record and leaves the record that cites it untouched.
+    const script = `mkdir -p /mnt/memhtml/${dirname(slot)}\nmv /mnt/memhtml/${retired} /mnt/memhtml/${slot}`
+    const served = dataOf((await exec(repo.root, "srv", script)).body)
+    const local = dataOf((await exec(repo.root, "loc", script, { local: true })).body)
+    expect(comparable(served)).toEqual(comparable(local))
+    expect(local.blocking).toEqual([])
+    expect(local.harvested).toEqual([
+      { kind: "unlink", path: holder },
+      { kind: "link", path: holder },
+      { kind: "archive", path: retired, to: slot }
+    ])
+    expect(local.appended).toBe(3)
+    expect(await logOf(repo.root, "loc")).toEqual([
+      { kind: "unlink", path: holder, rel: "supersedes", href: `/${retired}` },
+      { kind: "link", path: holder, rel: "supersedes", href: `/${slot}` },
+      expect.objectContaining({ kind: "archive", path: retired, to: slot })
+    ])
+    const landed = await cli(repo.root, ["session", "commit", "--id", "loc", "--message", "retire"])
+    expect(landed.exitCode, JSON.stringify(landed.body)).toBe(0)
+    const cites = await run_(repo.git.run(["show", `main:${holder}`]))
+    expect(cites).toContain(`<link rel="memhtml-supersedes" href="/${slot}">`)
+    expect(cites).not.toContain(`href="/${retired}"`)
+  })
+
   it("serves a session whose base is an ancestor of the tip, built from the tip", async () => {
     const { repo } = await corpus()
     for (const id of ["srv", "loc"]) {
@@ -269,7 +336,8 @@ describe("session exec through the head server", () => {
     expect(
       (await cli(repo.root, ["session", "start", "--id", "side", "--ref", "side"])).exitCode
     ).toBe(0)
-    await serve(repo.root)
+    const logs: Array<LogEntry> = []
+    await serve(repo.root, { logs })
     const result = await exec(repo.root, "side", "ls /mnt/memhtml/areas/inbox")
     expect(result.exitCode).toBe(0)
     const data = dataOf(result.body)
@@ -277,6 +345,8 @@ describe("session exec through the head server", () => {
     expect(String((data.server as Body).detail)).toContain(sha)
     expect((data.head as Body).source).not.toBe("server")
     expect(data.stdout).toContain("beacon.html")
+    // `merge-base --is-ancestor` exits 1 for the side branch's base: the answer, not an error.
+    expect(logs.filter((entry) => entry.level === "Error")).toEqual([])
   })
 
   it("runs two execs of one session one after the other, the second over the first's harvest", async () => {

@@ -561,6 +561,33 @@ describe("correctMemory", () => {
     expect(rename?.similarity ?? 0).toBeGreaterThanOrEqual(50)
   })
 
+  it("supersedes toward the generation slot its archive takes when the year's slot is held", async () => {
+    const repo = await fixture()
+    const year = new Date().getUTCFullYear()
+    const path = "areas/inbox/a-fact.html"
+    const first = await run(
+      repo.store.writeMemory(writeInput({ path, claim: "The acme widget ships on Mondays." }))
+    )
+    const held = await run(repo.store.archiveMemory(first.path, "first eviction"))
+    const heldBytes = await readFile(join(repo.root, held.archivePath), "utf8")
+    await run(
+      repo.store.writeMemory(writeInput({ path, claim: "The acme widget ships on Tuesdays." }))
+    )
+
+    const corrected = await run(
+      repo.store.correctMemory(path, {
+        ...writeInput({ title: "Widget ship day", claim: "The acme widget ships on Thursdays." }),
+        reason: "the ship day moved"
+      })
+    )
+
+    expect(corrected.archivedPath).toBe(`archive/${String(year)}.2/${path}`)
+    const fresh = await run(repo.store.readMemory(corrected.path))
+    expect(fresh.doc.links).toEqual([{ rel: "supersedes", href: `/${corrected.archivedPath}` }])
+    expect(await readFile(join(repo.root, held.archivePath), "utf8")).toBe(heldBytes)
+    expect(await run(repo.store.dirtyPaths())).toEqual([])
+  })
+
   it("keeps the archive diff proportional to the stamps, on a hand-authored file", async () => {
     // A hand-authored head — aligned columns, metas not in META_ORDER — is the realistic
     // input: `docs/format.md`'s own example looks like this, and
@@ -850,6 +877,26 @@ describe("the render gate refuses a file checkMemory rejects", () => {
     expect((await run(repo.store.readMemory(result.path))).doc.article.gist).toBe("Claim.")
     expect(await run(repo.store.dirtyPaths())).toEqual([])
   })
+
+  it("writes articleHtml whose <p> holds an escaped block tag, verbatim", async () => {
+    /**
+     * `articleHtml` is verbatim markup, and a caller that escapes third-party text into a `<p>`
+     * means the characters: a reply quoting `&lt;h1&gt;` is text about a heading. The block-tag
+     * rule judges a prose body at the doors and a session's puts in `validateOps`; the render gate
+     * does not apply it to supplied markup.
+     */
+    const repo = await fixture()
+    const asText =
+      "<p><mark>The reply opened with &lt;h1&gt;Manage API Access&lt;/h1&gt;.</mark></p>"
+    const result = await run(
+      repo.store.writeMemory(
+        writeInput({ title: "Quoted heading", claim: "", articleHtml: asText })
+      )
+    )
+    const onDisk = await readFile(join(repo.root, result.path), "utf8")
+    expect(onDisk).toContain("&lt;h1&gt;Manage API Access&lt;/h1&gt;")
+    expect(await run(repo.store.dirtyPaths())).toEqual([])
+  })
 })
 
 describe("archiveMemory", () => {
@@ -895,6 +942,39 @@ describe("archiveMemory", () => {
       PathNotFound
     )
   })
+
+  it("archives into the next generation when the year's slot is held, leaving the older copy alone", async () => {
+    // A record archived once, written again at its path, and archived again. `git mv` onto the held
+    // slot would fail with `destination exists`; the archive takes `archive/<YYYY>.2/` instead.
+    const repo = await fixture()
+    const year = new Date().getUTCFullYear()
+    const path = "resources/people/p.html"
+    const first = await run(
+      repo.store.writeMemory(
+        writeInput({ path, title: "Ada Example", claim: "Ada Example joined the widget team." })
+      )
+    )
+    const older = await run(repo.store.archiveMemory(first.path, "first eviction"))
+    expect(older.archivePath).toBe(`archive/${String(year)}/${path}`)
+    const olderBytes = await readFile(join(repo.root, older.archivePath), "utf8")
+    await run(
+      repo.store.writeMemory(
+        writeInput({ path, title: "Ada Example", claim: "Ada Example maintains the widget build." })
+      )
+    )
+    const before = await commitCount(repo)
+
+    const result = await run(repo.store.archiveMemory(path, "second eviction"))
+
+    expect(result.archivePath).toBe(`archive/${String(year)}.2/${path}`)
+    expect(originalPathFor(result.archivePath)).toBe(path)
+    expect(await commitCount(repo)).toBe(before + 1)
+    expect(await readFile(join(repo.root, older.archivePath), "utf8")).toBe(olderBytes)
+    const archived = await run(repo.store.readMemory(result.archivePath))
+    expect(archived.doc.article.gist).toBe("Ada Example maintains the widget build.")
+    expect(archived.doc.metas.status).toBe("archived")
+    expect(await run(repo.store.dirtyPaths())).toEqual([])
+  })
 })
 
 describe("supersedeMemories", () => {
@@ -906,6 +986,38 @@ describe("supersedeMemories", () => {
     const result = await run(repo.store.supersedeMemories([]))
     expect(result).toEqual({ commitSha: null, archived: [] })
     expect(await commitCount(repo)).toBe(before)
+    expect(await run(repo.store.dirtyPaths())).toEqual([])
+  })
+
+  it("archives a loser whose year slot is held into the next generation, and links the winner there", async () => {
+    const repo = await fixture()
+    const year = new Date().getUTCFullYear()
+    const path = "areas/inbox/widget-ceiling.html"
+    const first = await run(
+      repo.store.writeMemory(writeInput({ path, claim: "The acme widget pool ceiling is 32." }))
+    )
+    const held = await run(repo.store.archiveMemory(first.path, "first eviction"))
+    const heldBytes = await readFile(join(repo.root, held.archivePath), "utf8")
+    const loser = await run(
+      repo.store.writeMemory(writeInput({ path, claim: "The acme widget pool ceiling is 64." }))
+    )
+    const winner = await run(
+      repo.store.writeMemory(
+        writeInput({ title: "Widget ceiling", claim: "The acme widget pool ceiling is 128." })
+      )
+    )
+
+    const result = await run(
+      repo.store.supersedeMemories([{ winnerPath: winner.path, loserPath: loser.path }])
+    )
+
+    const slot = `archive/${String(year)}.2/${path}`
+    expect(result.archived).toEqual([{ loserPath: loser.path, archivePath: slot }])
+    expect((await run(repo.store.readMemory(winner.path))).doc.links).toContainEqual({
+      rel: "supersedes",
+      href: `/${slot}`
+    })
+    expect(await readFile(join(repo.root, held.archivePath), "utf8")).toBe(heldBytes)
     expect(await run(repo.store.dirtyPaths())).toEqual([])
   })
 
@@ -1070,6 +1182,180 @@ describe("supersedeMemories", () => {
 
     const archived = await run(repo.store.readMemory(archivePathFor(loser.path, 2026)))
     expect(archived.doc.metas.validUntil).toBe("2025-02-01T00:00:00Z")
+  })
+})
+
+/**
+ * Archive, correct and supersede all move their source through `stageArchive`, and `archivePathFor`
+ * mirrors whatever path it is given, so a source that is already under `archive/` would land under
+ * `archive/<YYYY>/archive/`. Each door refuses it with `InvalidMemory` instead, and so is a `.` or
+ * `..` spelling of it, which the filesystem resolves to the archived file. The assertions read git and
+ * the disk rather than the error alone: a refusal that still moved the file would satisfy
+ * `toBeInstanceOf` and none of the rest.
+ */
+describe("a source already under archive/ is refused by every door that archives", () => {
+  /** A memory written and then archived, so its one file sits at an archive path. */
+  const archivedMemory = async (repo: FixtureRepo): Promise<string> => {
+    const written = await run(
+      repo.store.writeMemory(
+        writeInput({ title: "An evicted widget fact", claim: "The widget pool holds eight." })
+      )
+    )
+    return (await run(repo.store.archiveMemory(written.path, "evicted"))).archivePath
+  }
+
+  /** Everything a refusal must leave alone: HEAD, every file on disk, and the given files' bytes. */
+  const treeState = async (repo: FixtureRepo, paths: ReadonlyArray<string>) => ({
+    head: await run(repo.git.revParseHead()),
+    onDisk: await candidatePathsOnDisk(repo),
+    bytes: await Promise.all(paths.map((path) => readFile(join(repo.root, path), "utf8"))),
+    dirty: await run(repo.store.dirtyPaths())
+  })
+
+  const expectAlreadyArchived = (failure: unknown, archived: string): void => {
+    expect(failure).toBeInstanceOf(InvalidMemory)
+    expect((failure as InvalidMemory).reason).toContain(`already archived at ${archived}`)
+  }
+
+  /** The `.` and `..` spellings of an archived path, refused as unusable memory paths. */
+  const dotted = (archived: string): ReadonlyArray<string> => [
+    `./${archived}`,
+    `areas/../${archived}`
+  ]
+
+  const expectUnusablePath = (failure: unknown, path: string): void => {
+    expect(failure).toBeInstanceOf(InvalidMemory)
+    expect((failure as InvalidMemory).reason).toContain(
+      `path \`${path}\` is not a usable memory path`
+    )
+  }
+
+  it("archiveMemory refuses it, in every path spelling, and nothing moves", async () => {
+    const recorder = recordingMoveCallback()
+    const repo = await fixture({ hooks: { onMove: recorder.onMove } })
+    const archived = await archivedMemory(repo)
+    const before = await treeState(repo, [archived])
+
+    expectAlreadyArchived(await runErr(repo.store.archiveMemory(archived, "x")), archived)
+    // The `<link href>` form normalizes to the same archive path, so it is refused the same way.
+    expectAlreadyArchived(await runErr(repo.store.archiveMemory(`/${archived}`, "x")), archived)
+    for (const path of dotted(archived)) {
+      expectUnusablePath(await runErr(repo.store.archiveMemory(path, "x")), path)
+    }
+
+    expect(await treeState(repo, [archived])).toEqual(before)
+    expect(before.dirty).toEqual([])
+    // The access row was never told to follow a move: the only move is the first archiving.
+    expect(recorder.moves).toHaveLength(1)
+  })
+
+  it("archiveMemory refuses a path in the archive bucket that carries no year partition", async () => {
+    // The index reads every path under `archive/` as archived, year or not, so a record placed there
+    // explicitly is already archived, and moving it would still nest it under `archive/<YYYY>/archive/`.
+    const repo = await fixture()
+    const placed = await run(
+      repo.store.writeMemory(
+        writeInput({ title: "A widget note", path: "archive/notes/a-widget-note.html" })
+      )
+    )
+    expect(placed.path).toBe("archive/notes/a-widget-note.html")
+    const before = await treeState(repo, [placed.path])
+
+    expectAlreadyArchived(await runErr(repo.store.archiveMemory(placed.path, "x")), placed.path)
+    expect(await treeState(repo, [placed.path])).toEqual(before)
+  })
+
+  it("correctMemory refuses it, writing no superseding file", async () => {
+    const repo = await fixture()
+    const archived = await archivedMemory(repo)
+    const before = await treeState(repo, [archived])
+    const correct = (target: string) =>
+      runErr(
+        repo.store.correctMemory(
+          target,
+          writeInput({ title: "A corrected widget fact", claim: "The widget pool holds sixteen." })
+        )
+      )
+
+    expectAlreadyArchived(await correct(archived), archived)
+    for (const path of dotted(archived)) expectUnusablePath(await correct(path), path)
+    expect(await treeState(repo, [archived])).toEqual(before)
+  })
+
+  it("supersedeMemories refuses an archived loser, leaving the winner unlinked", async () => {
+    const repo = await fixture()
+    const archived = await archivedMemory(repo)
+    const winner = await run(
+      repo.store.writeMemory(
+        writeInput({ title: "The current widget fact", claim: "The widget pool holds twelve." })
+      )
+    )
+    const before = await treeState(repo, [archived, winner.path])
+    const supersede = (loserPath: string) =>
+      runErr(repo.store.supersedeMemories([{ winnerPath: winner.path, loserPath }]))
+
+    expectAlreadyArchived(await supersede(archived), archived)
+    for (const path of dotted(archived)) expectUnusablePath(await supersede(path), path)
+    expect(await treeState(repo, [archived, winner.path])).toEqual(before)
+  })
+
+  it("supersedeMemories refuses a later archived loser before it moves an earlier pair", async () => {
+    // Every loser is judged in the read loop, before any pair is staged, so the first pair's loser
+    // never moves and the move hook never hears of it.
+    const recorder = recordingMoveCallback()
+    const repo = await fixture({ hooks: { onMove: recorder.onMove } })
+    const archived = await archivedMemory(repo)
+    const loser = await run(
+      repo.store.writeMemory(
+        writeInput({ title: "An older widget fact", claim: "The widget pool holds four." })
+      )
+    )
+    const winner = await run(
+      repo.store.writeMemory(
+        writeInput({ title: "The current widget fact", claim: "The widget pool holds twelve." })
+      )
+    )
+    const before = await treeState(repo, [archived, loser.path, winner.path])
+
+    const failure = await runErr(
+      repo.store.supersedeMemories([
+        { winnerPath: winner.path, loserPath: loser.path },
+        { winnerPath: winner.path, loserPath: archived }
+      ])
+    )
+
+    expectAlreadyArchived(failure, archived)
+    expect(await treeState(repo, [archived, loser.path, winner.path])).toEqual(before)
+    // The one move is the setup's own archiving.
+    expect(recorder.moves).toHaveLength(1)
+  })
+
+  it("leaves a change already staged on the source staged, behind archive and correct", async () => {
+    // The refusal comes before the journal opens. Raised inside it, the compensation would run, and
+    // its `git reset -- <paths>` unstages whatever the caller had staged on those paths.
+    const repo = await fixture()
+    const archived = await archivedMemory(repo)
+    const original = await readFile(join(repo.root, archived), "utf8")
+    const edited = original.replace("</body>", "<!-- a staged edit -->\n</body>")
+    expect(edited).not.toBe(original)
+    await writeFile(join(repo.root, archived), edited, "utf8")
+    await run(repo.git.add([archived]))
+    const staged = await run(repo.git.run(["diff", "--cached"]))
+    expect(staged).toContain("a staged edit")
+
+    expectAlreadyArchived(await runErr(repo.store.archiveMemory(archived, "x")), archived)
+    expectAlreadyArchived(
+      await runErr(
+        repo.store.correctMemory(
+          archived,
+          writeInput({ title: "A corrected widget fact", claim: "The widget pool holds sixteen." })
+        )
+      ),
+      archived
+    )
+
+    expect(await run(repo.git.run(["diff", "--cached"]))).toBe(staged)
+    expect(await readFile(join(repo.root, archived), "utf8")).toBe(edited)
   })
 })
 

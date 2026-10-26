@@ -1,11 +1,13 @@
 import { execFile } from "node:child_process"
-import { chmod } from "node:fs/promises"
-import { join } from "node:path"
+import { chmod, mkdir } from "node:fs/promises"
+import { dirname, join } from "node:path"
 import { promisify } from "node:util"
 
+import { archivePathFor, archiveYearOf } from "@memhtml/contracts/paths"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import type { DoctorReport } from "../src/doctor.js"
+import { EXIT_RUNTIME } from "../src/envelope.js"
 import { type Cli, makeCli } from "./harness.js"
 
 const git = promisify(execFile)
@@ -185,5 +187,127 @@ describe("doctor counts untyped entity references", () => {
     // The load-bearing half: a corpus whose only finding is untyped entities is still healthy. Gating
     // on it would turn every hand-authored corpus red for writing metas the way the format allows.
     expect(report.healthy).toBe(true)
+  })
+})
+
+/**
+ * A record archived inside the archive, at `archive/<YYYY>/archive/<YYYY>/<path>`.
+ *
+ * No door makes one, because the store refuses a source that is already under `archive/`. A tree
+ * written before that refusal, or moved by hand, can still hold one, and `originalPathFor` strips a
+ * single prefix, so the file reads as the archive of an archive path rather than of a live one.
+ * Doctor names each one.
+ */
+describe("doctor reports a record archived inside the archive", () => {
+  let cli: Cli
+  let kept: string
+  let moved: string
+
+  const archived = async (title: string, claim: string): Promise<string> => {
+    const written = await cli.json<{ readonly path: string }>([
+      "write",
+      "--type",
+      "semantic",
+      "--title",
+      title,
+      "--claim",
+      claim,
+      "--workspace",
+      "acme-widget"
+    ])
+    const result = await cli.json<{ readonly archivePath: string }>([
+      "archive",
+      written.path,
+      "--reason",
+      "evicted"
+    ])
+    return result.archivePath
+  }
+
+  const headSha = async (): Promise<string> =>
+    (await git("git", ["-C", cli.root, "rev-parse", "HEAD"])).stdout.trim()
+
+  beforeAll(async () => {
+    cli = await makeCli()
+    kept = await archived("The widget pool size", "The widget pool holds eight.")
+    moved = await archived("The widget queue depth", "The widget queue holds thirty.")
+  })
+
+  afterAll(async () => {
+    await cli.cleanup()
+  })
+
+  it("reports nothing for records archived once", async () => {
+    const report = await cli.json<DoctorReport>(["doctor"])
+    expect(report.nestedArchivePaths).toEqual([])
+    expect(report.healthy).toBe(true)
+  })
+
+  it("cannot be handed one by archive or correct, which refuse an archived source", async () => {
+    const head = await headSha()
+    // The `.` and `..` spellings resolve to the same file on disk, so they are refused too, as paths
+    // that are not usable memory paths.
+    const spellings: ReadonlyArray<readonly [string, string]> = [
+      [kept, `already archived at ${kept}`],
+      [`./${kept}`, `path \`./${kept}\` is not a usable memory path`],
+      [`areas/../${kept}`, `path \`areas/../${kept}\` is not a usable memory path`]
+    ]
+    for (const [path, reason] of spellings) {
+      for (const argv of [
+        ["archive", path, "--reason", "evicted again"],
+        [
+          "correct",
+          path,
+          "--title",
+          "The widget pool size, corrected",
+          "--claim",
+          "The widget pool holds sixteen."
+        ]
+      ]) {
+        const result = await cli.run(argv)
+        expect(result.exitCode).toBe(EXIT_RUNTIME)
+        const body = JSON.parse(result.stdout) as Record<string, unknown>
+        expect(body.code).toBe("ERR_INVALID_MEMORY")
+        expect(body.error).toContain(reason)
+      }
+    }
+    expect(await headSha()).toBe(head)
+    const status = await cli.json<{ readonly dirty: boolean }>(["status"])
+    expect(status.dirty).toBe(false)
+  })
+
+  it("names a nested path moved in by hand, and counts it against healthy", async () => {
+    const nested = archivePathFor(moved, archiveYearOf(moved) ?? new Date().getUTCFullYear())
+    await mkdir(dirname(join(cli.root, nested)), { recursive: true })
+    await git("git", ["-C", cli.root, "mv", moved, nested])
+    await git("git", ["-C", cli.root, "commit", "--quiet", "-m", "archive an archived record"])
+    await cli.json(["index", "update"])
+
+    const report = await cli.json<DoctorReport>(["doctor"])
+    expect(report.nestedArchivePaths).toEqual([nested])
+    expect(report.healthy).toBe(false)
+    // Every other term of `healthy` is clean, so the nested path is what turned it false.
+    expect(report.dangling).toEqual([])
+    expect(report.orphanAccessRows).toEqual([])
+    expect(report.inboxCrowded).toBe(false)
+    expect(report.inboxTasksCrowded).toBe(false)
+    expect(report.warnings).toEqual([])
+    expect(report.unparseable).toEqual([])
+    expect(report.indexFresh).toBe(true)
+    expect(report.embedModelMatches).toBe(true)
+    expect(report.vectorCoverageLow).toBe(false)
+  })
+
+  it("names a nested path under a generation slot as well", async () => {
+    // A record moved by hand into `archive/<YYYY>.2/archive/...` is archived a second time too.
+    const nested = archivePathFor(kept, archiveYearOf(kept) ?? new Date().getUTCFullYear(), 2)
+    await mkdir(dirname(join(cli.root, nested)), { recursive: true })
+    await git("git", ["-C", cli.root, "mv", kept, nested])
+    await git("git", ["-C", cli.root, "commit", "--quiet", "-m", "nest an archived record"])
+    await cli.json(["index", "update"])
+
+    const report = await cli.json<DoctorReport>(["doctor"])
+    expect(report.nestedArchivePaths).toContain(nested)
+    expect(report.healthy).toBe(false)
   })
 })

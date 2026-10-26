@@ -1,9 +1,14 @@
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { createServer } from "node:http"
+import type { AddressInfo } from "node:net"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 
+import { MEMORY_RELS } from "@memhtml/contracts/edges"
+import { archivePathFor } from "@memhtml/contracts/paths"
 import type { CollapsePlan } from "@memhtml/curator"
-import { renderTemplate } from "@memhtml/html"
+import { addLink, renderTemplate } from "@memhtml/html"
+import { PROXY_BASE_URL_VAR } from "@memhtml/llm"
 import { makeGit } from "@memhtml/store"
 import { configureIdentity } from "@memhtml/store/testing"
 import { Effect } from "effect"
@@ -40,6 +45,21 @@ import { run } from "../src/run.js"
  *   to a run).
  * - `curate-collapse.ts` `archivable`: ignore the `keep` ruling -> "lands the archive cluster and
  *   every fold" (`verify-3` is archived).
+ * - `curate-collapse.ts` `archiveCluster` (2026-10-26): archives with no `withRepoints`, in fixed
+ *   chunks -> "archives each member with its repoints, packs chunks under the cap, and leaves active
+ *   a member no session can carry" (one commit, every note's edges left on the vacated paths).
+ * - `curate-collapse.ts` `foldCluster` (2026-10-26): the completion's archives with no
+ *   `withRepoints` -> "completes a cited member's archive with its repoints, in the first session
+ *   and in a follow-up" (the completion is refused with a warning and the members land later);
+ *   `followUp`'s units with no `withRepoints` -> the same case (the follow-up is refused, and
+ *   `error` names the note still citing pkill-1).
+ * - `curate-collapse.ts` `foldCluster` (2026-10-26): a `supersedes` link from any path counted as
+ *   the canonical's -> "links the canonical to a member a live record also supersedes, which its put
+ *   left to the driver" (`driver.link` is 0 and the canonical never reaches pkill-1's slot).
+ * - `curate-collapse.ts` `archiveSlotIn` (2026-10-26): every slot read as free, so each archive
+ *   aims at the bare year -> "repoints a cited member to the generation slot it takes when an older
+ *   record holds the year's" (the chunk is refused and widget d skipped), and the held-slot fold's
+ *   driver cases.
  */
 
 const AT = "2026-09-20T12:00:00Z"
@@ -180,14 +200,16 @@ interface Envelope {
   readonly data?: CurateCollapseReport
 }
 
-/** A fresh repo with the fixture committed on `main`. */
-const freshRepo = async (): Promise<string> => {
+/** A fresh repo with the fixture (`files`, the shared one unless given) committed on `main`. */
+const freshRepo = async (
+  files: ReadonlyArray<{ readonly path: string; readonly html: string }> = FILES
+): Promise<string> => {
   const dir = await mkdtemp(join(tmpdir(), "memhtml-curate-collapse-"))
   roots.push(dir)
   const g = makeGit(dir)
   await Effect.runPromise(g.run(["init", "-b", "main", "."]).pipe(Effect.orDie))
   await Effect.runPromise(configureIdentity(g))
-  for (const file of FILES) {
+  for (const file of files) {
     const target = join(dir, file.path)
     await mkdir(dirname(target), { recursive: true })
     await writeFile(target, file.html, "utf8")
@@ -407,6 +429,378 @@ describe("curate collapse --model fake", () => {
   }, 180_000)
 })
 
+describe("curate collapse repoints the edges live records carry to what it archives", () => {
+  // Three archive-ruled widgets, cited by live notes that each carry every memory rel to one of
+  // them: 6 notes x 9 rels is 54 edges, so an archive and its repoints are 109 ops and two of them
+  // do not fit one session; 12 notes x 9 rels is 217 ops, which no session can carry.
+  const widget = (letter: string) => `areas/inbox/widget-${letter}.html`
+  const note = (letter: string, index: number) =>
+    `resources/acme-widget/note-${letter}-${String(index)}.html`
+  const CITERS: ReadonlyArray<readonly [string, number]> = [
+    ["a", 6],
+    ["b", 6],
+    ["c", 12]
+  ]
+  const CITED: ReadonlyArray<{ readonly path: string; readonly html: string }> = [
+    ...CITERS.map(([letter]) => ({
+      path: widget(letter),
+      html: renderTemplate({
+        title: `Widget ${letter}`,
+        claim: `Widget ${letter} ships from the north dock.`,
+        memoryType: "semantic",
+        at: AT
+      })
+    })),
+    ...CITERS.flatMap(([letter, count]) =>
+      Array.from({ length: count }, (_, index) => ({
+        path: note(letter, index),
+        html: MEMORY_RELS.reduce(
+          (html, rel) => addLink(html, rel, `/${widget(letter)}`),
+          renderTemplate({
+            title: `Widget ${letter} note ${String(index)}`,
+            claim: `Widget ${letter} crate ${String(index)} holds ${String(index + 2)} parts.`,
+            memoryType: "semantic",
+            at: AT
+          })
+        )
+      }))
+    )
+  ]
+
+  it("archives each member with its repoints, packs chunks under the cap, and leaves active a member no session can carry", async () => {
+    root = await freshRepo(CITED)
+    await writeFile(
+      join(work, "widget-rulings.jsonl"),
+      `${CITERS.map(([letter]) => JSON.stringify({ path: widget(letter), verdict: "archive", reason: "retired" })).join("\n")}\n`,
+      "utf8"
+    )
+    const rulings = join(work, "widget-rulings.jsonl")
+    const planned = parse<Envelope>(
+      (await collapse("--ref", REF, "--rulings", rulings, "--dry-run")).stdout
+    )
+    const cluster = (planned.data?.plan?.clusters ?? []).find((one) => one.kind === "archive")
+    if (cluster === undefined) throw new Error("the plan holds no archive cluster")
+    const result = await collapse("--ref", REF, "--rulings", rulings, "--only", cluster.id)
+    expect(result.exitCode, result.stdout).toBe(EXIT_OK)
+    const data = parse<Envelope>(result.stdout).data as CurateCollapseReport
+    const [archived] = data.clusters
+    expect(archived?.outcome, archived?.error ?? "").toBe("committed")
+    // Widgets a and b land one chunk each, every edge to them repointed; c is left with a reason.
+    expect(archived?.commits).toHaveLength(2)
+    expect(archived?.ops).toEqual({
+      put: 0,
+      archive: 2,
+      link: 108,
+      unlink: 108,
+      label: 0,
+      unlabel: 0,
+      move: 0
+    })
+    expect(archived?.driver).toEqual({ archive: 2, link: 108 })
+    expect(archived?.skipped).toEqual([widget("c")])
+    expect(archived?.warnings).toEqual([
+      `${widget("c")} left active: its archive and the repoints of the edges live records carry to it are 217 ops, over the cap of 200 one session carries`
+    ])
+    const tree = await treeOf(QUALIFIED)
+    for (const [letter, count] of CITERS) {
+      const slot = archivePathFor(widget(letter), Number(YEAR))
+      const moved = letter !== "c"
+      expect(tree.has(widget(letter)), letter).toBe(!moved)
+      expect(tree.has(slot), letter).toBe(moved)
+      for (let index = 0; index < count; index += 1) {
+        const html = await show(QUALIFIED, note(letter, index))
+        expect(html.includes(`href="/${slot}"`), note(letter, index)).toBe(moved)
+        expect(html.includes(`href="/${widget(letter)}"`), note(letter, index)).toBe(!moved)
+      }
+    }
+    // Every edge in the landed tree names a file in the landed tree.
+    for (const path of [...tree].filter((one) => one.endsWith(".html"))) {
+      const html = await show(QUALIFIED, path)
+      for (const match of html.matchAll(/<link rel="memhtml-[^"]+" href="\/([^"]+)"/g)) {
+        expect(tree.has(match[1] ?? ""), `${path} -> ${match[1]}`).toBe(true)
+      }
+    }
+  }, 120_000)
+
+  it("repoints a cited member to the generation slot it takes when an older record holds the year's", async () => {
+    // Widget d's `archive/<YYYY>/` slot holds an older record, so its archive takes `.2`, and the
+    // notes' edges to it follow it there. A repoint to the bare year would name the older record.
+    const cited = widget("d")
+    const held = archivePathFor(cited, Number(YEAR))
+    const free = archivePathFor(cited, Number(YEAR), 2)
+    const older = renderTemplate({
+      title: "Widget d owner",
+      claim: "Grace Example owned widget d before it moved docks.",
+      memoryType: "semantic",
+      at: AT
+    }).replace('content="active"', 'content="archived"')
+    const notes = [0, 1].map((index) => ({
+      path: note("d", index),
+      html: (["relates_to", "caused_by"] as const).reduce(
+        (html, rel) => addLink(html, rel, `/${cited}`),
+        renderTemplate({
+          title: `Widget d note ${String(index)}`,
+          claim: `Widget d crate ${String(index)} holds ${String(index + 2)} parts.`,
+          memoryType: "semantic",
+          at: AT
+        })
+      )
+    }))
+    const widgetD = renderTemplate({
+      title: "Widget d",
+      claim: "Widget d ships from the north dock.",
+      memoryType: "semantic",
+      at: AT
+    })
+    root = await freshRepo([{ path: cited, html: widgetD }, { path: held, html: older }, ...notes])
+    const rulings = join(work, "widget-d-rulings.jsonl")
+    await writeFile(
+      rulings,
+      `${JSON.stringify({ path: cited, verdict: "archive", reason: "retired" })}\n`,
+      "utf8"
+    )
+    const planned = parse<Envelope>(
+      (await collapse("--ref", REF, "--rulings", rulings, "--dry-run")).stdout
+    )
+    const cluster = (planned.data?.plan?.clusters ?? []).find((one) => one.kind === "archive")
+    if (cluster === undefined) throw new Error("the plan holds no archive cluster")
+    const result = await collapse("--ref", REF, "--rulings", rulings, "--only", cluster.id)
+    expect(result.exitCode, result.stdout).toBe(EXIT_OK)
+    const [archived] = (parse<Envelope>(result.stdout).data as CurateCollapseReport).clusters
+    expect(archived?.outcome, archived?.error ?? "").toBe("committed")
+    expect(archived?.skipped).toEqual([])
+    expect(archived?.ops).toEqual({
+      put: 0,
+      archive: 1,
+      link: 4,
+      unlink: 4,
+      label: 0,
+      unlabel: 0,
+      move: 0
+    })
+    const tree = await treeOf(QUALIFIED)
+    expect(tree.has(cited)).toBe(false)
+    expect(tree.has(free)).toBe(true)
+    expect(await show(QUALIFIED, held)).toBe(older)
+    for (const one of notes) {
+      const html = await show(QUALIFIED, one.path)
+      expect(html, one.path).toContain(`href="/${free}"`)
+      expect(html, one.path).not.toContain(`href="/${held}"`)
+      expect(html, one.path).not.toContain(`href="/${cited}"`)
+    }
+  }, 120_000)
+})
+
+/**
+ * A stand-in for the model proxy (`--model proxy:<name>` with `MEMHTML_LLM_BASE_URL` set): an
+ * OpenAI-compatible chat completions route that answers the first call with a `propose` of `ops`
+ * and every later call with `finish`, so a case can script a fold the shipped fake never writes.
+ */
+const scriptedProxy = async (
+  ops: ReadonlyArray<Record<string, unknown>>
+): Promise<{ readonly url: string; readonly close: () => Promise<void> }> => {
+  let calls = 0
+  const server = createServer((incoming, outgoing) => {
+    incoming.resume()
+    incoming.once("end", () => {
+      calls += 1
+      const [name, args] =
+        calls === 1 ? ["propose", { ops }] : ["finish", { report: "Folded by the script." }]
+      outgoing.writeHead(200, { "content-type": "application/json" })
+      outgoing.end(
+        JSON.stringify({
+          id: `scripted-${String(calls)}`,
+          object: "chat.completion",
+          created: 0,
+          model: "scripted",
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: "assistant",
+                content: null,
+                tool_calls: [
+                  {
+                    id: `call-${String(calls)}`,
+                    type: "function",
+                    function: { name, arguments: JSON.stringify(args) }
+                  }
+                ]
+              },
+              finish_reason: "tool_calls"
+            }
+          ],
+          usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 }
+        })
+      )
+    })
+  })
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  const { port } = server.address() as AddressInfo
+  return {
+    url: `http://127.0.0.1:${String(port)}`,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+}
+
+describe("a fold repoints the edges live records carry to its members", () => {
+  /** The pkill fold as the planner cuts it over `files`, from a dry run on a fresh repo. */
+  const pkillFold = async (
+    files: ReadonlyArray<{ readonly path: string; readonly html: string }>
+  ) => {
+    root = await freshRepo(files)
+    const planned = parse<Envelope>((await collapse("--ref", REF, "--dry-run")).stdout)
+    const plan = planned.data?.plan
+    const fold = plan?.clusters.find((cluster) => cluster.id.includes("error-pattern"))
+    if (plan === undefined || plan === null || fold === undefined) {
+      throw new Error("the plan holds no pkill fold")
+    }
+    expect(fold.members.map((member) => member.path).sort()).toEqual([0, 1, 2].map(pkillPath))
+    return { plan, fold }
+  }
+
+  it("completes a cited member's archive with its repoints, in the first session and in a follow-up", async () => {
+    // Six notes carry every memory rel to pkill-0 and six to pkill-1: 54 edges each, so either
+    // member's archive and its repoints are 109 ops and both do not fit one session beside the put.
+    const citing = (member: number, index: number) =>
+      `resources/acme-widget/kill-note-${String(member)}-${String(index)}.html`
+    const notes = [0, 1].flatMap((member) =>
+      Array.from({ length: 6 }, (_, index) => ({
+        path: citing(member, index),
+        html: MEMORY_RELS.reduce(
+          (html, rel) => addLink(html, rel, `/${pkillPath(member)}`),
+          renderTemplate({
+            title: `Kill note ${String(member)}-${String(index)}`,
+            claim: `Kill crate ${String(member)}-${String(index)} holds ${String(index + 3)} spare parts.`,
+            memoryType: "semantic",
+            at: AT
+          })
+        )
+      }))
+    )
+    const { plan, fold } = await pkillFold([...FILES, ...notes])
+    // The driver-completes path: the fake writes the put alone, the driver archives and links.
+    const lowered: CollapsePlan = { ...plan, options: { ...plan.options, largeGroup: 1 } }
+    await writeFile(join(work, "plan-cited.json"), JSON.stringify(lowered), "utf8")
+    const result = await collapse(
+      "--ref",
+      REF,
+      "--plan",
+      join(work, "plan-cited.json"),
+      "--only",
+      fold.id
+    )
+    expect(result.exitCode, result.stdout).toBe(EXIT_OK)
+    const [outcome] = (parse<Envelope>(result.stdout).data as CurateCollapseReport).clusters
+    expect(outcome?.outcome, outcome?.error ?? "").toBe("committed")
+    expect(outcome?.error).toBeNull()
+    expect(outcome?.warnings).toEqual([])
+    // The first session carries one cited member with its 54 pairs; the other goes in a follow-up.
+    expect(outcome?.commits).toHaveLength(2)
+    expect(outcome?.ops).toEqual({
+      put: 1,
+      archive: 3,
+      link: 111,
+      unlink: 108,
+      label: 0,
+      unlabel: 0,
+      move: 0
+    })
+    expect(outcome?.driver).toEqual({ archive: 3, link: 111 })
+    const tree = await treeOf(QUALIFIED)
+    const canonical = await show(QUALIFIED, outcome?.canonical ?? "")
+    for (const member of [0, 1, 2]) {
+      const slot = archivePathFor(pkillPath(member), Number(YEAR))
+      expect(tree.has(pkillPath(member))).toBe(false)
+      expect(tree.has(slot)).toBe(true)
+      expect(canonical).toContain(`<link rel="memhtml-supersedes" href="/${slot}">`)
+    }
+    for (const note of notes) {
+      const html = await show(QUALIFIED, note.path)
+      expect(html, note.path).not.toMatch(/href="\/areas\/inbox\/pkill-/)
+    }
+    // Every edge in the landed tree names a file in the landed tree.
+    for (const path of [...tree].filter((one) => one.endsWith(".html"))) {
+      const html = await show(QUALIFIED, path)
+      for (const match of html.matchAll(/<link rel="memhtml-[^"]+" href="\/([^"]+)"/g)) {
+        expect(tree.has(match[1] ?? ""), `${path} -> ${match[1]}`).toBe(true)
+      }
+    }
+  }, 180_000)
+
+  it("links the canonical to a member a live record also supersedes, which its put left to the driver", async () => {
+    const holder = "resources/acme-widget/kill-successor.html"
+    const { plan, fold } = await pkillFold([
+      ...FILES,
+      {
+        path: holder,
+        html: renderTemplate({
+          title: "Kill pattern successor",
+          claim: "A kill pattern anchored with a leading bracket never matches its own shell.",
+          memoryType: "semantic",
+          at: AT,
+          links: [{ rel: "supersedes", href: `/${pkillPath(1)}` }]
+        })
+      }
+    ])
+    await writeFile(join(work, "plan-holder.json"), JSON.stringify(plan), "utf8")
+    const slot = (member: number) => archivePathFor(pkillPath(member), Number(plan.archiveYear))
+    // The model writes the canonical with links to two of the three members, and archives all
+    // three; the binder repoints the holder's supersedes edge to pkill-1's slot in the same batch.
+    const canonicalPath = `${fold.home}/kill-pattern-self-match.html`
+    const proxy = await scriptedProxy([
+      {
+        kind: "put",
+        path: canonicalPath,
+        html: renderTemplate({
+          title: "Kill pattern self match",
+          claim: "A pkill pattern that matches the shell running it ends that shell, every time.",
+          memoryType: "error_pattern",
+          at: AT,
+          entities: ["system:fixture"],
+          links: [0, 2].map((member) => ({ rel: "supersedes" as const, href: `/${slot(member)}` }))
+        })
+      },
+      ...[0, 1, 2].map((member) => ({ kind: "archive", path: pkillPath(member) }))
+    ])
+    const saved = process.env[PROXY_BASE_URL_VAR]
+    process.env[PROXY_BASE_URL_VAR] = proxy.url
+    try {
+      const result = await run([
+        "curate",
+        "collapse",
+        "--model",
+        "proxy:opus",
+        "--repo",
+        root,
+        "--ref",
+        REF,
+        "--plan",
+        join(work, "plan-holder.json"),
+        "--only",
+        fold.id
+      ])
+      expect(result.exitCode, result.stdout).toBe(EXIT_OK)
+      const [outcome] = (parse<Envelope>(result.stdout).data as CurateCollapseReport).clusters
+      expect(outcome?.outcome, outcome?.error ?? "").toBe("committed")
+      expect(outcome?.error).toBeNull()
+      expect(outcome?.canonical).toBe(canonicalPath)
+      expect(outcome?.warnings).toEqual([])
+      expect(outcome?.driver).toEqual({ archive: 0, link: 1 })
+      const canonical = await show(QUALIFIED, canonicalPath)
+      for (const member of [0, 1, 2]) {
+        expect(canonical).toContain(`<link rel="memhtml-supersedes" href="/${slot(member)}">`)
+      }
+      const successor = await show(QUALIFIED, holder)
+      expect(successor).toContain(`<link rel="memhtml-supersedes" href="/${slot(1)}">`)
+    } finally {
+      if (saved === undefined) delete process.env[PROXY_BASE_URL_VAR]
+      else process.env[PROXY_BASE_URL_VAR] = saved
+      await proxy.close()
+    }
+  }, 180_000)
+})
+
 describe("curate collapse's refusals", () => {
   it("refuses a ref outside curate/ and a non-positive pool at exit 2, before any repo opens", async () => {
     for (const argv of [
@@ -469,4 +863,223 @@ describe("curate collapse's refusals", () => {
       expect(cluster.error, cluster.id).toMatch(/^storage operation failed: \S/)
     }
   }, 120_000)
+})
+
+describe("a fold whose member's archive slot an older record holds", () => {
+  /*
+   * Member `widget-cache-1` was written at a path whose `archive/<YYYY>/` slot already holds an
+   * older, unrelated record. The fold archives the member into the year's next generation and the
+   * canonical supersedes that slot, under both completions: the driver's (a lowered `largeGroup`)
+   * and the model's own archives through the binder. The older record keeps its bytes, and the
+   * edges two live notes carry to the member are repointed to the generation slot, never to it.
+   *
+   * Mutations, each run once with the change applied and the named case red:
+   * - `foldCluster`'s completion back to skipping a member whose year slot is held -> "the driver
+   *   completes it" (the member is left to a second, follow-up commit).
+   * - `toOverlayOps` back to `archive/<YYYY>/<path>` -> "the model proposes its archives" (the
+   *   validator refuses the proposal and the fold lands nothing).
+   */
+  const CLAIMS = [
+    "The acme widget build fails when its cache directory is read-only.",
+    "An acme widget build fails if its cache directory is read-only.",
+    "When its cache directory is read-only, the acme widget build fails."
+  ]
+  const memberPath = (index: number) => `areas/inbox/widget-cache-${String(index)}.html`
+  const member = memberPath(1)
+  const heldSlot = `archive/${YEAR}/${member}`
+  const generationSlot = `archive/${YEAR}.2/${member}`
+  const OLDER = renderTemplate({
+    title: "Widget cache owner",
+    claim: "Grace Example owned the acme widget cache before the build moved.",
+    memoryType: "semantic",
+    at: AT
+  }).replace('content="active"', 'content="archived"')
+  /** Live notes citing the member, so its archive carries repoints to the slot it takes. */
+  const NOTES = [0, 1].map((index) => ({
+    path: `resources/acme-widget/cache-note-${String(index)}.html`,
+    html: (["relates_to", "caused_by"] as const).reduce(
+      (html, rel) => addLink(html, rel, `/${member}`),
+      renderTemplate({
+        title: `Widget cache note ${String(index)}`,
+        claim: `Cache crate ${String(index)} holds ${String(index + 4)} spare disks.`,
+        memoryType: "semantic",
+        at: AT
+      })
+    )
+  }))
+
+  const slotRepo = async (): Promise<string> => {
+    const dir = await mkdtemp(join(tmpdir(), "memhtml-curate-collapse-slot-"))
+    roots.push(dir)
+    const g = makeGit(dir)
+    await Effect.runPromise(g.run(["init", "-b", "main", "."]).pipe(Effect.orDie))
+    await Effect.runPromise(configureIdentity(g))
+    const files = [
+      ...CLAIMS.map((claim, index) => ({
+        path: memberPath(index),
+        html: renderTemplate({
+          title: `Widget cache read-only ${String(index)}`,
+          claim,
+          body: [`Exit code 73 on attempt ${String(index)}.`],
+          memoryType: "error_pattern",
+          at: AT
+        })
+      })),
+      { path: heldSlot, html: OLDER },
+      ...NOTES
+    ]
+    for (const file of files) {
+      await mkdir(dirname(join(dir, file.path)), { recursive: true })
+      await writeFile(join(dir, file.path), file.html, "utf8")
+    }
+    await Effect.runPromise(g.run(["add", "-A"]).pipe(Effect.orDie))
+    await Effect.runPromise(g.run(["commit", "-q", "-m", "slot fixture"]).pipe(Effect.orDie))
+    return dir
+  }
+
+  const landsInTheGeneration = async (largeGroup: number | undefined) => {
+    const dir = await slotRepo()
+    const inRepo = (...args: ReadonlyArray<string>) =>
+      run(["curate", "collapse", "--model", "fake", "--repo", dir, "--ref", REF, ...args])
+    const planned = await inRepo("--dry-run")
+    expect(planned.exitCode, planned.stdout).toBe(EXIT_OK)
+    const plan = (parse<Envelope>(planned.stdout).data as CurateCollapseReport).plan as CollapsePlan
+    const fold = plan.clusters.find(
+      (cluster) => cluster.kind === "fold" && cluster.members.some((one) => one.path === member)
+    )
+    if (fold === undefined) throw new Error("the plan holds no fold of the member")
+    expect(fold.members.map((one) => one.path).sort()).toEqual([0, 1, 2].map(memberPath))
+    const planFile = join(dir, "..", `${String(Date.now())}-slot-plan.json`)
+    roots.push(planFile)
+    await writeFile(
+      planFile,
+      JSON.stringify(
+        largeGroup === undefined ? plan : { ...plan, options: { ...plan.options, largeGroup } }
+      ),
+      "utf8"
+    )
+
+    const result = await inRepo("--plan", planFile, "--only", fold.id)
+    expect(result.exitCode, result.stdout).toBe(EXIT_OK)
+    const [outcome] = (parse<Envelope>(result.stdout).data as CurateCollapseReport).clusters
+    expect(outcome?.outcome, outcome?.error ?? "").toBe("committed")
+    expect(outcome?.skipped).toEqual([])
+    expect(outcome?.ops.archive).toBe(3)
+    expect(outcome?.ops.unlink).toBe(4)
+    // One session settles the whole fold: no member is left for a follow-up to archive.
+    expect(outcome?.commits).toHaveLength(1)
+
+    const showIn = (path: string) =>
+      Effect.runPromise(
+        makeGit(dir)
+          .run(["show", `${QUALIFIED}:${path}`])
+          .pipe(Effect.orDie)
+      )
+    const tree = new Set(
+      (
+        await Effect.runPromise(
+          makeGit(dir).run(["ls-tree", "-r", "--name-only", QUALIFIED]).pipe(Effect.orDie)
+        )
+      )
+        .split("\n")
+        .filter((line) => line !== "")
+    )
+    for (const index of [0, 1, 2]) expect(tree.has(memberPath(index))).toBe(false)
+    expect(tree.has(`archive/${YEAR}/${memberPath(0)}`)).toBe(true)
+    expect(tree.has(`archive/${YEAR}/${memberPath(2)}`)).toBe(true)
+    expect(tree.has(generationSlot)).toBe(true)
+    expect(await showIn(generationSlot)).toContain(CLAIMS[1])
+    expect(await showIn(heldSlot)).toBe(OLDER)
+    const canonical = await showIn(outcome?.canonical ?? "")
+    expect(canonical).toContain(`href="/${generationSlot}"`)
+    expect(canonical).not.toContain(`href="/${heldSlot}"`)
+    for (const one of NOTES) {
+      const html = await showIn(one.path)
+      expect(html, one.path).toContain(`href="/${generationSlot}"`)
+      expect(html, one.path).not.toContain(`href="/${heldSlot}"`)
+      expect(html, one.path).not.toContain(`href="/${member}"`)
+    }
+  }
+
+  it("the driver completes it: the member is archived to the next generation and linked there", async () => {
+    await landsInTheGeneration(1)
+  }, 180_000)
+
+  it("the model proposes its archives: the binder and the briefing name the next generation", async () => {
+    await landsInTheGeneration(undefined)
+  }, 180_000)
+
+  it("a fold past one session archives the rest and links every member to its generation slot", async () => {
+    // 181 members, one more than a chunk, every one with its bare-year slot held. The first session
+    // archives 170 and links as many as the batch cap leaves room for; the follow-up archives the
+    // other 11 and links the 141 already archived to the slots they took. Mutation: `followUp` back
+    // to `archive/<YYYY>/<path>` -> the validator refuses the follow-up, whose archives name held
+    // slots, and the 11 stay live.
+    const count = 181
+    const path = (index: number) =>
+      `areas/inbox/widget-release-${String(index).padStart(3, "0")}.html`
+    const dir = await mkdtemp(join(tmpdir(), "memhtml-curate-collapse-large-"))
+    roots.push(dir)
+    const g = makeGit(dir)
+    const gitIn = (...args: ReadonlyArray<string>) =>
+      Effect.runPromise(g.run([...args]).pipe(Effect.orDie))
+    await gitIn("init", "-b", "main", ".")
+    await Effect.runPromise(configureIdentity(g))
+    for (let index = 0; index < count; index += 1) {
+      const files = [
+        {
+          at: path(index),
+          html: renderTemplate({
+            title: `Widget release day ${String(index)}`,
+            claim: "The release day of the acme widget is Thursday.",
+            body: [`Noted on build ${String(index)}.`],
+            memoryType: "semantic",
+            at: AT
+          })
+        },
+        {
+          at: `archive/${YEAR}/${path(index)}`,
+          html: renderTemplate({
+            title: `Widget release owner ${String(index)}`,
+            claim: `Grace Example owned acme widget release ${String(index)}.`,
+            memoryType: "semantic",
+            at: AT
+          }).replace('content="active"', 'content="archived"')
+        }
+      ]
+      for (const file of files) {
+        await mkdir(dirname(join(dir, file.at)), { recursive: true })
+        await writeFile(join(dir, file.at), file.html, "utf8")
+      }
+    }
+    await gitIn("add", "-A")
+    await gitIn("commit", "-q", "-m", "large slot fixture")
+    const blobs = async (ref: string, prefix: string) =>
+      (await gitIn("ls-tree", "-r", ref, "--", prefix)).trim().split("\n").sort()
+    const older = await blobs("main", `archive/${YEAR}/`)
+    expect(older).toHaveLength(count)
+
+    const result = await run(["curate", "collapse", "--model", "fake", "--repo", dir, "--ref", REF])
+    expect(result.exitCode, result.stdout).toBe(EXIT_OK)
+    const report = parse<Envelope>(result.stdout).data as CurateCollapseReport
+    const fold = report.clusters.find((cluster) => cluster.kind === "fold")
+    expect(fold?.members).toBe(count)
+    expect(fold?.outcome, fold?.error ?? "").toBe("committed")
+    expect(fold?.skipped).toEqual([])
+    expect(fold?.ops.archive).toBe(count)
+    expect(fold?.commits).toHaveLength(2)
+
+    // Every older record keeps its slot byte for byte, and every member is in the next generation.
+    expect(await blobs(QUALIFIED, `archive/${YEAR}/`)).toEqual(older)
+    const tree = new Set(
+      (await gitIn("ls-tree", "-r", "--name-only", QUALIFIED)).split("\n").filter((l) => l !== "")
+    )
+    const canonical = await gitIn("show", `${QUALIFIED}:${fold?.canonical ?? ""}`)
+    for (let index = 0; index < count; index += 1) {
+      expect(tree.has(path(index)), path(index)).toBe(false)
+      expect(tree.has(`archive/${YEAR}.2/${path(index)}`), path(index)).toBe(true)
+      expect(canonical).toContain(`href="/archive/${YEAR}.2/${path(index)}"`)
+    }
+    expect(canonical).not.toContain(`href="/archive/${YEAR}/`)
+  }, 180_000)
 })

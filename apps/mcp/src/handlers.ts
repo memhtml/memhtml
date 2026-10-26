@@ -11,6 +11,8 @@ import {
   type layerApp,
   linkMemories,
   listMemories,
+  type MarkupInProse,
+  markupInProse,
   messageFor,
   neighborsOf,
   proseTail,
@@ -33,7 +35,12 @@ import type { MemoryDoc } from "@memhtml/html"
 import { parseFacetFilters } from "@memhtml/index"
 import { Effect, type Layer } from "effect"
 
-import { batchAbortFailure, type ToolFailure, toToolFailure } from "./failure.js"
+import {
+  batchAbortFailure,
+  reinforcePathsMissing,
+  type ToolFailure,
+  toToolFailure
+} from "./failure.js"
 import { pinnedUri } from "./resources.js"
 import { MemhtmlToolkit } from "./tools.js"
 
@@ -140,6 +147,12 @@ const arr = <A>(value: ReadonlyArray<A> | null | undefined): ReadonlyArray<A> =>
  * The prose path derives through `claimFromProse`/`proseTail`, imported from `@memhtml/cli` so this door
  * and `memhtml apply` split prose the same way. A second copy here would let the same body produce
  * different gists depending on which door wrote it.
+ *
+ * The prose path also refuses a body holding an HTML block tag outside code (`markupInProse`, the
+ * check `memhtml apply` runs), with `ERR_INVALID_FLAG` naming `article_html`. Prose is escaped as
+ * text, so such a body would write the tag's characters into the claim, and the render gate cannot
+ * tell them from text the caller meant. It runs after the XOR, so a call that names both fields
+ * still gets the XOR's answer.
  */
 interface Authored {
   readonly claim: string
@@ -150,7 +163,7 @@ interface Authored {
 const authored = (
   body: string | null | undefined,
   articleHtml: string | null | undefined
-): Effect.Effect<Authored, InvalidMemory> => {
+): Effect.Effect<Authored, InvalidMemory | MarkupInProse> => {
   const prose = opt(body)
   const markup = opt(articleHtml)
   const hasProse = prose !== undefined && prose.trim() !== ""
@@ -162,15 +175,14 @@ const authored = (
       })
     )
   }
-  return Effect.succeed(
-    hasMarkup
-      ? { claim: "", body: [], articleHtml: markup }
-      : {
-          claim: claimFromProse(prose as string),
-          body: proseTail(prose as string),
-          articleHtml: undefined
-        }
-  )
+  if (hasMarkup) return Effect.succeed({ claim: "", body: [], articleHtml: markup })
+  const refusal = markupInProse(prose as string)
+  if (refusal !== undefined) return Effect.fail(refusal)
+  return Effect.succeed({
+    claim: claimFromProse(prose as string),
+    body: proseTail(prose as string),
+    articleHtml: undefined
+  })
 }
 
 /** One `memory_write_batch` op as it arrives on the wire, before the XOR has been resolved. */
@@ -217,8 +229,8 @@ const writeParamsOf = (op: BatchOpParams, article: Authored): WriteParams => ({
 })
 
 /**
- * An op's XOR refusal as that op's own report, through the SAME `codeFor`/`messageFor` pair
- * `operations.ts`'s `reportFailure` uses.
+ * An op's XOR refusal, or its body's markup refusal, as that op's own report, through the SAME
+ * `codeFor`/`messageFor` pair `operations.ts`'s `reportFailure` uses.
  *
  * Not a second mapping of the error: a per-op `code` is part of the batch payload's contract, and
  * `memhtml apply` and `memory_write_batch` reporting different codes for one refused op is exactly the
@@ -227,7 +239,7 @@ const writeParamsOf = (op: BatchOpParams, article: Authored): WriteParams => ({
  * `WriteParams` takes an already-resolved `claim`/`body`/`articleHtml`. So this is the one place
  * a report is built outside `batchWrite`, and it is built with `batchWrite`'s own functions.
  */
-const xorReport = (index: number, error: InvalidMemory): BatchOpReport => ({
+const xorReport = (index: number, error: InvalidMemory | MarkupInProse): BatchOpReport => ({
   index,
   ok: false,
   code: codeFor(error),
@@ -311,6 +323,32 @@ const summarize = (
     else written += 1
   }
   return { total: results.length, written, deduped, failed, skipped }
+}
+
+/**
+ * The paths a `memory_reinforce` call names: `paths`, then `path` when it arrives.
+ *
+ * `path` is how `memory_read`, `memory_archive`, `memory_neighbors`, and `memory_resolve` name one
+ * memory, so an agent reinforcing the one memory it just read sends that key here too. It is taken as
+ * `paths: [path]` rather than refused, because what the call means is not in doubt.
+ *
+ * Both together are merged, the opposite of `authored`'s rule and for the opposite reason. `body` and
+ * `article_html` are two renderings of one article, so honoring one drops the other. Two lists of paths
+ * have one union, and `reinforce` dedups it, so nothing the caller sent is lost.
+ *
+ * Neither is the one refusal. The decoder admits that call, because neither key can be `required`, and
+ * a misspelled key decodes to exactly that: the decoder drops a key the schema does not declare.
+ * Answering it with an empty success would tell the agent its signal landed. An explicit empty `paths`
+ * is not this case: it names its paths, none of them, and answers as it always has.
+ */
+const reinforceTargets = (
+  paths: ReadonlyArray<string> | null | undefined,
+  path: string | null | undefined
+): Effect.Effect<ReadonlyArray<string>, ToolFailure> => {
+  const many = opt(paths)
+  const one = opt(path)
+  if (many === undefined && one === undefined) return Effect.fail(reinforcePathsMissing())
+  return Effect.succeed(one === undefined ? arr(many) : [...arr(many), one])
 }
 
 /**
@@ -769,7 +807,8 @@ export const ToolHandlers: Layer.Layer<
   memory_reinforce: (params) =>
     handled(
       Effect.gen(function* () {
-        const result = yield* reinforceMemories(params.paths, params.signal)
+        const paths = yield* reinforceTargets(params.paths, params.path)
+        const result = yield* reinforceMemories(paths, params.signal)
         return { bumped: result.bumped, cooled_down: result.cooledDown }
       })
     ),

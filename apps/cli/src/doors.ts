@@ -62,7 +62,7 @@ export const RECORD_CREATING_V1_COMMANDS: ReadonlyMap<
   [
     "correct",
     {
-      how: "write the corrected record under its own title with a `memhtml-supersedes` link to the old one, and move the old one under archive/<year>/, in one `memhtml session exec <<'SH'`",
+      how: "write the corrected record under its own title with a `memhtml-supersedes` link to the old one's archive slot, /archive/<year>/<the old one's path> or /archive/<year>.<n>/<the old one's path> when an earlier archiving holds that one, and move the old one to that slot, in one `memhtml session exec <<'SH'`",
       suggestions: ["memhtml help session exec", putLine(LINES.correct ?? {})]
     }
   ],

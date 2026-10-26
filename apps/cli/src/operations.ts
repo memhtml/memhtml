@@ -1,6 +1,11 @@
 import { isEdgeRel, MEMORY_RELS, relClassFor, TASK_RELS } from "@memhtml/contracts/edges"
 import { InvalidMemory, type StorageFailure } from "@memhtml/contracts/errors"
-import { normalizePath } from "@memhtml/contracts/paths"
+import {
+  activeRecordPathViolation,
+  compareArchivings,
+  normalizePath,
+  originalPathFor
+} from "@memhtml/contracts/paths"
 import {
   isTaskStatus,
   isWritableMemoryType,
@@ -1108,7 +1113,10 @@ export const linkMemories = (srcPath: string, rel: string, dstPath: string) =>
     return { ...result, srcPath: src, dstPath: normalizePath(dstPath), rel: edgeRel }
   })
 
-/** Soft-evict: `git mv` into `archive/<YYYY>/` with the archive stamps. Never a delete. */
+/**
+ * Soft-evict: `git mv` into `archive/<YYYY>/` (`archive/<YYYY>.<n>/` when an earlier archiving
+ * holds that slot) with the archive stamps. Never a delete.
+ */
 export const archiveMemory = (path: string, reason: string) =>
   Effect.gen(function* () {
     const store = yield* Store
@@ -1484,19 +1492,51 @@ export interface ResolveResult {
  * what, and a machine-mined suspicion can never redirect a citation.
  *
  * `archived` is the archive mapping read backwards, served by `files_origin`
- * (`0012_origin_path.sql`). `ORDER BY archived_at DESC` decides the case a UNIQUE index would have
- * had to refuse: one path evicted, rewritten, and evicted again carries two archive rows, and the
- * NEWEST is the occupant a citation of that path most recently named. A row with no `memhtml-archived`
- * stamp sorts last, since SQLite puts NULLs last under DESC.
+ * (`0012_origin_path.sql`). It returns every archive row of the path: one path evicted, rewritten,
+ * and evicted again carries two, the case a UNIQUE index would have had to refuse. The NEWEST is
+ * the occupant a citation most recently named. {@link newestArchiving} picks it by slot year and
+ * generation as numbers, as doctor and the curator briefing do, so the three name one record.
+ * String order would put `archive/<YYYY>/` above `archive/<YYYY>.2/`. The stamp breaks a tie only:
+ * it is whole seconds, can be missing, and on an earlier year's free slot can be the later one.
  */
 export const resolveQueries = {
   successor: `SELECT e.src_path AS path FROM edges e
      WHERE e.dst_path = ? AND e.edge_class = 'memory' AND e.rel = 'supersedes' AND e.derived = 0
      ORDER BY e.created_at DESC, e.src_path ASC LIMIT 1`,
-  archived: `SELECT f.path AS path FROM files f
-     WHERE f.origin_path = ? ORDER BY f.archived_at DESC, f.path DESC LIMIT 1`,
+  archived: `SELECT f.path AS path, f.archived_at AS archived_at FROM files f
+     WHERE f.origin_path = ?`,
   file: "SELECT f.archived AS archived, f.title AS title FROM files f WHERE f.path = ?"
 } as const
+
+/** One archive row of a path, as {@link resolveQueries}' `archived` returns it. */
+interface ArchiveRow {
+  readonly path: string
+  readonly archived_at: string | null
+}
+
+/** A row's `memhtml-archived` stamp as epoch milliseconds, or `undefined` when it has none. */
+const archivedStampOf = (row: ArchiveRow): number | undefined => {
+  const at = row.archived_at === null ? Number.NaN : Date.parse(row.archived_at)
+  return Number.isNaN(at) ? undefined : at
+}
+
+/**
+ * The newest of a path's archive rows: the later slot by year and generation
+ * (`compareArchivings`), then the later stamp with a row that has none last, then the path, so the
+ * answer does not depend on the order SQLite returns the rows in.
+ */
+const newestArchiving = (rows: ReadonlyArray<ArchiveRow>): ArchiveRow | undefined => {
+  const isNewer = (row: ArchiveRow, than: ArchiveRow): boolean => {
+    const slot = compareArchivings(row.path, than.path)
+    if (slot !== 0) return slot > 0
+    const a = archivedStampOf(row)
+    const b = archivedStampOf(than)
+    return a !== b ? b === undefined || (a !== undefined && a > b) : row.path > than.path
+  }
+  let newest: ArchiveRow | undefined
+  for (const row of rows) if (newest === undefined || isNewer(row, newest)) newest = row
+  return newest
+}
 
 /**
  * The live path a possibly-moved path names now, by walking `supersedes` forward.
@@ -1556,7 +1596,7 @@ export const resolveMemory = (path: string) =>
       const hop =
         row === undefined
           ? {
-              found: yield* db.get<{ path: string }>(resolveQueries.archived, [at]),
+              found: newestArchiving(yield* db.all<ArchiveRow>(resolveQueries.archived, [at])),
               via: "archive_move" as const
             }
           : {
@@ -2004,6 +2044,28 @@ export const setTaskStatus = (params: TaskStatusParams) =>
         commitSha: null,
         unchanged: true
       } satisfies TaskStatusResult
+    }
+
+    /**
+     * A status change edits an active task, so a path under `archive/`, or one that is not a usable
+     * memory path, is refused here, before the stamp is written (`activeRecordPathViolation`). `done`
+     * would archive it again, which the store refuses only after the write below has reached disk.
+     * Any other status would restamp an archived file in place, out of `task list`, where no later
+     * `done` could finish it. The reason names the move that reopens an archived task, when there is
+     * one: `originalPathFor` strips a single prefix, so for a task archived twice it names another
+     * archive path, and the advice is left out.
+     */
+    const refusal = activeRecordPathViolation(path)
+    if (refusal !== undefined) {
+      const live = originalPathFor(path)
+      return yield* Effect.fail(
+        InvalidMemory.make({
+          reason:
+            live === undefined || activeRecordPathViolation(live) !== undefined
+              ? refusal
+              : `${refusal}. An archived task keeps its status: to reopen it, \`git mv\` it back to ${live}, commit, and run \`memhtml index update\``
+        })
+      )
     }
 
     const stamped = setMeta(

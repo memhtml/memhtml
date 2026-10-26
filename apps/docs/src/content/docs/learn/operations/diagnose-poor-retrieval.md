@@ -13,9 +13,9 @@ memhtml doctor
 
 ## The four symptoms, and what each one means
 
-`indexFresh: false` calls for `memhtml index update --embed`. The index describes one commit, and "fresh" means that commit is HEAD (`apps/cli/src/operations.ts:1524`). A stale index returns old answers rather than wrong ones, and the memory you wrote an hour ago is absent from them. A session commit never updates the index, so after one the index is stale until `index update` runs. `memhtml head search` reads the committed tree directly and finds the new record at once, which is a quick way to tell a stale index from a missing record.
+`indexFresh: false` calls for `memhtml index update --embed`. The index describes one commit, and "fresh" means that commit is HEAD (`apps/cli/src/operations.ts::statusReport`). A stale index returns old answers rather than wrong ones, and the memory you wrote an hour ago is absent from them. A session commit never updates the index, so after one the index is stale until `index update` runs. `memhtml head search` reads the committed tree directly and finds the new record at once, which is a quick way to tell a stale index from a missing record.
 
-`embedderUp: false` means one of two things: the stored vectors came from a different embedding model than the configured one, or the index holds no vectors at all (`apps/cli/src/operations.ts:1530`). The field is read off the stored watermark rather than by calling Bedrock, so it never fails for a reason unrelated to the corpus. Compare `embedModel` against `configuredEmbedModel` on `memhtml index status`. If they differ, the fix is in [rebuild the index](/learn/operations/rebuild-the-index/). If they agree and `embeddings` is 0, run `memhtml index rebuild --embed`.
+`embedderUp: false` means one of two things: the stored vectors came from a different embedding model than the configured one, or the index holds no vectors at all (`apps/cli/src/operations.ts::statusReport`). The field is read off the stored watermark rather than by calling Bedrock, so it never fails for a reason unrelated to the corpus. Compare `embedModel` against `configuredEmbedModel` on `memhtml index status`. If they differ, the fix is in [rebuild the index](/learn/operations/rebuild-the-index/). If they agree and `embeddings` is 0, run `memhtml index rebuild --embed`.
 
 `degraded: true` on a search response means the vector arm did not fire. Search still works: it ranked with three of its four arms, using full-text search, recency, and salience while vector similarity sat out. The `vectorCoverage` field beside it says which of two things happened. A low value, under `MEMHTML_VECTOR_COVERAGE_FLOOR` (default `0.95`), means only that share of the index's chunks carry a vector and search dropped the arm on purpose: a sparse vector plane is worse than none, because the few embedded files collect a vector rank on top of their recency rank and outrank every exact match, and the arm did fire so nothing said `degraded`. That was the shape of a production incident where an `index rebuild --no-embed` followed by incremental updates left 2 percent of chunks embedded, all on the newest files, and every query returned the newest files. Run `memhtml index embed` to backfill the missing vectors, or `memhtml index rebuild --embed`. A high value with `degraded: true` means the query embedder returned nothing: check `MEMHTML_AWS_REGION` and the Bedrock credential. If `MEMHTML_EMBED=off` is set, that is your answer and someone chose it.
 
@@ -25,7 +25,7 @@ Quality feels wrong while nothing errors, so run `memhtml eval discriminate`. Th
 
 ## A search returns an empty result, never a driver error
 
-Query text goes through `sanitizeFtsQuery` before it reaches `MATCH` (`packages/index/src/fts-query.ts:59`), because several forms common in prose are hard driver errors in SQLite's full-text search rather than empty results:
+Query text goes through `sanitizeFtsQuery` before it reaches `MATCH` (`packages/index/src/fts-query.ts::sanitizeFtsQuery`, `packages/index/src/fts-query.ts::ftsQueryForms`), because several forms common in prose are hard driver errors in SQLite's full-text search rather than empty results:
 
 - an apostrophe, as in `don't`;
 - a `type:name` entity reference such as `service:checkout-api`, which is exactly the form a hit's `entities` publishes;
@@ -35,7 +35,7 @@ A query that errors means something bypassed the sanitizer. Report that as a bug
 
 ## A long query finds less than a short one
 
-It should not. The lexical arm tries the query's words as all-required first and, when no memory in scope holds every word, as any-of ranked by bm25 (`packages/index/src/fts-query.ts:97`, `packages/index/src/retrieval.ts:328`). A sentence with one proper noun in it finds that noun's memory even when the rest of the sentence appears nowhere in the corpus. If a long query still misses, the words it shares with the memory are not in that memory's title, gist, or body, which is all the lexical index holds; confirm with `memhtml search "<the one word you are sure of>"`. To demand adjacency rather than any-of, quote the span: `"drain the vip"` matches those three words in that order and nothing else.
+It should not. The lexical arm tries the query's words as all-required first and, when no memory in scope holds every word, as any-of ranked by bm25 (`packages/index/src/fts-query.ts::FtsQueryForms`, `packages/index/src/retrieval.ts::makeRetrieval::fuse`). A sentence with one proper noun in it finds that noun's memory even when the rest of the sentence appears nowhere in the corpus. If a long query still misses, the words it shares with the memory are not in that memory's title, gist, or body, which is all the lexical index holds; confirm with `memhtml search "<the one word you are sure of>"`. To demand adjacency rather than any-of, quote the span: `"drain the vip"` matches those three words in that order and nothing else.
 
 ## The tree is dirty
 
@@ -59,17 +59,19 @@ ERR_REPO_REQUIRED    ERR_PATH_NOT_FOUND    ERR_INVALID_MEMORY         ERR_DUPLIC
 ERR_WRITE_CONFLICT   ERR_DIRTY_TREE        ERR_INDEX_STALE            ERR_EMBED_MODEL_MISMATCH
 ERR_MODEL_UNAVAILABLE ERR_STORAGE          ERR_GIT                    ERR_DISCRIMINATION_FAILED
 ERR_UNKNOWN          ERR_REBUILD_NO_EMBED_REFUSED
+ERR_UNKNOWN_HOST     ERR_UNKNOWN_HOOK_EVENT ERR_INTEGRATION_MODIFIED  ERR_HEAD_SERVER_RUNNING
+ERR_SESSION_BOUND    ERR_V1_DOOR_CLOSED    ERR_STORE_CONFIG
 ```
 
-Twenty-one codes (`apps/cli/src/envelope.ts:67`), append-only: a shipped code keeps its meaning forever and is never removed.
+Twenty-five codes (`apps/cli/src/envelope.ts::ERROR_CODES`), append-only: a shipped code keeps its meaning forever and is never removed.
 
 `ERR_REPO_REQUIRED` is the exit-2 refusal `MEMHTML_REFUSE_ENV_ROOT` produces for a call that opens a repo without `--repo`; see [configure the environment](/learn/operations/configure-the-environment/#memhtml_refuse_env_root-closes-the-environment-door).
 
-`ERR_UNEXPECTED_ARGUMENT` (`apps/cli/src/envelope.ts:74`) is a positional past what the command declares, and it carries its own code rather than reusing a neighbour's because it is a different mistake from either. It is not `ERR_INVALID_FLAG`, since the offending token is not a flag; and it is not `ERR_MISSING_ARGUMENT`, since the argument is surplus rather than absent, so the fix is dropping a word rather than adding one. `memhtml read a.html b.html` reads one memory, and without this code it would say nothing at all about the second.
+`ERR_UNEXPECTED_ARGUMENT` (`apps/cli/src/envelope.ts::ERROR_CODES`) is a positional past what the command declares, and it carries its own code rather than reusing a neighbour's because it is a different mistake from either. It is not `ERR_INVALID_FLAG`, since the offending token is not a flag; and it is not `ERR_MISSING_ARGUMENT`, since the argument is surplus rather than absent, so the fix is dropping a word rather than adding one. `memhtml read a.html b.html` reads one memory, and without this code it would say nothing at all about the second.
 
 `ERR_REBUILD_NO_EMBED_REFUSED` is `memhtml index rebuild --no-embed` over a store that already carries vectors. The call is declined because a store with vectors was embedded on purpose and a `--no-embed` rebuild would leave every new or changed chunk without one; the count is in the prose and in a WARN on stderr. Add `--force` to run it anyway, or run `memhtml index rebuild --embed`. [Rebuild the index](/learn/operations/rebuild-the-index/) has the reasoning.
 
-Branch on `code` and never on the `error` prose, which changes freely as the wording improves. Most failures carry `suggestions`, and those are commands you can run (`apps/cli/src/errors.ts:136`):
+Branch on `code` and never on the `error` prose, which changes freely as the wording improves. Most failures carry `suggestions`, and those are commands you can run (`apps/cli/src/errors.ts::SUGGESTIONS`):
 
 ```json
 {
@@ -83,7 +85,7 @@ Branch on `code` and never on the `error` prose, which changes freely as the wor
 }
 ```
 
-The suite checks every `memhtml …` suggestion against the command table (`apps/cli/tests/cli.test.ts:392`), so a renamed command cannot leave a suggestion naming a command that no longer exists. A typo gets a candidate back rather than a dead end:
+The suite checks every `memhtml …` suggestion against the command table (`apps/cli/tests/cli.test.ts`), so a renamed command cannot leave a suggestion naming a command that no longer exists. A typo gets a candidate back rather than a dead end:
 
 ```json
 {

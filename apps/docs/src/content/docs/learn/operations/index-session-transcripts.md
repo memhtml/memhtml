@@ -33,13 +33,13 @@ The trace plane answers provenance questions: which session produced this memory
 }
 ```
 
-The scan reads only what changed. It compares each transcript against a watermark holding that file's size, its modification time, and the byte offset the last scan stopped at (`packages/traces/src/watermark.ts:66`), so an unchanged corpus reads zero bytes instead of re-walking the tree. That is what `bytesRead: 0` on a converged run means, and it is why the hourly cron line costs nothing.
+The scan reads only what changed. It compares each transcript against a watermark holding that file's size, its modification time, and the byte offset the last scan stopped at (`packages/traces/src/watermark.ts::watermarkPlan`), so an unchanged corpus reads zero bytes instead of re-walking the tree. That is what `bytesRead: 0` on a converged run means, and it is why the hourly cron line costs nothing.
 
 Both the size and the modification time have to match before the scan skips a file, because size alone would miss an in-place rewrite of the same length. `tailed` counts files read from their recorded offset forward, and `rescanned` counts files read from the start because the watermark no longer described them.
 
-`filesFailed` counts the files the scan planned to read and could not: an absent file, a permission rejection, a transient IO error (`packages/traces/src/scan.ts:65`). The four together account for the whole plan — `skipped + tailed + rescanned + filesFailed` equals `filesSeen` — which is what lets you tell an unreadable transcript from an unchanged one instead of reading both as a quiet skip. Each failed file keeps its stored watermark, so the next run retries it, and a first-ever read that fails stores an all-zero watermark that no later stat can match, which is also a retry.
+`filesFailed` counts the files the scan planned to read and could not: an absent file, a permission rejection, a transient IO error (`packages/traces/src/scan.ts::ScanReport::failed`). The four together account for the whole plan — `skipped + tailed + rescanned + filesFailed` equals `filesSeen` — which is what lets you tell an unreadable transcript from an unchanged one instead of reading both as a quiet skip. Each failed file keeps its stored watermark, so the next run retries it, and a first-ever read that fails stores an all-zero watermark that no later stat can match, which is also a retry.
 
-`sessionsWritten` counts the files a `traces` ROW was written for, which is narrower than the files that were read. Three outcomes read as no session written: a skip, a failed read, and a transcript carrying only `file-history-*` entries with no session to be about. The action cannot answer this on its own, because a failed read keeps the action the plan named — the watermark logic needs to know what was attempted — so a report that read `tailed` as the write would claim a session for a transcript that errored (`apps/cli/src/operations.ts:1760`).
+`sessionsWritten` counts the files a `traces` ROW was written for, which is narrower than the files that were read. Three outcomes read as no session written: a skip, a failed read, and a transcript carrying only `file-history-*` entries with no session to be about. The action cannot answer this on its own, because a failed read keeps the action the plan named — the watermark logic needs to know what was attempted — so a report that read `tailed` as the write would claim a session for a transcript that errored (`apps/cli/src/operations.ts::indexTraces`).
 
 `$MEMHTML_TRACE_ROOT` is read-only. Nothing in this system modifies a transcript.
 
@@ -72,7 +72,7 @@ memhtml trace links --path resources/infra/one-writer.html   # every session tha
 
 Both directions come from one command. A link carries its `link_kind`, so you can tell a memory a session wrote from one it only read. Provenance reads both ways because `memhtml write --session-id` stamps the session into the file's head and also indexes it as a link, and `memhtml read --session-id` records a `read` link.
 
-Calling `trace links` with neither `--session-id` nor `--path` is a refusal rather than a scan of the whole table (`apps/cli/src/operations.ts:1415`):
+Calling `trace links` with neither `--session-id` nor `--path` is a refusal rather than a scan of the whole table (`apps/cli/src/operations.ts::traceLinks`):
 
 ```json
 {
@@ -90,7 +90,7 @@ Two properties keep the trace plane out of memory retrieval.
 Traces stay out of the ranked path. `memhtml search` and `memhtml recall` rank memories, `memhtml trace
 search` ranks sessions, no query returns both, and none of retrieval's four ranking arms, which are full-text search, vector similarity, recency, and salience, reads a trace row.
 
-A memory rebuild leaves the trace tables alone (`packages/index/src/schema-const.ts:61`). So `memhtml
+A memory rebuild leaves the trace tables alone (`packages/index/src/schema-const.ts::TRACE_TABLES`). So `memhtml
 index rebuild`, which drops the full-text search index and deletes every memory table, costs no re-walk of `$MEMHTML_TRACE_ROOT`. The trace plane and the memory index are rebuilt by different commands because they are recovered from different sources: the tree for one, the transcripts for the other.
 
 Recovering the trace tables therefore means re-running `memhtml trace index` from a zero watermark, which re-walks `$MEMHTML_TRACE_ROOT` in full. That is slow and loses nothing.

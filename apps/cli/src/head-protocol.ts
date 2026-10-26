@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto"
 import { join, win32 } from "node:path"
 
-import { HEAD_SOCKET, OverlayOpSchema } from "@memhtml/session"
-import { Schema } from "effect"
+import { HEAD_SOCKET, OverlayOpSchema, RESTATEMENT_REASONS } from "@memhtml/session"
+import { Effect, Schema } from "effect"
 
 /**
  * The head server's wire contract (`docs/design.md` §22): JSON over HTTP on a Unix domain
@@ -251,7 +251,13 @@ export const NeighborsRequest = Schema.Struct({
   lines: Schema.Array(SessionPutOpSchema),
   at: Schema.String,
   /** The session is run-bound (`MEMHTML_SESSION`): `duplicate` and `claim-edit` block too. Absent is false. */
-  runBound: Schema.optionalKey(Schema.Boolean)
+  runBound: Schema.optionalKey(Schema.Boolean),
+  /**
+   * The client reads `placements` from the answer ({@link NeighborsAnswer}). Always sent by this
+   * client: a server that predates the key decodes requests strictly, so it refuses the request
+   * with a 400 before it places, judges, or embeds anything, and the client places the puts itself.
+   */
+  placements: Schema.optionalKey(Schema.Literal(true))
 })
 export type NeighborsRequest = typeof NeighborsRequest.Type
 
@@ -627,13 +633,23 @@ const ViolationSchema = Schema.Union([
 
 /**
  * `POST /v1/neighbors`: `preparePuts`'s answer, the ops to append, the puts as rendered and placed,
+ * each put's placement (its path and the collision ordinal it took, `null` for an explicit path),
  * their neighbors, every violation, the blocking ones, and the vector arm's report, with the version
  * it was computed over.
+ *
+ * `placements` is required, and must stay required. A server whose answer lacks it was built before
+ * filename stems took the word-boundary cut (`slugifyStem`), so the paths in its `puts` were placed
+ * by the plain 80-character cut and would mint a stem that ends inside a word. Such an answer does
+ * not decode, the client counts it as no answer, and places the puts itself by the current rule. The
+ * request's `placements` marker makes that server refuse sooner, before it computes anything.
  */
 export const NeighborsAnswer = Schema.Struct({
   appended: Schema.Array(OverlayOpSchema),
   puts: Schema.Array(
     Schema.Struct({ kind: Schema.Literal("put"), path: Schema.String, html: Schema.String })
+  ),
+  placements: Schema.Array(
+    Schema.Struct({ path: Schema.String, ordinal: Schema.NullOr(Schema.Finite) })
   ),
   neighbors: Schema.Array(
     Schema.Struct({ path: Schema.String, hits: Schema.Array(SearchHitSchema) })
@@ -721,6 +737,19 @@ const DroppedOpSchema = Schema.Struct({
   reasons: Schema.Array(Schema.String)
 })
 
+/**
+ * The frame-key rivals a commit left unlinked (`restatements` in `CommitOutcome`, `commit.ts`): a
+ * rival that agrees with the put, one the put supersedes, or one the batch archives. Absent from an
+ * older server, which links every rival, so its answer decodes as none.
+ */
+const RestatementsSchema = Schema.Array(
+  Schema.Struct({
+    path: Schema.String,
+    against: Schema.String,
+    reason: Schema.Literals(RESTATEMENT_REASONS)
+  })
+).pipe(Schema.withDecodingDefaultKey(Effect.succeed([])))
+
 /** The fields every commit outcome carries before its kind's own, and after them. */
 const commitHead = { id: Schema.String, ref: Schema.String, baseSha: Schema.String }
 const commitTail = {
@@ -743,6 +772,7 @@ export const CommitResult = Schema.Union([
     sha: Schema.String,
     paths: Schema.Array(Schema.String),
     contradictions: Schema.Array(Schema.Struct({ path: Schema.String, against: Schema.String })),
+    restatements: RestatementsSchema,
     worktreeSynced: Schema.Boolean,
     recovered: Schema.Boolean,
     ...commitTail

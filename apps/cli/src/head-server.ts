@@ -1030,10 +1030,10 @@ export const startHeadServer = (
       Effect.gen(function* () {
         const tip = yield* fresh
         if (sha === tip.sha) return { version: tip, base: "tip" as const }
-        const ancestor = yield* git.run(["merge-base", "--is-ancestor", sha, tip.sha]).pipe(
-          Effect.as(true),
-          Effect.catchTag("GitFailure", () => Effect.succeed(false))
-        )
+        // A base git cannot compare with the tip (logged by the git service) is declined too.
+        const ancestor = yield* git
+          .isAncestor(sha, tip.sha)
+          .pipe(Effect.catchTag("GitFailure", () => Effect.succeed(false)))
         if (!ancestor) {
           return {
             unservable: `the session's base ${sha} is neither ${ref}'s tip ${tip.sha} nor an ancestor of it`
@@ -1166,10 +1166,10 @@ export const startHeadServer = (
       Effect.gen(function* () {
         const tip = yield* fresh
         if (sha === tip.sha) return { version: tip, base: "tip" as const }
-        const ancestor = yield* git.run(["merge-base", "--is-ancestor", sha, tip.sha]).pipe(
-          Effect.as(true),
-          Effect.catchTag("GitFailure", () => Effect.succeed(false))
-        )
+        // A base git cannot compare with the tip (logged by the git service) takes the load below.
+        const ancestor = yield* git
+          .isAncestor(sha, tip.sha)
+          .pipe(Effect.catchTag("GitFailure", () => Effect.succeed(false)))
         if (ancestor) return { version: yield* versionAt(sha), base: "ancestor" as const }
         const kept = recall(sha)
         if (kept !== undefined) return { version: kept, base: "loaded" as const }

@@ -5,11 +5,11 @@ description: A real driver and a real git binary, fakes at the two network edges
 
 ## 1. Real driver, real git
 
-Integration tests drive the real SQLite driver against `":memory:"` with the real migrations (`packages/index/src/database.ts:262-266`), and the real git binary against a repository in a temp directory (`packages/store/src/store.ts:335-338`).
+Integration tests drive the real SQLite driver against `":memory:"` with the real migrations (`packages/index/src/database.ts::makeDatabase`), and the real git binary against a repository in a temp directory (`packages/store/src/store.ts::makeStore`).
 
 A fake driver would verify the shape of the calls and miss every constraint the database enforces. A fake git would verify that the right strings were assembled and miss every state transition they cause.
 
-Fakes are limited to the two edges that reach the network, and each is a `Layer.succeed` value: a deterministic hash-seeded embedder whose cosine relations are a pure function of the text (`packages/eval/src/harness.ts:52`), a failing embedder for exercising the degraded path (`packages/eval/src/harness.ts:99`), and a scripted model.
+Fakes are limited to the two edges that reach the network, and each is a `Layer.succeed` value: a deterministic hash-seeded embedder whose cosine relations are a pure function of the text (`packages/eval/src/harness.ts::fakeVector`), a failing embedder for exercising the degraded path (`packages/eval/src/harness.ts::failingEmbedder`), and a scripted model.
 
 ## 2. Property tests over the pure packages
 
@@ -28,21 +28,21 @@ Fakes are limited to the two edges that reach the network, and each is a `Layer.
 
 ## 3. The discrimination gate
 
-The discrimination gate asks one question: does the retrieval stack rank a memory above a nearly identical, deliberately wrong version of itself (`packages/eval/src/discriminate.ts:224`)? The wrong versions are called controls.
+The discrimination gate asks one question: does the retrieval stack rank a memory above a nearly identical, deliberately wrong version of itself (`packages/eval/src/discriminate.ts::discriminate`)? The wrong versions are called controls.
 
-Controls are derived mechanically from the target by the three divergence families, meaning a negation flip, a numeric flip, and a qualifier flip. Each control is then validated against its own family's predicate, so a control that failed to diverge is discarded rather than scored (`packages/eval/src/controls.ts:25`, `packages/eval/src/controls.ts:163`). Mechanical derivation is what makes them high-cosine wrong-fact adversaries by construction rather than by an author's imagination.
+Controls are derived mechanically from the target by the three divergence families, meaning a negation flip, a numeric flip, and a qualifier flip. Each control is then validated against its own family's predicate, so a control that failed to diverge is discarded rather than scored (`packages/eval/src/controls.ts::DivergenceFamily`, `packages/eval/src/controls.ts::deriveControl`). Mechanical derivation is what makes them high-cosine wrong-fact adversaries by construction rather than by an author's imagination.
 
 ### 3.1. Two numbers, and the strict one is the gate
 
-`packages/eval/src/discriminate.ts:18-21` defines both.
+`packages/eval/src/discriminate.ts::DiscriminationReport::mrr`, `packages/eval/src/discriminate.ts::DiscriminationReport::corpusMrr` defines both.
 
-`mrr` is the mean reciprocal rank measured in the space of `{target} ∪ controls` alone, against a floor of 0.85 (`packages/eval/src/discriminate.ts:103`). The refusal, though, is per-probe and absolute: a single target ranked at or below any of its own controls is an inversion, and one inversion fails the run whatever MRR says. An aggregate on its own can be bought by thirty easy probes covering one broken one. A control the search never returned counts as outranked, since being absent is worse than being last.
+`mrr` is the mean reciprocal rank measured in the space of `{target} ∪ controls` alone, against a floor of 0.85 (`packages/eval/src/discriminate.ts::MRR_FLOOR`). The refusal, though, is per-probe and absolute: a single target ranked at or below any of its own controls is an inversion, and one inversion fails the run whatever MRR says. An aggregate on its own can be bought by thirty easy probes covering one broken one. A control the search never returned counts as outranked, since being absent is worse than being last.
 
-`corpusMrr` is measured against the whole corpus, and it is reported rather than gated. It is low by construction on a fixture holding many near-identical memories, and reading it as a retrieval defect would confuse the two coordinate spaces the two field names exist to keep apart (`packages/eval/src/discriminate.ts:76-88`).
+`corpusMrr` is measured against the whole corpus, and it is reported rather than gated. It is low by construction on a fixture holding many near-identical memories, and reading it as a retrieval defect would confuse the two coordinate spaces the two field names exist to keep apart (`packages/eval/src/discriminate.ts::DiscriminationReport::corpusMrr`).
 
 ### 3.2. A skipped gate never looks like a passing one
 
-`packages/eval/src/run.ts:15-23`. Fake mode runs everywhere and is what CI measures. Live mode without credentials reports `skipped: true` and `passed: false` with a loud stderr line, and never a green report. A caller who asked for live and got a silent fake would be told the real vector space discriminates when nothing had measured it.
+`packages/eval/src/run.ts::runDiscrimination`. Fake mode runs everywhere and is what CI measures. Live mode without credentials reports `skipped: true` and `passed: false` with a loud stderr line, and never a green report. A caller who asked for live and got a silent fake would be told the real vector space discriminates when nothing had measured it.
 
 ### 3.3. Where the gate is wired
 

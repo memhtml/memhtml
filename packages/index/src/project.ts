@@ -1,5 +1,5 @@
 import { relClassFor } from "@memhtml/contracts/edges"
-import { normalizePath, paraBucketOf } from "@memhtml/contracts/paths"
+import { normalizePath, originalPathFor, paraBucketOf } from "@memhtml/contracts/paths"
 import { parseEntity } from "@memhtml/contracts/types"
 import { frameKeyOf } from "@memhtml/domain"
 import type { MemoryDoc } from "@memhtml/html"
@@ -40,10 +40,10 @@ export const wordCountOf = (bodyText: string): number =>
 /**
  * The single FTS column, holding title, gist, and body joined by newlines.
  *
- * Denormalized because a multi-column FTS index on this driver returns rowid order rather than
- * relevance order and scopes MATCH to the named column alone (probed 2026-08-02). Newline-joined
- * rather than space-joined so a term at the end of the title cannot fuse with one at the start of
- * the gist into a phrase neither states.
+ * Denormalized so one MATCH finds a term wherever it lives, and because a multi-column FTS5 table
+ * would make `bm25()` weight the columns against each other, a ranking decision RRF already owns
+ * (`FTS_COLUMN` in `schema-const.ts`). Newline-joined rather than space-joined so a term at the
+ * end of the title cannot fuse with one at the start of the gist into a phrase neither states.
  */
 export const ftsTextFor = (doc: MemoryDoc): string =>
   [doc.title, doc.article.gist, doc.article.bodyText].filter((part) => part !== "").join("\n")
@@ -86,9 +86,11 @@ export const disclosureTextFor = (doc: MemoryDoc): string =>
 const flag = (value: boolean | undefined): number => (value === true ? 1 : 0)
 
 /**
- * The `files` columns in bind order. One list drives the insert, the placeholder count, and the
- * upsert's assignment clause, so a new column cannot be added to one and forgotten in another.
- * A mismatch there binds every subsequent value to the wrong column and every CHECK still passes.
+ * The `files` columns in bind order. This list drives the insert's column list and the upsert's
+ * assignment clause. The placeholder count comes from the value array in `projectFile`, so a new
+ * column needs its value there too, at the same position. A count mismatch fails the statement, and
+ * `project.test.ts` checks both counts against this list. A value at the wrong position binds every
+ * subsequent value to the wrong column and every CHECK still passes.
  */
 export const FILE_COLUMNS = [
   "path",
@@ -368,11 +370,11 @@ export const authoredEdgesFor = (
     params: [path, edge.rel, edge.dstPath, relClassFor(edge.rel), contentHash, createdAt]
   }))
 
-/** The pre-archive path an archived file came from, for `files.origin_path`. */
-const originOf = (archivePath: string): string | null => {
-  const match = /^archive\/\d{4,}\/(.+)$/.exec(archivePath)
-  return match?.[1] ?? null
-}
+/**
+ * The pre-archive path an archived file came from, for `files.origin_path`: the archive mapping's
+ * own inverse, so a generation slot (`archive/<YYYY>.<n>/`) names its origin like a bare-year one.
+ */
+const originOf = (archivePath: string): string | null => originalPathFor(archivePath) ?? null
 
 const dedupe = (values: ReadonlyArray<string>): ReadonlyArray<string> => [...new Set(values)]
 

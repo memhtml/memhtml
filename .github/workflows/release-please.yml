@@ -73,9 +73,14 @@ jobs:
 
       # The TAG, not the branch: `main` has already moved on by the time this runs, and
       # the bytes that get published have to be the bytes that were released.
+      #
+      # Full history, not the default single commit: `pnpm check` below runs `docs:citations`,
+      # which reads each `docs/codebase/` page at the older commit it is stamped with, and a
+      # shallow clone holds no commit but the tag's.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/tags/${{ github.event_name == 'workflow_dispatch' && github.ref_name || needs.release-please.outputs.tag_name }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Verify the release revision
@@ -94,7 +99,7 @@ jobs:
       # BEFORE setup-node, and the order is load-bearing. Both prepend to PATH, so whichever
       # runs last wins, and setup-node's node is the one that must: it writes the OIDC .npmrc
       # and its npm is the one that has to run the publish.
-      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
 
       # No `version:` — action-setup ERRORS when the workflow pins a version while
       # package.json's `packageManager` also pins one. That field is the single source of

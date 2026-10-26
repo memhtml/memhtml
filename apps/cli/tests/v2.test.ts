@@ -1,12 +1,16 @@
 import { execFile } from "node:child_process"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { access, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 
-import { afterAll, describe, expect, it } from "vitest"
+import { renderTemplate } from "@memhtml/html"
+import { sessionStateFile } from "@memhtml/session"
+import { type FixtureRepo, makeFixtureRepo } from "@memhtml/store/testing"
+import { Effect } from "effect"
+import { afterAll, afterEach, describe, expect, it } from "vitest"
 
 import { COMMANDS } from "../src/commands.js"
-import { EXIT_RUNTIME, EXIT_USAGE, RESPONSE_TYPES } from "../src/envelope.js"
+import { EXIT_OK, EXIT_RUNTIME, EXIT_USAGE, RESPONSE_TYPES } from "../src/envelope.js"
 import { parseArgv, run, validate } from "../src/run.js"
 
 /**
@@ -55,7 +59,8 @@ describe("the v2 command table", () => {
     "head embed",
     "head serve",
     "curate merge",
-    "curate run"
+    "curate run",
+    "path"
   ]
 
   it("declares every v2 command with at least one example and a response type the envelope knows", () => {
@@ -262,5 +267,377 @@ describe("sessionScopeOf names the scope a session is judged under from its ref"
     expect(sessionScopeOf("refs/heads/main")).toBe("session")
     expect(sessionScopeOf("refs/heads/curated")).toBe("session")
     expect(sessionScopeOf("refs/tags/curate/x")).toBe("session")
+  })
+})
+
+describe("a put beside a held archive slot", () => {
+  it("keeps the put's derived path, and its later archive takes the next generation of the year", async () => {
+    // The head holds an archived record at the slot `areas/inbox/a-fact.html` mirrors, and nothing
+    // live at that path. The put lands there, and archiving it later writes `archive/<YYYY>.2/`,
+    // leaving the older record in its slot. Mutation: `stageArchive` back to `archivePathFor` ->
+    // the archive fails with ERR_GIT (`destination exists`) and the record stays live.
+    const repo = await Effect.runPromise(makeFixtureRepo())
+    const root = repo.root
+    roots.push(root)
+    const year = String(new Date().getUTCFullYear())
+    const path = "areas/inbox/a-fact.html"
+    const heldSlot = `archive/${year}/${path}`
+    const older = renderTemplate({
+      title: "A fact",
+      claim: "The acme widget build caches to a shared directory.",
+      memoryType: "semantic",
+      at: "2031-03-01T12:00:00Z",
+      entities: ["system:memhtml"]
+    }).replace('content="active"', 'content="archived"')
+    await mkdir(dirname(join(root, heldSlot)), { recursive: true })
+    await writeFile(join(root, heldSlot), older, "utf8")
+    await Effect.runPromise(repo.git.run(["add", "-A"]))
+    await Effect.runPromise(repo.git.run(["commit", "-q", "-m", "held slot"]))
+
+    const cli = async (argv: ReadonlyArray<string>) => {
+      const result = await run([...argv, "--repo", root], undefined, undefined, false)
+      const body = parse(result.stdout)
+      expect(result.exitCode, result.stdout).toBe(0)
+      return body.data as Record<string, unknown>
+    }
+    const ops = join(await scratch(), "ops.jsonl")
+    await writeFile(
+      ops,
+      `${JSON.stringify({
+        op: "write",
+        title: "A fact",
+        type: "semantic",
+        body: "The acme widget build caches to a per-user directory.",
+        entity: "system:memhtml"
+      })}\n`,
+      "utf8"
+    )
+    await cli(["session", "start", "--id", "held-slot"])
+    await cli(["session", "put", "--id", "held-slot", "--file", ops, "--no-server"])
+    const landed = await cli([
+      "session",
+      "commit",
+      "--id",
+      "held-slot",
+      "--message",
+      "a fact",
+      "--no-server"
+    ])
+    expect(landed.kind).toBe("committed")
+    expect(landed.paths).toEqual([path])
+
+    const archived = await cli(["archive", path, "--reason", "evicted"])
+    expect(archived.archivePath).toBe(`archive/${year}.2/${path}`)
+    const tree = await Effect.runPromise(repo.git.run(["ls-tree", "-r", "--name-only", "HEAD"]))
+    const files = tree.split("\n").filter((line) => line.endsWith(".html"))
+    expect(files).toContain(heldSlot)
+    expect(files).toContain(`archive/${year}.2/${path}`)
+    expect(files).not.toContain(path)
+    expect(await Effect.runPromise(repo.git.run(["show", `HEAD:${heldSlot}`]))).toBe(older)
+  })
+})
+
+/**
+ * The two read-only answers to "where would this write land": `memhtml path` over the version at
+ * HEAD, and `session put --dry-run` over a session's view. Both run the placement a put runs
+ * (`putPathFor` in `v2.ts`), so a caller can learn the path, and the collision ordinal it took,
+ * before anything is appended or committed. `memhtml path` reads no session and judges nothing, so
+ * inside a session, or for a line the write bar might refuse, the dry run is the answer. Every case
+ * checks that nothing under the root moved.
+ *
+ * Mutations, each run once with the change applied and the named case red:
+ * - `v2.ts` `pathPreview`: pass an empty set instead of the `--claimed` paths -> "steps past the
+ *   paths --claimed names" (answers `-2`, which the claimed file holds).
+ * - `v2.ts` `sessionPut`: append under `--dry-run` -> "places each put as the real put would" (the
+ *   log gains the put).
+ * - `v2.ts` `sessionPut`: start the session under `--dry-run` -> "starts no session" (the log exists).
+ */
+describe("memhtml path and session put --dry-run preview a write's path, writing nothing", () => {
+  const AT = "2031-03-01T12:00:00Z"
+  const run_ = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect)
+  const repos: Array<FixtureRepo> = []
+  const SESSION_VAR = "MEMHTML_SESSION"
+  /** Puts `MEMHTML_SESSION` back as the case found it, when the case set it. */
+  let restoreSession: (() => void) | undefined
+  afterEach(async () => {
+    restoreSession?.()
+    restoreSession = undefined
+    await Promise.all(repos.splice(0).map((repo) => repo.cleanup()))
+  })
+
+  /** A committed head holding `areas/inbox/a-fact.html` and `projects/acme-widget/a-fact.html`. */
+  const corpus = async (): Promise<FixtureRepo> => {
+    const repo = await run_(makeFixtureRepo())
+    repos.push(repo)
+    for (const [path, claim] of [
+      ["areas/inbox/a-fact.html", "The inbox fact is recorded here."],
+      ["projects/acme-widget/a-fact.html", "The acme-widget fact is recorded here."]
+    ] as const) {
+      const target = join(repo.root, path)
+      await mkdir(dirname(target), { recursive: true })
+      const html = renderTemplate({
+        title: "A fact",
+        claim,
+        memoryType: "semantic",
+        at: AT,
+        entities: ["project:acme-widget"]
+      })
+      await writeFile(target, html, "utf8")
+    }
+    await run_(repo.git.run(["add", "-A"]))
+    await run_(repo.git.run(["commit", "-q", "-m", "corpus"]))
+    return repo
+  }
+
+  /**
+   * Everything a write could leave: every file under the root outside `.git/` with its size and
+   * mtime, every ref, and the status git reports with ignored files listed.
+   */
+  const stateOf = async (repo: FixtureRepo): Promise<string> => {
+    const files: Array<string> = []
+    const walk = async (dir: string): Promise<void> => {
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name)
+        const rel = full.slice(repo.root.length + 1)
+        if (rel === ".git") continue
+        if (entry.isDirectory()) {
+          files.push(`${rel}/`)
+          await walk(full)
+        } else {
+          const info = await stat(full)
+          files.push(`${rel} ${String(info.size)} ${String(info.mtimeMs)}`)
+        }
+      }
+    }
+    await walk(repo.root)
+    const refs = await run_(repo.git.run(["for-each-ref", "--format=%(refname) %(objectname)"]))
+    const status = await run_(repo.git.run(["status", "--porcelain", "--ignored"]))
+    return [...files.sort(), refs, status].join("\n")
+  }
+
+  type Body = Record<string, unknown>
+  const cli = async (repo: FixtureRepo, argv: ReadonlyArray<string>) => {
+    const result = await run([...argv, "--repo", repo.root], undefined, undefined, false)
+    return { exitCode: result.exitCode, body: parse(result.stdout) as Body }
+  }
+  const data = async (repo: FixtureRepo, argv: ReadonlyArray<string>): Promise<Body> => {
+    const { exitCode, body } = await cli(repo, argv)
+    expect(exitCode, JSON.stringify(body)).toBe(EXIT_OK)
+    return body.data as Body
+  }
+
+  const opsFile = async (lines: ReadonlyArray<Record<string, unknown>>): Promise<string> => {
+    const file = join(await scratch(), "ops.jsonl")
+    await writeFile(file, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`, "utf8")
+    return file
+  }
+
+  const aFact = { op: "write", title: "A fact", type: "semantic", body: "A second fact." }
+  const LONG_WORKSPACE =
+    "Acme widget release engineering, packaging, signing and staged rollout coordination workstream"
+
+  it("steps past a path the head holds, with the ordinal it took", async () => {
+    const repo = await corpus()
+    const before = await stateOf(repo)
+    const { exitCode, body } = await cli(repo, ["path", "--title", "A fact", "--type", "semantic"])
+    expect(exitCode, JSON.stringify(body)).toBe(EXIT_OK)
+    expect(body.type).toBe("memory.path")
+    const answer = body.data as Body
+    expect(answer.path).toBe("areas/inbox/a-fact-2.html")
+    expect(answer.ordinal).toBe(2)
+    expect(answer.occupied).toBe(false)
+    expect((answer.head as Body).sha).toBe(await run_(repo.git.revParseHead()))
+    expect(await stateOf(repo)).toBe(before)
+  })
+
+  it("steps past the paths --claimed names as it steps past the head's", async () => {
+    const repo = await corpus()
+    const claimed = join(await scratch(), "claimed.txt")
+    await writeFile(claimed, "areas/inbox/a-fact-2.html\n\n/areas/inbox/a-fact-4.html\n", "utf8")
+    const before = await stateOf(repo)
+    const answer = await data(repo, [
+      "path",
+      "--title",
+      "A fact",
+      "--type",
+      "semantic",
+      "--claimed",
+      claimed
+    ])
+    expect(answer.path).toBe("areas/inbox/a-fact-3.html")
+    expect(answer.ordinal).toBe(3)
+    expect(answer.claimed).toBe(2)
+    expect(await stateOf(repo)).toBe(before)
+  })
+
+  it("routes by type, workspace and tag the way a write line does", async () => {
+    const repo = await corpus()
+    const before = await stateOf(repo)
+    const inWorkspace = await data(repo, [
+      "path",
+      ...["--title", "A fact", "--type", "semantic", "--workspace", "acme-widget"]
+    ])
+    expect(inWorkspace).toMatchObject({ path: "projects/acme-widget/a-fact-2.html", ordinal: 2 })
+    const tagged = await data(repo, [
+      "path",
+      ...["--title", "A fact", "--type", "procedural", "--tag", "acme-widget", "--tag", "other"]
+    ])
+    expect(tagged).toMatchObject({ path: "resources/acme-widget/a-fact.html", ordinal: 1 })
+    const task = await data(repo, [
+      "path",
+      ...["--title", "A fact", "--type", "task", "--workspace", "acme-widget"]
+    ])
+    expect(task).toMatchObject({ path: "projects/acme-widget/tasks/a-fact.html", ordinal: 1 })
+    // A long workspace keeps the folder its earlier records sit in: folder names keep the plain cut.
+    const longWorkspace = await data(repo, [
+      "path",
+      ...["--title", "A fact", "--type", "semantic", "--workspace", LONG_WORKSPACE]
+    ])
+    expect(longWorkspace.path).toBe(
+      "projects/acme-widget-release-engineering-packaging-signing-and-staged-rollout-coordinatio/a-fact.html"
+    )
+    const episodic = await data(repo, ["path", "--title", "A fact", "--type", "episodic"])
+    expect(String(episodic.path)).toMatch(/^areas\/inbox\/\d{8}-a-fact\.html$/)
+    expect(await stateOf(repo)).toBe(before)
+  })
+
+  it("answers a usable explicit path as given, with no ordinal, and says when it is held", async () => {
+    const repo = await corpus()
+    const held = await data(repo, [
+      "path",
+      ...["--title", "Another", "--type", "semantic", "--path", "areas/inbox/a-fact.html"]
+    ])
+    expect(held).toMatchObject({ path: "areas/inbox/a-fact.html", ordinal: null, occupied: true })
+    const free = await data(repo, [
+      "path",
+      ...["--title", "Another", "--type", "semantic", "--path", "/areas/inbox/elsewhere.html"]
+    ])
+    expect(free).toMatchObject({
+      path: "areas/inbox/elsewhere.html",
+      ordinal: null,
+      occupied: false
+    })
+    // An unusable path is ignored and the path derived, as a put derives it.
+    const ignored = await data(repo, [
+      "path",
+      ...["--title", "A fact", "--type", "semantic", "--path", "nowhere/a-fact.html"]
+    ])
+    expect(ignored).toMatchObject({ path: "areas/inbox/a-fact-2.html", ordinal: 2 })
+  })
+
+  it("refuses a --claimed line that is not a memory path at exit 2, naming the line", async () => {
+    const repo = await corpus()
+    const claimed = join(await scratch(), "claimed.txt")
+    await writeFile(claimed, `areas/inbox/a-fact-2.html\n${JSON.stringify(aFact)}\n`, "utf8")
+    const before = await stateOf(repo)
+    const { exitCode, body } = await cli(repo, [
+      "path",
+      ...["--title", "A fact", "--type", "semantic", "--claimed", claimed]
+    ])
+    expect(exitCode).toBe(EXIT_USAGE)
+    expect(body.code).toBe("ERR_INVALID_FLAG")
+    expect(String(body.error)).toContain("line 2")
+    const missing = await cli(repo, [
+      "path",
+      ...["--title", "A fact", "--type", "semantic", "--claimed", join(claimed, "absent")]
+    ])
+    expect(missing.exitCode).toBe(EXIT_USAGE)
+    expect(missing.body.code).toBe("ERR_PATH_NOT_FOUND")
+    expect(await stateOf(repo)).toBe(before)
+  })
+
+  it("requires --title and --type before any repo opens", () => {
+    expect(validate(parseArgv(["path", "--type", "semantic"]))?.code).toBe("ERR_MISSING_ARGUMENT")
+    expect(validate(parseArgv(["path", "--title", "A fact"]))?.code).toBe("ERR_MISSING_ARGUMENT")
+    expect(validate(parseArgv(["path", "--title", "A fact", "--type", "nonsense"]))?.code).toBe(
+      "ERR_INVALID_FLAG"
+    )
+    expect(validate(parseArgv(["path", "--title", "  ", "--type", "semantic"]))?.code).toBe(
+      "ERR_INVALID_FLAG"
+    )
+    expect(validate(parseArgv(["path", "--title", "A fact", "--type", "semantic"]))).toBeUndefined()
+  })
+
+  it("places each put as the real put would, and leaves the log as it was", async () => {
+    const repo = await corpus()
+    await data(repo, ["session", "start", "--id", "s1"])
+    const log = await readFile(sessionStateFile(repo.root, "s1"), "utf8")
+    const file = await opsFile([aFact, { ...aFact, body: "A third fact." }])
+    const before = await stateOf(repo)
+    const preview = await data(repo, [
+      "session",
+      ...["put", "--id", "s1", "--file", file, "--no-server", "--dry-run"]
+    ])
+    expect(preview.dryRun).toBe(true)
+    expect(preview.appended).toBe(0)
+    expect(preview.ops).toBe(0)
+    expect(preview.paths).toEqual(["areas/inbox/a-fact-2.html", "areas/inbox/a-fact-3.html"])
+    expect(preview.placements).toEqual([
+      { path: "areas/inbox/a-fact-2.html", ordinal: 2 },
+      { path: "areas/inbox/a-fact-3.html", ordinal: 3 }
+    ])
+    expect(await readFile(sessionStateFile(repo.root, "s1"), "utf8")).toBe(log)
+    expect(await stateOf(repo)).toBe(before)
+
+    // The put itself lands where the dry run said.
+    const put = await data(repo, ["session", "put", "--id", "s1", "--file", file, "--no-server"])
+    expect(put.dryRun).toBe(false)
+    expect(put.paths).toEqual(preview.paths)
+    expect(put.placements).toEqual(preview.placements)
+
+    // `memhtml path` answers over HEAD and reads no session, so it still names the path s1's put
+    // now holds. Inside the session, its own dry run is the answer, and it steps past both puts.
+    const single = await data(repo, ["path", "--title", "A fact", "--type", "semantic"])
+    expect(single.path).toBe("areas/inbox/a-fact-2.html")
+    const again = await data(repo, [
+      "session",
+      ...["put", "--id", "s1", "--file", await opsFile([aFact]), "--no-server", "--dry-run"]
+    ])
+    expect(again.paths).toEqual(["areas/inbox/a-fact-4.html"])
+  })
+
+  it("refuses a dry run a blocking violation refuses, and leaves the log as it was", async () => {
+    const repo = await corpus()
+    await data(repo, ["session", "start", "--id", "s1"])
+    const log = await readFile(sessionStateFile(repo.root, "s1"), "utf8")
+    const before = await stateOf(repo)
+    // A filename the site generator owns, and a directory only curation writes.
+    const reserved = [
+      { op: "write", title: "Index", type: "semantic", body: "An index fact." },
+      { ...aFact, path: "areas/arcs/acme-widget.html" }
+    ]
+    for (const line of reserved) {
+      const file = await opsFile([aFact, line])
+      const { exitCode, body } = await cli(repo, [
+        "session",
+        ...["put", "--id", "s1", "--file", file, "--no-server", "--dry-run"]
+      ])
+      expect(exitCode, JSON.stringify(body)).toBe(EXIT_RUNTIME)
+      expect(body.code).toBe("ERR_INVALID_MEMORY")
+      expect(String(body.error)).toContain("reserved path")
+      expect(await readFile(sessionStateFile(repo.root, "s1"), "utf8")).toBe(log)
+    }
+    expect(await stateOf(repo)).toBe(before)
+
+    // `memhtml path` places and does not judge, so it still names the reserved path.
+    const placed = await data(repo, ["path", "--title", "Index", "--type", "semantic"])
+    expect(placed.path).toBe("areas/inbox/index.html")
+  })
+
+  it("starts no session when a dry run is the first use of MEMHTML_SESSION", async () => {
+    const repo = await corpus()
+    const saved = process.env[SESSION_VAR]
+    restoreSession = () => {
+      if (saved === undefined) delete process.env[SESSION_VAR]
+      else process.env[SESSION_VAR] = saved
+    }
+    process.env[SESSION_VAR] = "run-1"
+    const file = await opsFile([aFact])
+    const before = await stateOf(repo)
+    const preview = await data(repo, ["session", "put", "--file", file, "--no-server", "--dry-run"])
+    expect(preview).toMatchObject({ dryRun: true, started: false, appended: 0, ops: 0 })
+    expect(preview.paths).toEqual(["areas/inbox/a-fact-2.html"])
+    await expect(access(sessionStateFile(repo.root, "run-1"))).rejects.toThrow()
+    expect(await stateOf(repo)).toBe(before)
   })
 })

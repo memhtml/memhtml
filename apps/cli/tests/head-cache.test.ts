@@ -17,6 +17,7 @@ import {
 import { headGate } from "../src/head-gate.js"
 import { run as runCli } from "../src/run.js"
 import { loadHeadAt } from "../src/v2.js"
+import { type LogEntry, recordingLogger } from "./harness.js"
 
 /**
  * The head's cold-start cache on both sides (`head-cache.ts`) and the gate over it (`head-gate.ts`).
@@ -29,6 +30,8 @@ import { loadHeadAt } from "../src/v2.js"
  *   when the target has none" (`source` is `git`).
  * - `findAncestorSnapshot`: drop the `isAncestor` filter -> "ignores a snapshot that is not an
  *   ancestor of the target" (a snapshot of the side branch is advanced from).
+ * - `ancestorSnapshots`: probe through `git.run` and catch exit 1 as "no" -> "passes over a side
+ *   branch's snapshot with no Error log" (`git merge-base exited 1` at Error, logged by `run`).
  * - `findAncestorSnapshot`: `changed < best.changed` -> `changed > best.changed` -> "picks the
  *   ancestor with the fewest changed paths" (the older snapshot wins).
  * - `snapshotAfterCommit`: drop the `Effect.catch` -> "answers null and does not fail when the
@@ -53,6 +56,15 @@ import { loadHeadAt } from "../src/v2.js"
  */
 
 const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect)
+
+/** Run `effect` under a logger that records every entry instead of printing it. */
+const logged = async <A, E>(
+  effect: Effect.Effect<A, E>
+): Promise<{ readonly value: A; readonly entries: ReadonlyArray<LogEntry> }> => {
+  const entries: Array<LogEntry> = []
+  const value = await run(effect.pipe(Effect.provide(recordingLogger(entries))))
+  return { value, entries }
+}
 
 const repos: Array<FixtureRepo> = []
 afterEach(async () => {
@@ -222,6 +234,33 @@ describe("loadVersion", () => {
     expect((await run(loadVersion(repo.root, third))).source).toBe("git")
   })
 
+  it("passes over a side branch's snapshot with no Error log, advancing or reading git", async () => {
+    const { repo, sha: first } = await corpus(4)
+    await run(writeHeadSnapshot(repo.root, (await run(loadVersion(repo.root, first))).version))
+    await run(repo.git.run(["checkout", "-q", "-b", "side", first]))
+    const side = await commit(repo, [memory("quarry")], "side")
+    await run(writeHeadSnapshot(repo.root, (await run(loadVersion(repo.root, side))).version))
+    await run(repo.git.run(["checkout", "-q", "main"]))
+    const target = await commit(repo, [memory("saddle")], "target")
+
+    // `merge-base --is-ancestor` exits 1 for the side branch's snapshot, which is the answer "no".
+    const advanced = await logged(loadVersion(repo.root, target))
+    expect(advanced.value).toMatchObject({
+      source: "snapshot+advance",
+      ancestorSha: first,
+      reparsed: 1
+    })
+    expect(advanced.entries.filter((entry) => entry.level === "Error")).toEqual([])
+    expect(advanced.entries.filter((entry) => entry.message.includes("merge-base"))).toEqual([])
+
+    // With the side branch's snapshot the only one listed, the load reads git, just as quietly.
+    await rm(snapshotPathFor(repo.root, first))
+    const fromGit = await logged(loadVersion(repo.root, target))
+    expect(fromGit.value).toMatchObject({ source: "git", snapshotPath: null })
+    expect(fromGit.value.version.size).toBe(5)
+    expect(fromGit.entries.filter((entry) => entry.level === "Error")).toEqual([])
+  })
+
   it("reads git when the sha's own snapshot names another sha, removes it, and skips such an ancestor", async () => {
     const { repo, sha } = await corpus(3)
     const version = (await run(loadVersion(repo.root, sha))).version
@@ -284,7 +323,13 @@ describe("loadVersion", () => {
       })
     )
     const next = await commit(repo, [memory("anvil")], "next")
-    expect((await run(loadVersion(repo.root, next))).source).toBe("git")
+    const passed = await logged(loadVersion(repo.root, next))
+    expect(passed.value.source).toBe("git")
+    // Exit 128 is a real failure: git's own error line, then the warning that skips the snapshot.
+    expect(passed.entries.map((entry) => entry.level)).toEqual(["Error", "Warn"])
+    expect(passed.entries[0]?.message).toMatch(/^git merge-base exited 128: /)
+    expect(passed.entries[1]?.message).toContain(`snapshot ${snapshotPathFor(repo.root, gone)}`)
+    expect(passed.entries[1]?.message).toContain("merge-base, exit 128); passing over it")
     await run(writeHeadSnapshot(repo.root, version))
     expect(await run(loadVersion(repo.root, next))).toMatchObject({
       source: "snapshot+advance",

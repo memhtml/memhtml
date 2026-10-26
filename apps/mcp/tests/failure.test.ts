@@ -1,4 +1,4 @@
-import { codeFor } from "@memhtml/cli"
+import { codeFor, MarkupInProse } from "@memhtml/cli"
 import {
   DirtyTree,
   DuplicateContent,
@@ -19,6 +19,7 @@ import { describe, expect, it } from "vitest"
 import {
   batchAbortFailure,
   mcpSuggestionsFor,
+  reinforcePathsMissing,
   resourceFailure,
   ToolFailure,
   toResourceFailure,
@@ -63,7 +64,8 @@ const EVERY_FAILURE = [
   StoreConfigInvalid.make({
     path: "/srv/store/memhtml.config.json",
     reason: "Unexpected key at writeBar.requireAnchors"
-  })
+  }),
+  new MarkupInProse({ line: 1, tag: "<p>" })
 ] as const
 
 /** The tool names an agent can actually call, which is the vocabulary a suggestion may use. */
@@ -135,6 +137,17 @@ describe("the wire failure a tool call produces", () => {
         InvalidMemory.make({ reason: "exactly one of body or article_html is required" })
       ).message
     ).toContain("exactly one of body or article_html is required")
+
+    // The tag, the body's line it sits on, and the parameter that takes markup instead.
+    const markup = toToolFailure(new MarkupInProse({ line: 3, tag: "&lt;ul&gt;" }))
+    expect(markup.code).toBe("ERR_INVALID_FLAG")
+    expect(markup.message).toContain("`&lt;ul&gt;` on its line 3")
+    expect(markup.message).toContain("article_html")
+    expect(markup.suggestions[0]).toContain("article_html")
+    // A claim that ran on into a fence: the reason says the first sentence never ended.
+    const unended = toToolFailure(new MarkupInProse({ line: 4, tag: "<ul>", unended: true }))
+    expect(unended.message).toContain("first sentence never ends before the tag")
+    expect(markup.message).not.toContain("never ends")
   })
 
   it("leaks no driver message, SQL, or git argv into the wire text", () => {
@@ -297,6 +310,41 @@ describe("the atomic batch abort as a wire failure", () => {
     )
     // A reason that already ends in a terminator is not given a second one.
     expect(batchAbortFailure(1, "ERR_INVALID_MEMORY", "no <mark>.").message).not.toContain("..")
+  })
+})
+
+describe("memory_reinforce's refusal of a call that names no path", () => {
+  /**
+   * Composed outside `toToolFailure` because `InvalidMemory`'s suggestions speak of the render gate, and
+   * this call never reached the store. The decoder has already dropped whatever key the caller sent
+   * instead, so the text is the only place it learns the two spellings the tool reads.
+   */
+  it("names both keys under the code the other missing-parameter refusals use", () => {
+    const failure = reinforcePathsMissing()
+    expect(failure.code).toBe("ERR_INVALID_MEMORY")
+    expect(failure.message.startsWith("ERR_INVALID_MEMORY: memory_reinforce needs ")).toBe(true)
+    expect(failure.message).toContain("`paths` (an array of memory paths)")
+    expect(failure.message).toContain("`path` (one memory path)")
+    expect(failure.message).not.toContain("render gate")
+  })
+
+  it("suggests the call to make, action-first, naming only callable tools", () => {
+    const failure = reinforcePathsMissing()
+    expect(failure.suggestions[0]).toMatch(/^call memory_reinforce again with paths /)
+    for (const suggestion of failure.suggestions) {
+      expect(suggestion).not.toContain("memhtml ")
+      for (const word of suggestion.match(/\b(?:memory|trace)_[a-z_]+\b/g) ?? []) {
+        expect(CALLABLE.has(word)).toBe(true)
+      }
+      expect(failure.message).toContain(suggestion)
+    }
+  })
+
+  it("is a declared failure on memory_reinforce, which is what un-masks it", () => {
+    const isDeclaredFailure = Schema.is(MemhtmlToolkit.tools.memory_reinforce.failureSchema)
+    expect(isDeclaredFailure(reinforcePathsMissing())).toBe(true)
+    // And `toToolFailure` passes it through unchanged, since `handled` maps every handler's error.
+    expect(toToolFailure(reinforcePathsMissing()).message).toBe(reinforcePathsMissing().message)
   })
 })
 
