@@ -52,7 +52,7 @@ The same grep pins the storage engine. Both database planes are plain SQLite rea
 
 `layerApp` (`apps/cli/src/api-layer.ts::layerApp`, `apps/cli/src/api-layer.ts::layerCore`) wires every service. The design's one dependency cycle is broken there. The store needs a SQL lookup to answer whether some content already exists, and `@memhtml/store` contains no SQL, so the lookup arrives as a function passed in.
 
-Two other functions arrive the same way and for the same reason. One is the `onMove` hook the store calls when it archives a path, which keeps the state plane's keys in step for that move (`packages/store/src/store.ts::MoveCallback`, `packages/store/src/store.ts::makeStore::stageArchive`, `apps/cli/src/api-layer.ts::layerStore::onMove`); a session commit moves paths without it (`packages/session/src/commit.ts::stage`). The other is the session-link recorder. Each keeps a layer's dependency direction intact while letting the composition root state the wiring in one visible place.
+Two other functions arrive the same way and for the same reason. One is the `onMove` hook the store calls when it archives a path, which keeps the state plane's keys in step for that move (`packages/store/src/store.ts::MoveCallback`, `packages/store/src/store.ts::makeStore::stageArchive`, `apps/cli/src/api-layer.ts::layerStore`); a session commit moves paths without it (`packages/session/src/commit.ts::stage`). The other is the session-link recorder. Each keeps a layer's dependency direction intact while letting the composition root state the wiring in one visible place.
 
 ## 5. Many packages, one published package
 

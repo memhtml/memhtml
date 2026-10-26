@@ -125,7 +125,7 @@ Arcs fold under their own 9,000-character envelope instead of competing with the
 
 ## 9. Reinforcement
 
-`reinforce` (`packages/index/src/reinforce.ts::reinforce`) is the only call site that bumps `state.access` on a read or a reinforcement, and the cooldown is why. `access_count` feeds the salience arm, so a second bumping path would let a loop in an agent replay one query and rewrite the corpus's ranking. Three other paths write the table without answering a query: `memhtml state import`, the store's `onMove` hook, which re-keys the row of a moved file (`apps/cli/src/api-layer.ts::layerStore::onMove`), and `memhtml doctor --fix`.
+`reinforce` (`packages/index/src/reinforce.ts::reinforce`) is the only call site that bumps `state.access` on a read or a reinforcement, and the cooldown is why. `access_count` feeds the salience arm, so a second bumping path would let a loop in an agent replay one query and rewrite the corpus's ranking. Three other paths write the table without answering a query: `memhtml state import`, the store's `onMove` hook, which re-keys the row of a moved file (`apps/cli/src/api-layer.ts::layerStore`), and `memhtml doctor --fix`.
 
 The guard is necessarily expressed twice, once as the SQL `WHERE` clause and once as a pure function, so both read the same constant, `REINFORCE_COOLDOWN_S = 900` (`packages/domain/src/ranking.ts::REINFORCE_COOLDOWN_S`), and a property test pins the two together at the boundary.
 
