@@ -238,7 +238,7 @@ export {
   untilSignal
 } from "./head-server.js"
 export * from "./operations.js"
-export { claimFromProse, proseTail } from "./prose.js"
+export { claimFromProse, MarkupInProse, markupInProse, proseTail } from "./prose.js"
 export {
   ARTICLE_EDIT_REASON,
   type CurateDelta,

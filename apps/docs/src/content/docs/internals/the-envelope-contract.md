@@ -31,18 +31,18 @@ The human message is narrow (`apps/cli/src/errors.ts:69-77`). Every payload fiel
 
 Suggestions are part of the contract (`apps/cli/src/errors.ts:111-127`), so an agent receiving `ERR_INDEX_STALE` can recover in one step without a round trip to a human. An absent list is `[]` rather than null.
 
-Per-operation batch codes are mapped once, in the operations layer (`apps/cli/src/operations.ts:367-381`), so `memhtml apply` and `memory_write_batch` cannot report different codes for one refused operation.
+Per-operation batch codes are mapped once, in the operations layer (`apps/cli/src/operations.ts:372-386`), so `memhtml apply` and `memory_write_batch` cannot report different codes for one refused operation.
 
 ## 4. The tool surface
 
-The MCP tools are built with `Tool.make` and collected by `Toolkit.make` (`apps/mcp/src/tools.ts:712`). The [MCP tools reference](/reference/mcp-tools/) lists them, generated from that registry, so it states how many there are and this page does not. Two resources come with them: `memhtml://file/{path}` for citation-grade drill-down and `memhtml://at/{commit}/{path}` for the same drill-down at a commit, whose bytes cannot move (`apps/mcp/src/resources.ts`).
+The MCP tools are built with `Tool.make` and collected by `Toolkit.make` (`apps/mcp/src/tools.ts:721`). The [MCP tools reference](/reference/mcp-tools/) lists them, generated from that registry, so it states how many there are and this page does not. Two resources come with them: `memhtml://file/{path}` for citation-grade drill-down and `memhtml://at/{commit}/{path}` for the same drill-down at a commit, whose bytes cannot move (`apps/mcp/src/resources.ts`).
 
 Curation stays off the tool surface, because it is an operator action that produces a branch for a human to review.
 
 Two things about the server come from the transport and the SDK rather than from a preference:
 
 - `Logger.LogToStderr` is mandatory (`apps/mcp/src/server.ts:20-22`). The default logger writes to stdout, and stdout here is the newline-delimited JSON-RPC stream, so one log line corrupts the frame a client is mid-parse on.
-- Tool descriptions are the only server-level channel for guidance (`apps/mcp/src/server.ts:24-38`). MCP defines an `instructions` field on the initialize response and the SDK's handler does not emit it, so `BATCH_GUIDANCE` and `ARTICLE_HTML_CONTRACT` are shared constants appended to every description they apply to (`apps/mcp/src/tools.ts:124`, `apps/mcp/src/tools.ts:155`). That is why they read as prose addressed to an agent rather than as notes to a maintainer.
+- Tool descriptions are the only server-level channel for guidance (`apps/mcp/src/server.ts:24-38`). MCP defines an `instructions` field on the initialize response and the SDK's handler does not emit it, so `BATCH_GUIDANCE` and `ARTICLE_HTML_CONTRACT` are shared constants appended to every description they apply to (`apps/mcp/src/tools.ts:124`, `apps/mcp/src/tools.ts:159`). That is why they read as prose addressed to an agent rather than as notes to a maintainer.
 
 ## 5. A declared failure schema is what lets prose through
 
@@ -52,7 +52,7 @@ Code, message, and suggestions fold into `.message` at construction, because MCP
 
 ## 6. Guidance and the sugar commands
 
-The CLI's own guidance lives in the manifest's `guide` blocks (`apps/cli/src/commands.ts:840`) and is rendered into `AGENTS.md` by the same generator (`apps/cli/src/agents-doc.ts:52`), so the document and the live answer cannot disagree.
+The CLI's own guidance lives in the manifest's `guide` blocks (`apps/cli/src/commands.ts:858`) and is rendered into `AGENTS.md` by the same generator (`apps/cli/src/agents-doc.ts:52`), so the document and the live answer cannot disagree.
 
 The `memhtml task` family is sugar over the same use cases. `task add` is `write --type task`. `task status` edits one head meta and routes `done` through the archive machinery. `task list` is a direct indexed scan that never enters retrieval, backed by a partial index over live tasks (`packages/index/migrations/0008_tasks.sql:136-137`).
 

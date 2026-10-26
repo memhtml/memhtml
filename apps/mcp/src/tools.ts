@@ -150,9 +150,17 @@ const RETRIEVES = () => [Retrieval, DatabaseService, Roots]
  * the closed vocabulary, and the `<time datetime>` rule. That last one is a CONSEQUENCE the caller
  * has to know about rather than a constraint: the first such element becomes `files.event_at`,
  * and the recency arm ranks episodic memories by it rather than by write time.
+ *
+ * It also states the one rule `body` carries, the block-tag refusal, because the caller choosing
+ * between the two parameters is the one who needs it: markup sent as prose is refused rather than
+ * escaped into the claim, and the refusal names `article_html`.
  */
 const ARTICLE_HTML_CONTRACT =
   "Supply EXACTLY ONE of `body` or `article_html`. Both or neither is refused. " +
+  "`body` is prose and is stored as escaped text, so a body holding an HTML block tag (<p>, <ul>, <li>, <dl>, <table>, <h2> and the like, raw or escaped as &lt;p&gt;) " +
+  "outside code is refused with ERR_INVALID_FLAG: send markup as `article_html`. A tag the memory discusses counts as code in backticks that open and close on one line, " +
+  "or in a fenced block that is a paragraph of its own, set off by blank lines, once the body's first sentence has ended with . ! or ? and then a space or a line break; " +
+  "until it ends, that sentence is the claim, blank lines and fences included. " +
   "`article_html` is raw <article> inner markup used verbatim, and the caller owns the format: exactly one <mark>, " +
   "inside the first <p> or the first <li>, and never inside <aside> or <details>; only elements from the closed " +
   "vocabulary in docs/format.md; no class attribute, no style attribute, no <script>, no event handlers. " +
@@ -685,6 +693,7 @@ const MemoryRecall = Tool.make("memory_recall", {
 const MemoryCorrect = Tool.make("memory_correct", {
   description:
     "Supersede a memory: write the corrected version and archive the target in ONE commit, linked in both directions. Never edits in place. The superseded memory stays readable under archive/. " +
+    "A target_path already under archive/, or one that is not a usable memory path, is REFUSED with ERR_INVALID_MEMORY and nothing is written; memory_resolve follows an archived path to whatever superseded it. " +
     ARTICLE_HTML_CONTRACT,
   dependencies: WRITES(),
   parameters: Schema.Struct({
@@ -876,7 +885,8 @@ const MemoryResolve = Tool.make("memory_resolve", {
 
 const MemoryArchive = Tool.make("memory_archive", {
   description:
-    "Soft-evict a memory: `git mv` into archive/<YYYY>/ (archive/<YYYY>.<n>/ when an earlier archiving holds that slot) with the archive stamps. Nothing is ever deleted, and `git log --follow` reads straight through.",
+    "Soft-evict a memory: `git mv` into archive/<YYYY>/ (archive/<YYYY>.<n>/ when an earlier archiving holds that slot) with the archive stamps. Nothing is ever deleted, and `git log --follow` reads straight through. " +
+    "A path already under archive/, or one that is not a usable memory path, is REFUSED with ERR_INVALID_MEMORY and nothing moves.",
   dependencies: [Store, Indexer],
   parameters: Schema.Struct({
     path: MemoryPath,

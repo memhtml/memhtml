@@ -20,11 +20,11 @@ Every CLI call writes one JSON envelope carrying `apiVersion`, a `type` discrimi
 
 Failures carry a stable `code` from the append-only `ERROR_CODES` list plus `suggestions`, so an agent branches on the code instead of the prose (`apps/cli/src/envelope.ts:98-110`). Exit codes are fixed at 0 for success, 2 for usage, and 1 for runtime (`apps/cli/src/envelope.ts:165-168`).
 
-`memhtml manifest` returns the whole command surface without building the app layer, so it answers on a machine with no root, no database, and no credentials (`apps/cli/src/run.ts:1728-1743`). At 0.16.0 it lists 57 commands, the 53 response types they answer, 25 error codes, and 25 environment variables (`buildManifest` at `apps/cli/src/commands.ts:2061-2089`). `--dense` drops nulls and indentation to save context tokens (`apps/cli/src/envelope.ts:218-235`).
+`memhtml manifest` returns the whole command surface without building the app layer, so it answers on a machine with no root, no database, and no credentials (`apps/cli/src/run.ts:1728-1743`). At 0.16.0 it lists 57 commands, the 53 response types they answer, 25 error codes, and 25 environment variables (`buildManifest` at `apps/cli/src/commands.ts:2088-2116`). `--dense` drops nulls and indentation to save context tokens (`apps/cli/src/envelope.ts:218-235`).
 
 `AGENTS.md` is generated from the same `COMMANDS` array that drives argument parsing, so the doc stays in step with the binary (`apps/cli/src/agents-doc.ts:11-16`).
 
-The MCP server exposes 15 tools and 2 resources over stdio (`apps/mcp/src/tools.ts:1049-1065`, `apps/mcp/src/resources.ts:323`, `apps/mcp/src/server.ts:40-63`). Curation is deliberately absent from it, because a curation run produces a branch a human is expected to read (`apps/mcp/src/index.ts:4-5`). `memory_search` and `memory_recall` ask the head server first and fall back to the SQLite index. The three tools that create a record obey the store's `v1Doors` mode (`apps/mcp/src/handlers.ts:353-359`, `apps/mcp/src/handlers.ts:604-612`).
+The MCP server exposes 15 tools and 2 resources over stdio (`apps/mcp/src/tools.ts:1059-1075`, `apps/mcp/src/resources.ts:323`, `apps/mcp/src/server.ts:40-63`). Curation is deliberately absent from it, because a curation run produces a branch a human is expected to read (`apps/mcp/src/index.ts:4-5`). `memory_search` and `memory_recall` ask the head server first and fall back to the SQLite index. The three tools that create a record obey the store's `v1Doors` mode (`apps/mcp/src/handlers.ts:353-359`, `apps/mcp/src/handlers.ts:604-612`).
 
 ## How the pieces fit
 

@@ -504,22 +504,19 @@ export const readScript = async (file: string): Promise<string | Failure> => {
  * The full sha of the commit `requested` names, so the worktree and the report carry the same
  * 40-character commit whether the caller passed a sha, an abbreviation, or a ref.
  *
- * `--end-of-options` keeps git from reading the value as an option even when a caller reaches
- * this function without the CLI's flag check. A value that names no commit is the runtime
- * failing, so it answers `InvalidMemory` (exit 1), the same as a sha the repository lacks.
+ * `GitShape.revParse` passes the value after `--end-of-options`, which keeps git from reading it as
+ * an option even when a caller reaches this function without the CLI's flag check. A value that
+ * names no commit is the runtime failing, so it answers `InvalidMemory` (exit 1), the same as a sha
+ * the repository lacks.
  */
 const resolveCommit = (
   git: ReturnType<typeof makeGit>,
   requested: string,
   root: string
 ): Effect.Effect<string, InvalidMemory | GitFailure> =>
-  git.run(["rev-parse", "--verify", "--quiet", "--end-of-options", `${requested}^{commit}`]).pipe(
-    Effect.map((out) => out.trim()),
-    Effect.catchTag("GitFailure", (failure) =>
-      failure.exitCode === 1 ? Effect.succeed("") : Effect.fail(failure)
-    ),
+  git.revParse(requested).pipe(
     Effect.flatMap((sha) =>
-      /^[0-9a-f]{40}$/.test(sha)
+      sha !== null
         ? Effect.succeed(sha)
         : Effect.fail(
             InvalidMemory.make({

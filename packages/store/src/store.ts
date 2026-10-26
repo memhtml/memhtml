@@ -10,6 +10,7 @@ import {
   WriteConflict
 } from "@memhtml/contracts/errors"
 import {
+  activeRecordPathViolation,
   archiveSlotFor,
   isValidMemoryPath,
   memoryPathFor,
@@ -550,6 +551,23 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
     })
 
   /**
+   * Refuse a source an archive move cannot take, with `InvalidMemory` carrying
+   * `activeRecordPathViolation`'s reason: a path already under `archive/`, or one that is not a usable
+   * memory path, such as a `.` or `..` spelling of an archived file.
+   *
+   * Archive, correct and supersede each ask this before they read their source, so a refusal opens no
+   * journal: the compensation's `git reset -- <paths>` would otherwise unstage whatever the caller had
+   * staged on those paths. It also comes before the store's own read of the source, so that read
+   * never follows a `..` spelling. A caller that reads the path itself first, as the CLI's `correct`
+   * and `task status` do, has already read it by then.
+   */
+  const archiveSourceRefusal = (path: string): Effect.Effect<void, InvalidMemory> =>
+    Effect.suspend(() => {
+      const reason = activeRecordPathViolation(path)
+      return reason === undefined ? Effect.void : Effect.fail(InvalidMemory.make({ reason }))
+    })
+
+  /**
    * Run the steps that touch disk and git with their compensation attached.
    *
    * `Effect.onError` rather than `Effect.tapError`, because not every cause that leaves a half-written
@@ -595,6 +613,11 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
    * Move a file to its archive slot ({@link archiveSlotOf}) with the archive stamps applied, staged
    * but not committed. The caller commits, which is what lets a correction put the new file and the
    * archived one in one commit.
+   *
+   * A source already in the archive bucket, or one that is not a usable memory path, is refused
+   * before anything moves ({@link archiveSourceRefusal}). The slot mirrors whatever path it is
+   * given, so archiving one would land under `archive/<YYYY>/archive/`. Each caller asks the same
+   * question before its journal opens; this one is the backstop for a caller that does not.
    */
   const stageArchive = (
     path: string,
@@ -603,6 +626,7 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
   ): Effect.Effect<string, StoreError> =>
     Effect.gen(function* () {
       const normalized = normalizePath(path)
+      yield* archiveSourceRefusal(normalized)
       const html = yield* readRaw(normalized)
       const target = yield* archiveSlotOf(normalized, at)
 
@@ -1069,6 +1093,8 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
       const millis = yield* now
       const at = isoSecond(millis)
       const normalizedTarget = normalizePath(target)
+      // A target this correction could not archive is refused before anything else is asked of it.
+      yield* archiveSourceRefusal(normalizedTarget)
       // Read first: a correction of a path with no file behind it must fail before anything is
       // written, or the tree gains an orphan superseding file with nothing to supersede.
       const targetHtml = yield* readRaw(normalizedTarget)
@@ -1164,6 +1190,7 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
       const millis = yield* now
       const at = isoSecond(millis)
       const normalized = normalizePath(path)
+      yield* archiveSourceRefusal(normalized)
       // Read first, so a path with no file fails before `stageArchive` makes a year partition — and
       // so the journal below has the bytes an interrupted move has to put back.
       yield* readRaw(normalized)
@@ -1217,6 +1244,8 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
           winnerHtml.set(pair.winner, html)
           winnerValidFrom.set(pair.winner, yield* validFromOf(html, at))
         }
+        // Every loser is judged here, with the reads, so a refused pair three stages nothing.
+        yield* archiveSourceRefusal(pair.loser)
         loserHtml.set(pair.loser, yield* readRaw(pair.loser))
       }
 

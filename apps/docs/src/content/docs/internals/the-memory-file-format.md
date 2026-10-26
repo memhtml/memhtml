@@ -58,7 +58,7 @@ The git blob sha of the whole file is a second hash, and it is the indexer's key
 
 ## 4. Head edits go through byte-splice editors
 
-`setMeta` (`packages/html/src/editors.ts:154`), `addLink` (`packages/html/src/editors.ts:216`), and `readMeta` (`packages/html/src/editors.ts:263`) edit bytes directly instead of parsing the file and serializing it again. A serializer round trip drops a newline inside a `<pre>`, which would move the content hash of every file a bookkeeping pass touched (`packages/store/src/store.ts:421-423`).
+`setMeta` (`packages/html/src/editors.ts:154`), `addLink` (`packages/html/src/editors.ts:216`), and `readMeta` (`packages/html/src/editors.ts:263`) edit bytes directly instead of parsing the file and serializing it again. A serializer round trip drops a newline inside a `<pre>`, which would move the content hash of every file a bookkeeping pass touched (`packages/store/src/store.ts:422-424`).
 
 ## 5. The checker collects every violation
 
@@ -81,7 +81,7 @@ A drop is only safe where the `files` table owns a default, and an instant has n
 
 `renderTemplate` (`packages/html/src/template.ts:203`) places the `<mark>` claim itself, so the ordinary prose write path cannot produce a file that breaks the claim-leads-the-article rule. The `articleHtml` surface passes a caller's markup through unchanged (`packages/html/src/template.ts:120-123`), which is what that surface is for: it is the only route by which an agent can write `<time datetime>`, and so the only route to `files.event_at`.
 
-The store therefore runs `checkMemory` (`packages/html/src/parse.ts:349`) over the rendered bytes and refuses before writing anything (`packages/store/src/store.ts:459-466`). Without that check a bad file would land in a commit and the indexer would then decline to project it, leaving a memory present in the tree, absent from every search, and visible only as a log line.
+The store therefore runs `checkMemory` (`packages/html/src/parse.ts:349`) over the rendered bytes and refuses before writing anything (`packages/store/src/store.ts:460-467`). Without that check a bad file would land in a commit and the indexer would then decline to project it, leaving a memory present in the tree, absent from every search, and visible only as a log line.
 
 A batch write gets the same treatment. Each operation goes through render-then-reparse individually, so one bad operation out of twenty is refused with its own list of violations, and in the default atomic mode the whole batch is refused before any file exists.
 

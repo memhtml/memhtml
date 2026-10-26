@@ -2,7 +2,7 @@
 
 Describes the source at 0.16.0 (2026-10-18). Citations are `path:line` into that tree.
 
-This repository ships an MCP server, `memhtml-mcp`, that speaks MCP over stdio. It publishes fifteen tools and two resource templates (`apps/mcp/src/tools.ts:1049-1065`, `apps/mcp/src/resources.ts:322-326`). A coding agent calls it to operate a memhtml root.
+This repository ships an MCP server, `memhtml-mcp`, that speaks MCP over stdio. It publishes fifteen tools and two resource templates (`apps/mcp/src/tools.ts:1059-1075`, `apps/mcp/src/resources.ts:322-326`). A coding agent calls it to operate a memhtml root.
 
 **Removed in 0.16.** The resource `memhtml://sleep/{run-id}`, the `memory_status` field `last_sleep`, and `memory_write_batch`'s `consolidate` parameter with its per-op `consolidated_into` and `superseded_path` fields and its `summary.consolidated` count went away with the v1 sleep pipeline and the consolidator. Curation runs on a branch through `memhtml curate` (see `docs/design.md` §23). The operator's migration guide is at https://memhtml.github.io/learn/operations/migrate-to-0-16/.
 
@@ -22,7 +22,7 @@ Every tool binds its handler by name in `MemhtmlToolkit.toLayer({...})` (`apps/m
 
 Every tool declares `failure: ToolFailure` (`apps/mcp/src/failure.ts:34-41`). The declaration puts a tool's failures on the `McpServer` branch that passes the message text through. Without it, the failure schema defaults to `Schema.Never`, and every failure, typed domain errors included, reaches the caller as a generic internal-error sentence (`apps/mcp/src/tools.ts:47-55`). `failureMode` stays at its `"error"` default, because `"return"` would fold a failure into the success payload where no MCP client looks for it.
 
-`tools/list` publishes the tools in toolkit order: `memory_write`, `memory_write_batch`, `memory_read`, `memory_search`, `memory_recall`, `memory_correct`, `memory_link`, `memory_neighbors`, `memory_resolve`, `memory_archive`, `memory_reinforce`, `memory_list`, `trace_search`, `trace_links`, `memory_status`. The batch tool sits second, so the tool `memory_write`'s description points at is the next entry an agent reads (`apps/mcp/src/tools.ts:1036-1048`). The entries below are alphabetical.
+`tools/list` publishes the tools in toolkit order: `memory_write`, `memory_write_batch`, `memory_read`, `memory_search`, `memory_recall`, `memory_correct`, `memory_link`, `memory_neighbors`, `memory_resolve`, `memory_archive`, `memory_reinforce`, `memory_list`, `trace_search`, `trace_links`, `memory_status`. The batch tool sits second, so the tool `memory_write`'s description points at is the next entry an agent reads (`apps/mcp/src/tools.ts:1046-1058`). The entries below are alphabetical.
 
 The toolkit has no session, head, or curation tool. Curation is an operator action that produces a branch a human reads, so no tool fires it (`apps/mcp/src/tools.ts:31-34`). Two v2 behaviors reach the tools anyway. The store's policy file can close the three tools that create a record (see [The store policy and the record-creating tools](#the-store-policy-and-the-record-creating-tools)). `memory_search` and `memory_recall` ask the head server before the index (see [Search and recall on the head server](#search-and-recall-on-the-head-server)).
 
@@ -36,7 +36,7 @@ The toolkit has no session, head, or curation tool. Curation is an operator acti
 
 No tool sets strict mode. Every published `inputSchema` except `memory_status`'s allows additional properties, and the tool ignores a key it doesn't declare. A `path` or `memory_type` sent to `memory_correct`, for example, has no effect.
 
-Each entry quotes its registration block verbatim, with two mechanical elisions. The value of every `description` property becomes `/* … */`. The write tools' descriptions run to several paragraphs built from shared constants (`apps/mcp/src/tools.ts:154-290`). Every doc comment that spans more than one line inside the block becomes `// …` at its own indentation. One-line doc comments and `//` line comments are kept. Nothing else is altered, and each entry's source line points at the full block.
+Each entry quotes its registration block verbatim, with two mechanical elisions. The value of every `description` property becomes `/* … */`. The write tools' descriptions run to several paragraphs built from shared constants (`apps/mcp/src/tools.ts:158-298`). Every doc comment that spans more than one line inside the block becomes `// …` at its own indentation. One-line doc comments and `//` line comments are kept. Nothing else is altered, and each entry's source line points at the full block.
 
 ### How a call fails
 
@@ -64,23 +64,23 @@ These are the codes a tool can reach, and the suggestions each one carries (`app
 | `ERR_STORE_CONFIG`               | report to the operator, who has to fix `memhtml.config.json`; keep working with `memory_search`, `memory_read`, and `memory_link`                       |
 | `ERR_INDEX_STALE`, `ERR_UNKNOWN` | none                                                                                                                                                    |
 
-Two suggestion texts don't fit every case they reach. The `ERR_INVALID_MEMORY` text says the store refused "at the render gate", but the same text follows a `body`/`article_html` refusal, a self-link, and a `trace_links` call with neither key. The `ERR_WRITE_CONFLICT` text says to retry the write, but a retry at the same occupied path conflicts again. `memory_correct` is the replacement (`apps/mcp/src/tools.ts:191-192`).
+One suggestion text doesn't fit every case it reaches. The `ERR_WRITE_CONFLICT` text says to retry the write, but a retry at the same occupied path conflicts again. `memory_correct` is the replacement (`apps/mcp/src/tools.ts:199-200`).
 
-`mcpSuggestionsFor` also has arms for `ERR_DUPLICATE_CONTENT`, `ERR_MODEL_UNAVAILABLE`, `ERR_DIRTY_TREE`, and `ERR_DISCRIMINATION_FAILED`. No tool or resource raises those codes at this tree. A duplicate is a successful dedupe, and an embedder or extractor failure degrades the call instead of failing it. Only the CLI's `curate merge` raises a dirty-tree refusal (`apps/cli/src/v2.ts:1741-1743`).
+`mcpSuggestionsFor` also has arms for `ERR_DUPLICATE_CONTENT`, `ERR_MODEL_UNAVAILABLE`, `ERR_DIRTY_TREE`, and `ERR_DISCRIMINATION_FAILED`. No tool or resource raises those codes at this tree. A duplicate is a successful dedupe, and an embedder or extractor failure degrades the call instead of failing it. Only the CLI's `curate merge` raises a dirty-tree refusal (`apps/cli/src/v2.ts:2004-2006`).
 
 ### What a failed write leaves behind
 
 The five write tools are `memory_write`, `memory_write_batch`, `memory_correct`, `memory_link`, and `memory_archive`. The first three create a record, and each of them runs the store-policy guard before anything else. A refusal there reads one file and touches nothing (see [The store policy and the record-creating tools](#the-store-policy-and-the-record-creating-tools)). Past the guard, each write fails in one of three phases, and the phase decides what's left behind.
 
-1. Validation runs before anything touches disk. For a new memory, that's the strict-path gate, the render gate, the dedupe lookup, and the path claim (`packages/store/src/store.ts:737-769`). For a correction, a link, or an archive, it's the check that the target or both endpoints exist. A refusal here leaves the tree byte-identical.
-2. The write, the stage, and the commit run under a journal. On a failure or an interruption, the store unstages every path it touched and puts back each one's earlier bytes (`packages/store/src/store.ts:490-577`). If that restore fails too, the failure is logged and the tree is left dirty.
-3. After the commit, the operation calls `reindex` (`apps/cli/src/operations.ts:267-271`). That step can fail with `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` after the commit has landed. The call reports a failure, but the memory is in git.
+1. Validation runs before anything touches disk. For a new memory, that's the strict-path gate, the render gate, the dedupe lookup, and the path claim (`packages/store/src/store.ts:761-793`). For a correction, a link, or an archive, it's the check that the target or both endpoints exist. A refusal here leaves the tree byte-identical.
+2. The write, the stage, and the commit run under a journal. On a failure or an interruption, the store unstages every path it touched and puts back each one's earlier bytes (`packages/store/src/store.ts:491-595`). If that restore fails too, the failure is logged and the tree is left dirty.
+3. After the commit, the operation calls `reindex` (`apps/cli/src/operations.ts:272-276`). That step can fail with `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` after the commit has landed. The call reports a failure, but the memory is in git.
 
 A blind retry after a phase-3 failure can store the memory twice. Dedupe reads the index through `activePathForHash`, and the index hasn't caught up with the commit (`packages/index/src/traces-persist.ts:196-203`). `memory_status` shows the gap as `index_fresh: false`.
 
-The commit is a plain `git commit -m`, so it also commits any path that was already staged in the root (`packages/store/src/git.ts:470-489`).
+The commit is a plain `git commit -m`, so it also commits any path that was already staged in the root (`packages/store/src/git.ts:517-536`).
 
-Writes in one process take turns behind one permit, `oneWriterAtATime`, and reads don't wait for it. Inside the permit, each write holds the checkout lock, the directory `.memhtml/checkout.lock`, for the whole operation (`packages/store/src/store.ts:1413-1440`). `git commit` takes the same lock as a backstop (`packages/store/src/git.ts:470-473`). The lock is shared across processes, so a CLI command beside the server and a session commit in any process take turns with the server's writes. A write that waits 15 s for the lock fails with `ERR_STORAGE` (`checkout.locked`) before anything is written (`packages/store/src/checkout-lock.ts:31-44`). `docs/design.md` §17 gives the lock's timings.
+Writes in one process take turns behind one permit, `oneWriterAtATime`, and reads don't wait for it. Inside the permit, each write holds the checkout lock, the directory `.memhtml/checkout.lock`, for the whole operation (`packages/store/src/store.ts:1442-1469`). `git commit` takes the same lock as a backstop (`packages/store/src/git.ts:517-520`). The lock is shared across processes, so a CLI command beside the server and a session commit in any process take turns with the server's writes. A write that waits 15 s for the lock fails with `ERR_STORAGE` (`checkout.locked`) before anything is written (`packages/store/src/checkout-lock.ts:31-44`). `docs/design.md` §17 gives the lock's timings.
 
 ### The store policy and the record-creating tools
 
@@ -275,7 +275,7 @@ Returns one memory's readable text by path. A client that holds a path from `mem
 
 A missing path fails the read, and the resource never answers empty. A citation that silently resolves to nothing is worse than one that says the file is gone.
 
-This read bumps salience through the same `readMemory` that `memory_read` calls (`apps/cli/src/operations.ts:968-975`). The caller named one path, which is a chosen open, so the access plane shouldn't be able to tell the two surfaces apart. A failed bump is logged and doesn't fail the read.
+This read bumps salience through the same `readMemory` that `memory_read` calls (`apps/cli/src/operations.ts:973-980`). The caller named one path, which is a chosen open, so the access plane shouldn't be able to tell the two surfaces apart. A failed bump is logged and doesn't fail the read.
 
 **Failure:** `ERR_PATH_NOT_FOUND` (`-32602`). A path the gate refuses gets the resource's own suggestions, which are the template form, `memory_resolve`, then `memory_search` or `memory_list` (`apps/mcp/src/resources.ts:159-164`). A missing file gets the tool suggestions, which are `memory_resolve`, `memory_search`, then `memory_list`. A file that doesn't parse fails with `ERR_INVALID_MEMORY`, a read error with `ERR_STORAGE`, and a defect with `ERR_UNKNOWN`, all `-32603`.
 
@@ -301,7 +301,7 @@ const MemoryArchive = Tool.make("memory_archive", {
 
 Soft-evicts a memory with a `git mv` into `archive/<YYYY>/` and the archive stamps, or into `archive/<YYYY>.<n>/`, the year's first free generation, when an earlier archiving holds that slot. Nothing is deleted, and `git log --follow` reads straight through the move.
 
-**Input:** `path`, the memory to evict, and `reason`, both required. `reason` is recorded only in the commit subject, after the path (`packages/store/src/store.ts:1182`). An archive path isn't refused. Archiving one again nests it under a second `archive/<YYYY>/`.
+**Input:** `path`, the memory to evict, and `reason`, both required. `reason` is recorded only in the commit subject, after the path (`packages/store/src/store.ts:1209`). A `path` under `archive/`, or one that isn't a usable memory path, such as a `./` or `../` spelling of an archived file, is refused before the store reads it, because archiving it again would nest it under `archive/<YYYY>/archive/` (`archiveSourceRefusal` at `packages/store/src/store.ts:564`).
 
 No store policy closes this tool, because it edits a record that already exists.
 
@@ -309,11 +309,12 @@ No store policy closes this tool, because it edits a record that already exists.
 
 **Failure:**
 
-- `ERR_PATH_NOT_FOUND` when no file is at `path`, found before anything is written (`packages/store/src/store.ts:1167-1169`).
-- `ERR_GIT` or `ERR_STORAGE` from the move or the commit. The journal, `compensated`, puts the file back at its original path (`packages/store/src/store.ts:1171-1185`).
-- `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` from `reindex`, after the archive commit has landed (`apps/cli/src/operations.ts:1121`).
+- `ERR_INVALID_MEMORY` when `path` is under `archive/` or isn't a usable memory path. No journal opens, so nothing moves and a change staged on the path stays staged (`packages/store/src/store.ts:1193`).
+- `ERR_PATH_NOT_FOUND` when no file is at `path`, found before anything is written (`packages/store/src/store.ts:1194-1196`).
+- `ERR_GIT` or `ERR_STORAGE` from the move or the commit. The journal, `compensated`, puts the file back at its original path (`packages/store/src/store.ts:1198-1212`).
+- `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` from `reindex`, after the archive commit has landed (`apps/cli/src/operations.ts:1126`).
 
-Source: `MemoryArchive` at `apps/mcp/src/tools.ts:877-890`, its handler at `apps/mcp/src/handlers.ts:792-798`, and `archiveMemory` at `apps/cli/src/operations.ts:1115-1123`.
+Source: `MemoryArchive` at `apps/mcp/src/tools.ts:886-900`, its handler at `apps/mcp/src/handlers.ts:792-798`, and `archiveMemory` at `apps/cli/src/operations.ts:1120-1128`.
 
 ## `memory_correct`
 
@@ -344,13 +345,13 @@ Supersedes a memory. It writes the corrected version and archives the target in 
 
 **Input:** `target_path`, `title`, and `reason` are required, plus exactly one of `body` or `article_html`, and an optional `session_id`. The handler's `authored` helper enforces the one-of rule, and a blank string counts as absent (`apps/mcp/src/handlers.ts:155-179`). The schema doesn't enforce it. A schema union would publish two near-identical parameter shapes and would name neither branch's problem on a decode failure (`apps/mcp/src/handlers.ts:119-127`).
 
-The correction inherits the target's type, `memoryType`, and nothing else (`apps/cli/src/operations.ts:1065-1067`). It doesn't inherit the workspace, tags, entities, importance, or confidence. `memory_correct` takes no `path`, and the operation passes no placement fields, so placement comes from the type and the new title alone (`apps/cli/src/operations.ts:1070-1083`). A correction of `projects/oncall/x.html` can therefore land in `areas/inbox/`.
+The correction inherits the target's type, `memoryType`, and nothing else (`apps/cli/src/operations.ts:1070-1072`). It doesn't inherit the workspace, tags, entities, importance, or confidence. `memory_correct` takes no `path`, and the operation passes no placement fields, so placement comes from the type and the new title alone (`apps/cli/src/operations.ts:1075-1088`). A correction of `projects/oncall/x.html` can therefore land in `areas/inbox/`.
 
-A correction never lands at the target's own path. The target is still on disk when `freePathFor` chooses the new path, so a same-title correction in the same directory takes the `-2` suffix (`packages/store/src/store.ts:432-472`). The store's `vacating` exemption covers only an explicit path, and `CorrectParams` has no path to pass (`apps/cli/src/operations.ts:1037-1046`, `packages/store/src/store.ts:1088-1106`).
+A correction never lands at the target's own path. The target is still on disk when `freePathFor` chooses the new path, so a same-title correction in the same directory takes the `-2` suffix (`packages/store/src/store.ts:433-473`). The store's `vacating` exemption covers only an explicit path, and `CorrectParams` has no path to pass (`apps/cli/src/operations.ts:1042-1051`, `packages/store/src/store.ts:1114-1132`).
 
-`reason` is required but not recorded. The store accepts it and uses it nowhere, and `commitSubject` builds the commit subject from the title (`packages/store/src/store.ts:1147`).
+`reason` is required but not recorded. The store accepts it and uses it nowhere, and `commitSubject` builds the commit subject from the title (`packages/store/src/store.ts:1173`).
 
-The new file gets `memhtml-valid-from` and a `supersedes` link to the target's archive path. The archived target gets `memhtml-superseded-by`, a valid-until stamp, and the archive stamps (`packages/store/src/store.ts:1107-1143`).
+The new file gets `memhtml-valid-from` and a `supersedes` link to the target's archive path. The archived target gets `memhtml-superseded-by`, a valid-until stamp, and the archive stamps (`packages/store/src/store.ts:1133-1169`).
 
 The store policy can close this tool, because it creates a record (see [The store policy and the record-creating tools](#the-store-policy-and-the-record-creating-tools)).
 
@@ -359,12 +360,12 @@ The store policy can close this tool, because it creates a record (see [The stor
 **Failure:**
 
 - `ERR_SESSION_BOUND`, `ERR_V1_DOOR_CLOSED`, or `ERR_STORE_CONFIG` from `guardV1Door`, before anything else runs (`apps/mcp/src/handlers.ts:689`).
-- `ERR_INVALID_MEMORY` before anything is written, for both or neither of `body` and `article_html`, a target that doesn't parse, or markup the render gate, `renderChecked`, refuses (`packages/store/src/store.ts:1078`).
-- `ERR_PATH_NOT_FOUND` before anything is written, when the first `readMemory` finds no file at `target_path` (`apps/cli/src/operations.ts:1065`).
-- `ERR_GIT` or `ERR_STORAGE` from the move, the write, or the commit. The journal, `compensated`, puts the target back and removes the new file (`packages/store/src/store.ts:1116-1152`).
-- `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` from `reindex`, after the commit has landed (`apps/cli/src/operations.ts:1087`).
+- `ERR_INVALID_MEMORY` before anything is written, for both or neither of `body` and `article_html`, a target that doesn't parse, a `target_path` under `archive/` or not a usable memory path (`packages/store/src/store.ts:1097`), or markup the render gate, `renderChecked`, refuses (`packages/store/src/store.ts:1104`).
+- `ERR_PATH_NOT_FOUND` before anything is written, when the first `readMemory` finds no file at `target_path` (`apps/cli/src/operations.ts:1070`).
+- `ERR_GIT` or `ERR_STORAGE` from the move, the write, or the commit. The journal, `compensated`, puts the target back and removes the new file (`packages/store/src/store.ts:1142-1178`).
+- `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` from `reindex`, after the commit has landed (`apps/cli/src/operations.ts:1092`).
 
-Source: `MemoryCorrect` at `apps/mcp/src/tools.ts:685-706`, its handler at `apps/mcp/src/handlers.ts:686-711`, and `correctMemory` at `apps/cli/src/operations.ts:1062-1090`.
+Source: `MemoryCorrect` at `apps/mcp/src/tools.ts:693-715`, its handler at `apps/mcp/src/handlers.ts:686-711`, and `correctMemory` at `apps/cli/src/operations.ts:1067-1095`.
 
 ## `memory_link`
 
@@ -400,12 +401,12 @@ No store policy closes this tool, because it edits a record that already exists.
 
 **Failure:**
 
-- `ERR_INVALID_MEMORY` when `src_path` and `dst_path` are the same, or when `requireEndpointClasses` finds a task at either end, before anything is written (`packages/store/src/store.ts:1295-1327`, `packages/store/src/store.ts:1347-1351`).
-- `ERR_PATH_NOT_FOUND` when `typeOf` finds no file at either endpoint, before anything is written (`packages/store/src/store.ts:1336-1337`).
-- `ERR_GIT` or `ERR_STORAGE` from the write or the commit. The journal, `compensated`, restores the source file's earlier bytes (`packages/store/src/store.ts:1361-1372`).
-- `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` from `reindex`, after the commit has landed. A re-link makes no commit and skips the reindex (`apps/cli/src/operations.ts:1105-1107`).
+- `ERR_INVALID_MEMORY` when `src_path` and `dst_path` are the same, or when `requireEndpointClasses` finds a task at either end, before anything is written (`packages/store/src/store.ts:1324-1356`, `packages/store/src/store.ts:1376-1380`).
+- `ERR_PATH_NOT_FOUND` when `typeOf` finds no file at either endpoint, before anything is written (`packages/store/src/store.ts:1365-1366`).
+- `ERR_GIT` or `ERR_STORAGE` from the write or the commit. The journal, `compensated`, restores the source file's earlier bytes (`packages/store/src/store.ts:1390-1401`).
+- `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` from `reindex`, after the commit has landed. A re-link makes no commit and skips the reindex (`apps/cli/src/operations.ts:1110-1112`).
 
-Source: `MemoryLink` at `apps/mcp/src/tools.ts:708-725`, its handler at `apps/mcp/src/handlers.ts:713-727`, and `linkMemories` at `apps/cli/src/operations.ts:1099-1109`.
+Source: `MemoryLink` at `apps/mcp/src/tools.ts:717-734`, its handler at `apps/mcp/src/handlers.ts:713-727`, and `linkMemories` at `apps/cli/src/operations.ts:1104-1114`.
 
 ## `memory_list`
 
@@ -445,26 +446,26 @@ const MemoryList = Tool.make("memory_list", {
 })
 ```
 
-Pages through the corpus by facet. `next_cursor` is a keyset on the path, so a page stays correct while a curator archives files (`apps/mcp/src/tools.ts:917`, `apps/cli/src/operations.ts:1659-1666`). It reads the index only.
+Pages through the corpus by facet. `next_cursor` is a keyset on the path, so a page stays correct while a curator archives files (`apps/mcp/src/tools.ts:927`, `apps/cli/src/operations.ts:1664-1671`). It reads the index only.
 
 **Input:** every parameter is optional, and they combine with AND.
 
 - `memory_type`: one of the nine writable types. Tasks are listed like any other type.
 - `workspace`: an exact match.
 - `tag`: one tag, an exact match.
-- `entity`: one `type:name` reference, trimmed and matched case-insensitively, the same spelling `memory_search` accepts (`apps/cli/src/operations.ts:1693-1703`).
+- `entity`: one `type:name` reference, trimmed and matched case-insensitively, the same spelling `memory_search` accepts (`apps/cli/src/operations.ts:1698-1708`).
 - `facets`: `name=value` specs over the article's `<dl>` pairs, composed exactly as `memory_search` composes them. A malformed spec is dropped.
 - `para`: one of `projects`, `areas`, `resources`, or `archive` (`packages/contracts/src/types.ts:63`).
-- `limit`: clamped to 1..500, default 50 (`apps/cli/src/operations.ts:1669`).
+- `limit`: clamped to 1..500, default 50 (`apps/cli/src/operations.ts:1674`).
 - `cursor`: the previous page's `next_cursor`.
 
-Archived files are never listed. The handler's `listMemories` call doesn't pass `includeArchived`, so the operation always filters on `archived = 0` (`apps/mcp/src/handlers.ts:812-821`, `apps/cli/src/operations.ts:1673`). `para: "archive"` therefore returns an empty page, and every row has `archived: false`.
+Archived files are never listed. The handler's `listMemories` call doesn't pass `includeArchived`, so the operation always filters on `archived = 0` (`apps/mcp/src/handlers.ts:812-821`, `apps/cli/src/operations.ts:1678`). `para: "archive"` therefore returns an empty page, and every row has `archived: false`.
 
 **Output:** `files`, rows of ten fields in path order, and `next_cursor`, which is `null` on the last page.
 
 **Failure:** `ERR_STORAGE` from the query. Nothing is written.
 
-Source: `MemoryList` at `apps/mcp/src/tools.ts:915-949`, its handler at `apps/mcp/src/handlers.ts:809-838`, and `listMemories` at `apps/cli/src/operations.ts:1666-1761`.
+Source: `MemoryList` at `apps/mcp/src/tools.ts:925-959`, its handler at `apps/mcp/src/handlers.ts:809-838`, and `listMemories` at `apps/cli/src/operations.ts:1671-1766`.
 
 ## `memory_neighbors`
 
@@ -509,27 +510,27 @@ Returns the memory graph around one path, to at most two hops, in both direction
 **Input:**
 
 - `path` is required.
-- `depth` is clamped to 1..2, default 1 (`apps/cli/src/operations.ts:1297`).
+- `depth` is clamped to 1..2, default 1 (`apps/cli/src/operations.ts:1302`).
 - `rels` narrows the walk to some of the nine memory rels.
-- `limit` caps the distinct paths in `nodes`. It's clamped into 1..200 (`NEIGHBORS_LIMIT`) and never refused, default 200, the same shape `memory_list` and `trace_search` have (`apps/cli/src/operations.ts:1298-1301`).
+- `limit` caps the distinct paths in `nodes`. It's clamped into 1..200 (`NEIGHBORS_LIMIT`) and never refused, default 200, the same shape `memory_list` and `trace_search` have (`apps/cli/src/operations.ts:1303-1306`).
 
 **Output:** `nodes`, each with `path`, `title`, `hop` (1 or 2, never 0), `rel`, and `derived`, plus four scalars, `edges`, `node_limit`, `dropped_node_count`, and `scan_saturated` (`apps/mcp/src/handlers.ts:747-753`). Each path appears once, at its minimal hop, and `rel` is the rel of an edge at that hop.
 
-`derived` is true when a machine-mined edge reaches the node and false when only authored `<link>` edges do. It's the max over every edge that reached the node, and `rel` doesn't pair with it. The question a caller asks of it is whether the connection may be a machine's suspicion, and one mined route is enough for yes (`apps/mcp/src/tools.ts:756-768`).
+`derived` is true when a machine-mined edge reaches the node and false when only authored `<link>` edges do. It's the max over every edge that reached the node, and `rel` doesn't pair with it. The question a caller asks of it is whether the connection may be a machine's suspicion, and one mined route is enough for yes (`apps/mcp/src/tools.ts:765-777`).
 
 Nothing in this tree mines an edge. A mined edge lives only in the index, as an `edges` row with `derived = 1` (`packages/index/migrations/0004_edges.sql:1-4`). An index rebuild deletes every `edges` row (`packages/index/src/schema-const.ts:51-60`), and reindexing a file deletes the edges it sources (`packages/index/src/indexer.ts:741`). So `derived` is false on an index built at this tree. It's true only for a mined row that an older build left in an index nobody has rebuilt since.
 
 **`edges` counts edges, and nodes are a separate count.** It counts the distinct edges the walk enumerated, keyed on `(src, rel, dst)`, over both hops and both directions. Two memories joined by two rels are one node and two edges. An edge to a path the node clamp dropped is counted here and absent from `nodes`. Its scope is this call's walk. `memory_status.edges` is the corpus total.
 
-**Two markers report truncation, because the recoveries differ.** `dropped_node_count` is the distinct paths the walk reached that `node_limit` turned away. `nodes.length + dropped_node_count` is every path the walk found, and a larger `limit` returns them. `scan_saturated` means the walk stopped at its own 10,000-edge-row cap, `NEIGHBORS_SCAN_LIMIT` (`apps/cli/src/operations.ts:1192`). Edges past the cap were never enumerated, and no `limit` recovers them. Narrow with `rels` or `depth: 1` instead. It's a plain boolean, because an absent marker can't be told from a server that doesn't report saturation.
+**Two markers report truncation, because the recoveries differ.** `dropped_node_count` is the distinct paths the walk reached that `node_limit` turned away. `nodes.length + dropped_node_count` is every path the walk found, and a larger `limit` returns them. `scan_saturated` means the walk stopped at its own 10,000-edge-row cap, `NEIGHBORS_SCAN_LIMIT` (`apps/cli/src/operations.ts:1197`). Edges past the cap were never enumerated, and no `limit` recovers them. Narrow with `rels` or `depth: 1` instead. It's a plain boolean, because an absent marker can't be told from a server that doesn't report saturation.
 
-`node_limit` echoes the server's clamp of the caller's ask, so a client that sent 10000 reads back 200. It's named `node_limit` because the answer carries two bounds. This one governs `nodes`, and the scan cap governs everything. `dropped_node_count` carries `_count` because it's a quantity, and this repo's numeric suffixes aren't interchangeable. `edges` keeps its bare name because clients already branch on it (`apps/mcp/src/tools.ts:781-804`).
+`node_limit` echoes the server's clamp of the caller's ask, so a client that sent 10000 reads back 200. It's named `node_limit` because the answer carries two bounds. This one governs `nodes`, and the scan cap governs everything. `dropped_node_count` carries `_count` because it's a quantity, and this repo's numeric suffixes aren't interchangeable. `edges` keeps its bare name because clients already branch on it (`apps/mcp/src/tools.ts:790-813`).
 
-A center the tree doesn't hold isn't an error, and the walk never checks it against `files`. It matches the center against `edges` only (`apps/cli/src/operations.ts:1222-1231`). With no edge naming it, the neighborhood is empty. Edges carry no foreign key on either endpoint (`packages/index/migrations/0004_edges.sql:6-7`), so an authored edge that still names a deleted center returns its other endpoint when that file exists. Only the returned node is joined to `files`. So archived files appear as nodes, and an edge whose far endpoint the tree doesn't hold contributes nothing (`apps/cli/src/operations.ts:1250-1256`).
+A center the tree doesn't hold isn't an error, and the walk never checks it against `files`. It matches the center against `edges` only (`apps/cli/src/operations.ts:1227-1236`). With no edge naming it, the neighborhood is empty. Edges carry no foreign key on either endpoint (`packages/index/migrations/0004_edges.sql:6-7`), so an authored edge that still names a deleted center returns its other endpoint when that file exists. Only the returned node is joined to `files`. So archived files appear as nodes, and an edge whose far endpoint the tree doesn't hold contributes nothing (`apps/cli/src/operations.ts:1255-1261`).
 
 **Failure:** `ERR_STORAGE` from the query. Nothing is written.
 
-Source: `MemoryNeighbors` at `apps/mcp/src/tools.ts:727-816`, its handler at `apps/mcp/src/handlers.ts:729-755`, and `neighborsOf` at `apps/cli/src/operations.ts:1293-1387`.
+Source: `MemoryNeighbors` at `apps/mcp/src/tools.ts:736-825`, its handler at `apps/mcp/src/handlers.ts:729-755`, and `neighborsOf` at `apps/cli/src/operations.ts:1298-1392`.
 
 ## `memory_read`
 
@@ -561,7 +562,7 @@ Reads one memory in full, with head metadata, authored links, and the whole arti
 
 **Input:** `path` is required and `session_id` optional. A leading slash is dropped. With `session_id`, the read also records a `read` session link.
 
-An explicit open counts as salience. `readMemory` reaches the state plane through `bumpAccess`, so the tool declares `DatabaseService`, and the dependency list shows that rule (`apps/mcp/src/tools.ts:520-526`). A search or recall hit doesn't move the plane. The read takes the file from the working tree and never asks the head server.
+An explicit open counts as salience. `readMemory` reaches the state plane through `bumpAccess`, so the tool declares `DatabaseService`, and the dependency list shows that rule (`apps/mcp/src/tools.ts:528-534`). A search or recall hit doesn't move the plane. The read takes the file from the working tree and never asks the head server.
 
 **Output:** nine fields.
 
@@ -571,9 +572,9 @@ An explicit open counts as salience. `readMemory` reaches the state plane throug
 - `archived` is true when the head's status is `archived` (`apps/mcp/src/handlers.ts:582`).
 - `warnings` carries the parser's warnings.
 
-**Failure:** `ERR_PATH_NOT_FOUND` when no file is at `path`, `ERR_INVALID_MEMORY` when the file doesn't parse as a memory, and `ERR_STORAGE` on another read error, from `readRaw`, `parseMemory`, and `readFileOrNull` (`packages/store/src/store.ts:1052-1058`, `packages/store/src/layout.ts:194-209`). Nothing is written. The access bump and the session link swallow their own failures (`apps/cli/src/operations.ts:1017-1035`).
+**Failure:** `ERR_PATH_NOT_FOUND` when no file is at `path`, `ERR_INVALID_MEMORY` when the file doesn't parse as a memory, and `ERR_STORAGE` on another read error, from `readRaw`, `parseMemory`, and `readFileOrNull` (`packages/store/src/store.ts:1076-1082`, `packages/store/src/layout.ts:194-209`). Nothing is written. The access bump and the session link swallow their own failures (`apps/cli/src/operations.ts:1022-1040`).
 
-Source: `MemoryRead` at `apps/mcp/src/tools.ts:517-543`, its handler at `apps/mcp/src/handlers.ts:570-586`, and `readMemory` at `apps/cli/src/operations.ts:968-975`.
+Source: `MemoryRead` at `apps/mcp/src/tools.ts:525-551`, its handler at `apps/mcp/src/handlers.ts:570-586`, and `readMemory` at `apps/cli/src/operations.ts:973-980`.
 
 ## `memory_recall`
 
@@ -636,7 +637,7 @@ The pool is the top 30 fused candidates on either path (`packages/index/src/retr
 
 **Failure:** `ERR_STORAGE` from the index query. An embedder failure degrades the pack instead of failing it, in `queryVector` on the index path and on the server's side through the head (`packages/index/src/retrieval.ts:266-280`). A head server that gives no answer sends the call to the index. Nothing is written.
 
-Source: `MemoryRecall` at `apps/mcp/src/tools.ts:644-683`, its handler at `apps/mcp/src/handlers.ts:640-684`, `recallMemories` at `apps/cli/src/operations.ts:1011-1015`, and `recallOnHead` at `apps/cli/src/head-retrieval.ts:172-214`.
+Source: `MemoryRecall` at `apps/mcp/src/tools.ts:652-691`, its handler at `apps/mcp/src/handlers.ts:640-684`, `recallMemories` at `apps/cli/src/operations.ts:1016-1020`, and `recallOnHead` at `apps/cli/src/head-retrieval.ts:172-214`.
 
 ## `memory_reinforce`
 
@@ -677,7 +678,7 @@ Nothing is committed to git. The signal lives in the state database. The `reinfo
 - `ERR_INVALID_MEMORY` when the call names no path, before anything is recorded. The message names `paths` and `path`, and the suggestions are the refusal's own: call the tool again with `paths` or `path`, and nothing was recorded (`reinforcePathsMissing` at `apps/mcp/src/failure.ts:326-334`).
 - `ERR_STORAGE` from the upsert. Nothing is committed.
 
-Source: `MemoryReinforce` at `apps/mcp/src/tools.ts:897-913`, its handler at `apps/mcp/src/handlers.ts:800-807`, and `reinforceMemories` at `apps/cli/src/operations.ts:1126-1136`.
+Source: `MemoryReinforce` at `apps/mcp/src/tools.ts:907-923`, its handler at `apps/mcp/src/handlers.ts:800-807`, and `reinforceMemories` at `apps/cli/src/operations.ts:1131-1141`.
 
 ## `memory_resolve`
 
@@ -716,17 +717,17 @@ const MemoryResolve = Tool.make("memory_resolve", {
 
 Follows a path that an older answer, receipt, or external citation recorded forward to the memory that carries the fact now. A path is the id of a memory and is derived from the title. So a correction that rewords the title moves the file, and the cited path stops resolving through no fault of the citation.
 
-**Input:** `path` only. The walk follows both mechanisms that move a memory, and neither is optional. The hop bound, `RESOLVE_MAX_HOPS` (16), is a property of the answer and a caller can't change it (`apps/cli/src/operations.ts:1397`).
+**Input:** `path` only. The walk follows both mechanisms that move a memory, and neither is optional. The hop bound, `RESOLVE_MAX_HOPS` (16), is a property of the answer and a caller can't change it (`apps/cli/src/operations.ts:1402`).
 
 **Output:**
 
 - `requested` echoes the normalized path. `path` is where the walk ended, and `hops` equals `steps.length`.
-- `stop_reason` decides whether the answer is citable, and only `live` means yes. The five values are `RESOLVE_STOP_REASONS`: `live`, `archived`, `unindexed`, `cycle`, and `hop_limit` (`apps/cli/src/operations.ts:1422`).
+- `stop_reason` decides whether the answer is citable, and only `live` means yes. The five values are `RESOLVE_STOP_REASONS`: `live`, `archived`, `unindexed`, `cycle`, and `hop_limit` (`apps/cli/src/operations.ts:1427`).
 - `archived` is a memory evicted with no correction, so nothing supersedes it.
 - `unindexed` is no such path in the index. It can also mean the index doesn't yet describe the commit that holds the path. `indexed_commit` names the commit it does describe.
 - `cycle` is two memories each claiming to supersede the other, an authoring defect.
 - `hop_limit` means `path` is where the walk stopped and the chain may go on, so resolving it again continues.
-- `steps` names each hop's mechanism from a closed vocabulary, `RESOLVE_STEP_VIA`. `supersedes` is an authored `<link>`, and `archive_move` is a `git mv` recorded by `origin_path` (`apps/cli/src/operations.ts:1432`). Every node is named by the path holding that memory now, because a `supersedes` link travels with the file that carries it.
+- `steps` names each hop's mechanism from a closed vocabulary, `RESOLVE_STEP_VIA`. `supersedes` is an authored `<link>`, and `archive_move` is a `git mv` recorded by `origin_path` (`apps/cli/src/operations.ts:1437`). Every node is named by the path holding that memory now, because a `supersedes` link travels with the file that carries it.
 - `title` is the title at `path`, or `null` when the index has no row for it.
 - `indexed_commit` is the commit the index describes, or `null` before the first rebuild.
 - `pinned_uri` is a `memhtml://at/{commit}/{path}` URI for `path` at `indexed_commit`. The server composes it with `pinnedUri`, because the URI's spelling belongs to the resource that routes it. It's `null` when there's no commit to pin to, and when `stop_reason` is `unindexed`, the one ending whose path that commit doesn't hold (`apps/mcp/src/handlers.ts:776-788`).
@@ -739,7 +740,7 @@ The walk reads the index, so a record a session committed after the last `memhtm
 
 **Failure:** `ERR_STORAGE` from the index reads. An unknown path is `stop_reason: unindexed` and never an error. Nothing is written.
 
-Source: `MemoryResolve` at `apps/mcp/src/tools.ts:818-875`, its handler at `apps/mcp/src/handlers.ts:757-790`, and `resolveMemory` at `apps/cli/src/operations.ts:1574-1639`.
+Source: `MemoryResolve` at `apps/mcp/src/tools.ts:827-884`, its handler at `apps/mcp/src/handlers.ts:757-790`, and `resolveMemory` at `apps/cli/src/operations.ts:1579-1644`.
 
 ## `memory_search`
 
@@ -803,34 +804,34 @@ Runs ranked search over the corpus. The call asks the head server first and fall
 
 **Input:** `query` is required and the rest optional.
 
-- `query` is prose. A double-quoted span demands those words in that order, and nothing else is syntax (`apps/mcp/src/tools.ts:547`). A quoted span sends the call to the index.
+- `query` is prose. A double-quoted span demands those words in that order, and nothing else is syntax (`apps/mcp/src/tools.ts:555`). A quoted span sends the call to the index.
 - `limit` defaults to 10 and isn't clamped (`packages/index/src/retrieval.ts:47`, `packages/index/src/retrieval.ts:508`). A limit of 0 or less returns no hits.
 - `memory_types` draws from the nine writable types. An explicit list is honored verbatim, `task` included. Without one, tasks are excluded (`packages/index/src/scope.ts:262-280`).
 - `workspace` is an exact match, and `tags` matches a memory that carries any of the tags.
-- `entity` takes one reference in `type:name` form, matched case-insensitively. It's the spelling `memory_list` accepts and the spelling a hit's `entities` publishes, so an agent chains by copying a value it already holds (`apps/mcp/src/tools.ts:556-560`).
-- `facets` takes `name=value` specs over the article's authored `<dl>` pairs (`apps/mcp/src/tools.ts:285-290`). Values under the same name broaden (OR), and different names narrow (AND). So `["doc-type=runbook", "doc-type=guide"]` is either, and `["doc-type=runbook", "tier=1"]` is both. A caller who read it the other way round acts on a superset or an empty set, and the rows report neither.
+- `entity` takes one reference in `type:name` form, matched case-insensitively. It's the spelling `memory_list` accepts and the spelling a hit's `entities` publishes, so an agent chains by copying a value it already holds (`apps/mcp/src/tools.ts:564-568`).
+- `facets` takes `name=value` specs over the article's authored `<dl>` pairs (`apps/mcp/src/tools.ts:293-298`). Values under the same name broaden (OR), and different names narrow (AND). So `["doc-type=runbook", "doc-type=guide"]` is either, and `["doc-type=runbook", "tier=1"]` is both. A caller who read it the other way round acts on a superset or an empty set, and the rows report neither.
 - A facet matches on its text with no case folding, unlike `entity`, because a facet is the consumer's own machine-written vocabulary.
 - A facet spec with an empty half is dropped and never refused. So a malformed spec widens the answer instead of narrowing it, and the rows can't show that either (`packages/index/src/scope.ts:57-63`).
 - `include_archived` admits archived memories, and it sends the call to the index.
-- `as_of` is a point-in-time view over `coalesce(valid_from, event_at, created_at) <= as_of < valid_until`, including since-superseded memories (`apps/mcp/src/tools.ts:567-573`). In the scope, `asOf` replaces the archived filter, so `include_archived` has no effect beside it (`packages/index/src/scope.ts:246-260`). The value is compared as text and not validated. A non-empty `as_of` sends the call to the index.
+- `as_of` is a point-in-time view over `coalesce(valid_from, event_at, created_at) <= as_of < valid_until`, including since-superseded memories (`apps/mcp/src/tools.ts:575-581`). In the scope, `asOf` replaces the archived filter, so `include_archived` has no effect beside it (`packages/index/src/scope.ts:246-260`). The value is compared as text and not validated. A non-empty `as_of` sends the call to the index.
 
 **Output:** `hits` plus seven result-level fields.
 
 - Each hit's `score` is unitless and comparable only within one result set. The schema calls it the fused RRF score. On the index path it's the polarity step's reciprocal-rank score over the fused order (`packages/index/src/retrieval.ts:519-539`), and through the head it's the fused RRF score itself.
 - `snippet` holds the best-matching chunk's text for this query, or the opening chunk when the vector arm didn't fire, ending in `…` when cut. Through the head it's always the opening chunk.
 - `entities` lists the hit's references in `type:name` form, sorted.
-- `superseded_by` is present and nullable, and non-null only for an archived hit. A client can tell "not superseded" from "this build doesn't report supersession" (`apps/mcp/src/tools.ts:599-606`).
+- `superseded_by` is present and nullable, and non-null only for an archived hit. A client can tell "not superseded" from "this build doesn't report supersession" (`apps/mcp/src/tools.ts:607-614`).
 - `degraded` is true when the vector arm didn't fire.
-- `vector_coverage` is the share of indexed chunks carrying a vector, 0 to 1, and it tells the two causes of `degraded` apart (`apps/mcp/src/tools.ts:610-616`). Below the coverage floor, `gatedQueryVector` drops the arm on purpose, because a few embedded files would outrank every exact match. A high value with `degraded: true` means the embedder failed (`packages/index/src/retrieval.ts:308-320`). Through the head it's the share of active records with a vector in the server's cache, and no floor applies.
+- `vector_coverage` is the share of indexed chunks carrying a vector, 0 to 1, and it tells the two causes of `degraded` apart (`apps/mcp/src/tools.ts:618-624`). Below the coverage floor, `gatedQueryVector` drops the arm on purpose, because a few embedded files would outrank every exact match. A high value with `degraded: true` means the embedder failed (`packages/index/src/retrieval.ts:308-320`). Through the head it's the share of active records with a vector in the server's cache, and no floor applies.
 - `arms` names the arms that ran, and `entity_scope` echoes the `entity` scope or `null`.
 - `scope_empty` is true when a named scope narrowed the query and nothing survived. The tool reports a scope it couldn't satisfy and never widens it (`scopeEmpty`, `packages/index/src/retrieval.ts:549`).
 - `archived_matches` and `archived` are the pointer behind an empty scope. When `scope_empty` is true and `as_of` is absent, they count and list the archived memories the same scope matches, up to `limit` and at least one, each with the path that superseded it or `null` (`packages/index/src/retrieval.ts:474-498`, `packages/index/src/retrieval.ts:555-558`). Otherwise they're `0` and empty. The head computes the same pointer over its own version (`apps/cli/src/head-scope.ts:183-210`). An agent follows this pointer when an eviction or a collapse moved a record into `archive/`.
 
-Returning a path changes nothing on the access plane, because a hit is the ranker's guess and only a deliberate open counts (`apps/cli/src/operations.ts:982-993`).
+Returning a path changes nothing on the access plane, because a hit is the ranker's guess and only a deliberate open counts (`apps/cli/src/operations.ts:987-998`).
 
 **Failure:** `ERR_STORAGE` from the index query. An embedder failure degrades the search instead of failing it, in `queryVector` on the index path and on the server's side through the head (`packages/index/src/retrieval.ts:266-280`). A head server that gives no answer sends the call to the index. Nothing is written.
 
-Source: `MemorySearch` at `apps/mcp/src/tools.ts:545-642`, its handler at `apps/mcp/src/handlers.ts:588-638`, `searchMemories` at `apps/cli/src/operations.ts:994-998`, and `searchOnHead` at `apps/cli/src/head-retrieval.ts:128-165`.
+Source: `MemorySearch` at `apps/mcp/src/tools.ts:553-650`, its handler at `apps/mcp/src/handlers.ts:588-638`, `searchMemories` at `apps/cli/src/operations.ts:999-1003`, and `searchOnHead` at `apps/cli/src/head-retrieval.ts:128-165`.
 
 ## `memory_status`
 
@@ -860,22 +861,22 @@ const MemoryStatus = Tool.make("memory_status", {
 
 Reports corpus health in one call. It returns HEAD, dirty state, counts by type, edge totals, whether the index describes the current commit, and how much of the index the vector arm can see. It reads the git root and the index, and it doesn't ask the head server.
 
-**Input:** none. `parameters` is `Tool.EmptyParams`, which publishes `{"type":"object","additionalProperties":false}` and refuses any key with `-32602`. An empty `Schema.Struct({})` wouldn't publish "an object with no fields". At 4.0.5 it derives `{"not":{"type":"null"}}`. The source comment records rc.109's derivation, an `anyOf` with an array branch (`apps/mcp/src/tools.ts:1005-1015`).
+**Input:** none. `parameters` is `Tool.EmptyParams`, which publishes `{"type":"object","additionalProperties":false}` and refuses any key with `-32602`. An empty `Schema.Struct({})` wouldn't publish "an object with no fields". At 4.0.5 it derives `{"not":{"type":"null"}}`. The source comment records rc.109's derivation, an `anyOf` with an array branch (`apps/mcp/src/tools.ts:1015-1025`).
 
 **Output:** nine fields.
 
 - `head_sha` is `null` on an unborn repository.
 - `dirty` is true when `git status` lists any path that isn't ignored.
 - `counts_by_type` counts the active indexed files by type, `archived_count` the archived ones, and `edges` every edge in the corpus.
-- `index_fresh` is true when the index's watermark is the current HEAD, which a row count can't answer. While the operation's `indexFresh` is false, every call also logs a warning to stderr (`apps/cli/src/operations.ts:2561-2566`). A session commit moves HEAD and leaves the index behind, so the flag reads false after one until the next `memhtml index update`.
-- `embedder_up` reads the index and never probes the live embedder. The operation's `embedderUp` is true when the stored vector space matches the configured one and at least one embedding exists, so it can be true at 2 percent coverage (`apps/cli/src/operations.ts:2586`).
-- `vector_coverage` is the share of chunks with a vector in the configured space, and `1` on an empty index. `vector_coverage_floor` is the floor below which `memory_search` drops the vector arm on the index path (`apps/mcp/src/tools.ts:1026-1032`).
+- `index_fresh` is true when the index's watermark is the current HEAD, which a row count can't answer. While the operation's `indexFresh` is false, every call also logs a warning to stderr (`apps/cli/src/operations.ts:2588-2593`). A session commit moves HEAD and leaves the index behind, so the flag reads false after one until the next `memhtml index update`.
+- `embedder_up` reads the index and never probes the live embedder. The operation's `embedderUp` is true when the stored vector space matches the configured one and at least one embedding exists, so it can be true at 2 percent coverage (`apps/cli/src/operations.ts:2613`).
+- `vector_coverage` is the share of chunks with a vector in the configured space, and `1` on an empty index. `vector_coverage_floor` is the floor below which `memory_search` drops the vector arm on the index path (`apps/mcp/src/tools.ts:1036-1042`).
 
-**Failure:** `ERR_GIT` from `rev-parse` or `status`, and `ERR_STORAGE` from a count statement (`apps/cli/src/operations.ts:2530-2545`). Nothing is written.
+**Failure:** `ERR_GIT` from `rev-parse` or `status`, and `ERR_STORAGE` from a count statement (`apps/cli/src/operations.ts:2557-2572`). Nothing is written.
 
 The suggestions for `GitFailure` and `StorageFailure`, the tags behind `ERR_GIT` and `ERR_STORAGE`, point an agent at this tool (`apps/mcp/src/failure.ts:119-125`). The `DirtyTree` arm does too, but no tool raises `ERR_DIRTY_TREE`.
 
-Source: `MemoryStatus` at `apps/mcp/src/tools.ts:1000-1034`, its handler at `apps/mcp/src/handlers.ts:883-899`, and `statusReport` at `apps/cli/src/operations.ts:2524-2591`.
+Source: `MemoryStatus` at `apps/mcp/src/tools.ts:1010-1044`, its handler at `apps/mcp/src/handlers.ts:883-899`, and `statusReport` at `apps/cli/src/operations.ts:2551-2618`.
 
 ## `memory_write`
 
@@ -896,17 +897,17 @@ const MemoryWrite = Tool.make("memory_write", {
 
 Writes one memory. When an active memory already holds this exact content, the call returns that path with `deduped: true` and creates no file and no commit.
 
-**Input:** `Schema.Struct(writeFields())`, fourteen fields that `writeFields` shares with each `memory_write_batch` op (`apps/mcp/src/tools.ts:305-338`).
+**Input:** `Schema.Struct(writeFields())`, fourteen fields that `writeFields` shares with each `memory_write_batch` op (`apps/mcp/src/tools.ts:313-346`).
 
 - `title` and `memory_type` are required. `memory_type` is one of the nine writable types: `episodic`, `semantic`, `procedural`, `agent_insight`, `user_preference`, `error_pattern`, `verdict`, `precedent`, and `task` (`packages/contracts/src/types.ts:38-40`). `arc` fails decode against `WritableType`, because only the system writes an arc (`apps/mcp/src/tools.ts:58-59`, `packages/contracts/src/types.ts:34-37`).
 - Exactly one of `body` or `article_html` is required. The handler enforces the rule and the schema doesn't, and a blank string counts as absent (`apps/mcp/src/handlers.ts:155-179`).
 - On the prose path, `body`'s first sentence becomes the `<mark>` claim and each blank-line paragraph becomes one `<p>`.
-- On the markup path, the caller owns the format. That means one `<mark>` inside the first `<p>` or `<li>`, the closed element vocabulary, and no `class`, `style`, or `<script>`. The first `<time datetime>` becomes the event time the recency arm ranks by (`apps/mcp/src/tools.ts:154-165`).
+- On the markup path, the caller owns the format. That means one `<mark>` inside the first `<p>` or `<li>`, the closed element vocabulary, and no `class`, `style`, or `<script>`. The first `<time datetime>` becomes the event time the recency arm ranks by (`apps/mcp/src/tools.ts:158-173`).
 - The rest are optional: `path`, `strict_path`, `workspace`, `tags`, `entities`, `importance`, `confidence`, `session_id`, `prompt_id`, and `turn_uuid`.
 
 Without `path`, the directory comes from the type, the workspace, and the first non-blank tag, and the filename from the title (`packages/contracts/src/paths.ts:148-187`). A task files under its workspace's `tasks/` or the inbox's. Any other memory with a workspace files under `projects/<workspace>/`. A `semantic`, `procedural`, or `precedent` memory with a tag files under `resources/<tag>/`. Everything else lands in `areas/inbox/`. No rule files a memory under `resources/people/`. A taken filename gets a `-2`, `-3`, and so on.
 
-An explicit `path` has two surprising branches (`apps/mcp/src/tools.ts:187-192`).
+An explicit `path` has two surprising branches (`apps/mcp/src/tools.ts:195-200`).
 
 - An unusable `path` is ignored, and the placement rule decides instead, so the memory lands somewhere the caller didn't name. `strict_path: true` turns that into `ERR_INVALID_MEMORY`, with nothing written, staged, or committed. It governs only a `path` that was sent.
 - An occupied `path` is refused with `ERR_WRITE_CONFLICT`, and nothing is written. An explicit path gets no `-2` suffix, because the caller named one path. To replace what a memory says, call `memory_correct`.
@@ -915,22 +916,22 @@ A `path` in the `archive` bucket is accepted. The index derives `archived` from 
 
 `importance` and `confidence` are written into the head unchecked. A value outside 1..10 or 0..1 is dropped when the file is parsed, and the index falls back to importance 5 and confidence 1.0 (`packages/html/src/parse.ts:130-131`, `packages/index/src/project.ts:166-167`).
 
-`memory_write` runs no entity extraction. Only `memory_write_batch` does. With `session_id`, the call records a `wrote` session link, on a dedupe too (`apps/cli/src/operations.ts:350-351`).
+`memory_write` runs no entity extraction. Only `memory_write_batch` does. With `session_id`, the call records a `wrote` session link, on a dedupe too (`apps/cli/src/operations.ts:355-356`).
 
 The write commits straight to the store and skips the session write bar, so the store policy can close this tool (see [The store policy and the record-creating tools](#the-store-policy-and-the-record-creating-tools)).
 
-**Output:** `path`, `created`, `deduped`, and `existing_path`. On a dedupe, `path` and `existing_path` both name the stored memory and `created` is false. `existing_path` is present and nullable, so a client can tell "this write didn't dedupe" from "this server doesn't report dedupes" (`apps/mcp/src/tools.ts:377-381`).
+**Output:** `path`, `created`, `deduped`, and `existing_path`. On a dedupe, `path` and `existing_path` both name the stored memory and `created` is false. `existing_path` is present and nullable, so a client can tell "this write didn't dedupe" from "this server doesn't report dedupes" (`apps/mcp/src/tools.ts:385-389`).
 
 **Failure:**
 
 - `ERR_SESSION_BOUND`, `ERR_V1_DOOR_CLOSED`, or `ERR_STORE_CONFIG` from `guardV1Door`, before anything else runs (`apps/mcp/src/handlers.ts:369`).
-- `ERR_INVALID_MEMORY` before anything is written, for both or neither of `body` and `article_html`, a `strict_path` refusal from `strictPathRefusal`, or markup `renderChecked` refuses (`packages/store/src/store.ts:737-742`).
-- `ERR_WRITE_CONFLICT` before anything is written, when an explicit `path` is taken. The message reads `ours , theirs <sha>`. `ours` is empty because the write had no base, and `theirs` is the blob now at the path (`packages/store/src/store.ts:445-456`). Its suggestions say to retry, but a retry at the same path conflicts again.
-- `ERR_STORAGE` before anything is written, when the checkout lock stays held for 15 s, the dedupe lookup fails, or a title has used up 1,000 filename ordinals, reported as `write.pathExhausted` (`packages/store/src/store.ts:462-471`).
-- `ERR_GIT` or `ERR_STORAGE` from the write, the stage, or the commit. The journal, `compensated`, removes the file (`packages/store/src/store.ts:771-788`).
-- `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` from `reindex`, after the commit has landed (`apps/cli/src/operations.ts:350`). A blind retry can then write a second copy. See [What a failed write leaves behind](#what-a-failed-write-leaves-behind).
+- `ERR_INVALID_MEMORY` before anything is written, for both or neither of `body` and `article_html`, a `strict_path` refusal from `strictPathRefusal`, or markup `renderChecked` refuses (`packages/store/src/store.ts:761-766`).
+- `ERR_WRITE_CONFLICT` before anything is written, when an explicit `path` is taken. The message reads `ours , theirs <sha>`. `ours` is empty because the write had no base, and `theirs` is the blob now at the path (`packages/store/src/store.ts:446-457`). Its suggestions say to retry, but a retry at the same path conflicts again.
+- `ERR_STORAGE` before anything is written, when the checkout lock stays held for 15 s, the dedupe lookup fails, or a title has used up 1,000 filename ordinals, reported as `write.pathExhausted` (`packages/store/src/store.ts:463-472`).
+- `ERR_GIT` or `ERR_STORAGE` from the write, the stage, or the commit. The journal, `compensated`, removes the file (`packages/store/src/store.ts:795-812`).
+- `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` from `reindex`, after the commit has landed (`apps/cli/src/operations.ts:355`). A blind retry can then write a second copy. See [What a failed write leaves behind](#what-a-failed-write-leaves-behind).
 
-Source: `MemoryWrite` at `apps/mcp/src/tools.ts:340-357`, its handler at `apps/mcp/src/handlers.ts:366-395`, and `writeMemory` at `apps/cli/src/operations.ts:344-353`.
+Source: `MemoryWrite` at `apps/mcp/src/tools.ts:348-365`, its handler at `apps/mcp/src/handlers.ts:366-395`, and `writeMemory` at `apps/cli/src/operations.ts:349-358`.
 
 ## `memory_write_batch`
 
@@ -973,21 +974,21 @@ Writes many memories in one commit. It validates every op first, stages every su
 
 **Input:**
 
-- `ops` is an array of `BatchOp`, which is `Schema.Struct(writeFields())`. That's the same fourteen fields as `memory_write`, with the same one-of rule for `body` and `article_html` (`apps/mcp/src/tools.ts:370`). Both tools read one field record, so adding a field can't leave the two published schemas disagreeing (`apps/mcp/src/tools.ts:292-304`).
+- `ops` is an array of `BatchOp`, which is `Schema.Struct(writeFields())`. That's the same fourteen fields as `memory_write`, with the same one-of rule for `body` and `article_html` (`apps/mcp/src/tools.ts:378`). Both tools read one field record, so adding a field can't leave the two published schemas disagreeing (`apps/mcp/src/tools.ts:300-312`).
 - `continue_on_error` switches from the atomic default to best-effort.
-- `detect_conflicts` adds a per-op `conflict` field and changes nothing about what is written (`apps/mcp/src/tools.ts:237-246`).
-- `detect_near_duplicates` adds a per-op `near_duplicates` list, the vector sibling of the conflict rule, which catches rewordings that rule can't key. It also changes nothing written, and it costs one embedding call per batch (`apps/mcp/src/tools.ts:261-267`).
+- `detect_conflicts` adds a per-op `conflict` field and changes nothing about what is written (`apps/mcp/src/tools.ts:245-254`).
+- `detect_near_duplicates` adds a per-op `near_duplicates` list, the vector sibling of the conflict rule, which catches rewordings that rule can't key. It also changes nothing written, and it costs one embedding call per batch (`apps/mcp/src/tools.ts:269-275`).
 - `session_id`, `prompt_id`, and `turn_uuid` are batch-level provenance.
 
-Provenance has two homes. In `provenanceOf`, an op's own values win for its file's head, and the commit trailers come from the first op that carries provenance (`apps/cli/src/operations.ts:902-907`, `packages/store/src/store.ts:1022-1027`). The `wrote` session link uses only the batch-level `session_id`, so an op's own `session_id` never reaches `trace_links` (`apps/cli/src/operations.ts:879`).
+Provenance has two homes. In `provenanceOf`, an op's own values win for its file's head, and the commit trailers come from the first op that carries provenance (`apps/cli/src/operations.ts:907-912`, `packages/store/src/store.ts:1046-1051`). The `wrote` session link uses only the batch-level `session_id`, so an op's own `session_id` never reaches `trace_links` (`apps/cli/src/operations.ts:884`).
 
-When entity extraction is on, one model call per batch extracts entities the ops didn't declare. They land in the files as if authored. A failed extraction is a logged warning, and the batch is written without them (`apps/cli/src/operations.ts:820-854`).
+When entity extraction is on, one model call per batch extracts entities the ops didn't declare. They land in the files as if authored. A failed extraction is a logged warning, and the batch is written without them (`apps/cli/src/operations.ts:825-859`).
 
 The batch commits straight to the store and skips the session write bar, so the store policy can close this tool. The handler checks once, before it looks at any op, and a closed door refuses the whole call in either mode (`apps/mcp/src/handlers.ts:436-437`).
 
 **Output:** `results`, `summary`, `commit_sha`, and `near_duplicates_degraded`.
 
-- `results` holds one `BatchOpResult` per op, in input order. Each has `index`, `ok`, `path`, `deduped`, `existing_path`, `code`, `error`, `skipped`, `conflict`, and `near_duplicates`. Every nullable field is present and never optional, so an absent key never has to be read as a negative answer (`apps/mcp/src/tools.ts:373-444`).
+- `results` holds one `BatchOpResult` per op, in input order. Each has `index`, `ok`, `path`, `deduped`, `existing_path`, `code`, `error`, `skipped`, `conflict`, and `near_duplicates`. Every nullable field is present and never optional, so an absent key never has to be read as a negative answer (`apps/mcp/src/tools.ts:381-452`).
 - `conflict` names what the op's claim contradicts. It carries `path` for a stored active memory, or `batch_index` for an earlier op in the same call, plus that other claim's text.
 - `near_duplicates` lists what the op's text matches at or above cosine 0.92. Each entry carries `path` or `batch_index`, the measured `similarity`, and the other `claim`.
 - `near_duplicates` is `null` when the flag was off, when nothing matched, on an `article_html` op, and whenever `near_duplicates_degraded` is true. That flag means the assist couldn't run, for example under `MEMHTML_EMBED=off`, so `null` then means unchecked.
@@ -998,12 +999,12 @@ The batch commits straight to the store and skips the session write bar, so the 
 **Failure:** an atomic batch aborts on its first refused op and reaches the caller through the error channel, and `results` never carries it. The message names the op: `ERR_<CODE>: ops[N]: <reason>. The batch is atomic, so nothing was written and no commit was made. Try: fix ops[N] and call memory_write_batch again; set continue_on_error to true to write the ops that would have succeeded` (`apps/mcp/src/failure.ts:298-311`). The code is the op's own, so the batch and the singular report one refusal under one code.
 
 - `ERR_SESSION_BOUND`, `ERR_V1_DOOR_CLOSED`, or `ERR_STORE_CONFIG` from `guardV1Door`, before any op is read. These carry no `ops[N]`.
-- `ERR_INVALID_MEMORY` for a one-of violation, a `strict_path` refusal, or markup the render gate refuses. `ERR_WRITE_CONFLICT` for a taken explicit path, including one an earlier op in the same batch claimed. All are found before anything is written, by the handler and by `validateOp` (`apps/mcp/src/handlers.ts:444-502`, `packages/store/src/store.ts:952-995`).
+- `ERR_INVALID_MEMORY` for a one-of violation, a `strict_path` refusal, or markup the render gate refuses. `ERR_WRITE_CONFLICT` for a taken explicit path, including one an earlier op in the same batch claimed. All are found before anything is written, by the handler and by `validateOp` (`apps/mcp/src/handlers.ts:444-502`, `packages/store/src/store.ts:976-1019`).
 - In continue mode, the same refusals become failed results carrying their own `code` and `error`, and the survivors land in the one commit.
-- `ERR_GIT` or `ERR_STORAGE` from the write pass, the stage, or the commit fails the whole call in either mode. The journal, `compensated`, restores every path the pass reached (`packages/store/src/store.ts:1006-1029`).
-- `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` from `reindex`, after the batch commit has landed (`apps/cli/src/operations.ts:878`).
+- `ERR_GIT` or `ERR_STORAGE` from the write pass, the stage, or the commit fails the whole call in either mode. The journal, `compensated`, restores every path the pass reached (`packages/store/src/store.ts:1030-1053`).
+- `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` from `reindex`, after the batch commit has landed (`apps/cli/src/operations.ts:883`).
 
-Source: `MemoryWriteBatch` at `apps/mcp/src/tools.ts:446-515`, its handler at `apps/mcp/src/handlers.ts:433-568`, and `batchWrite` at `apps/cli/src/operations.ts:746-893`.
+Source: `MemoryWriteBatch` at `apps/mcp/src/tools.ts:454-523`, its handler at `apps/mcp/src/handlers.ts:433-568`, and `batchWrite` at `apps/cli/src/operations.ts:751-898`.
 
 ## `trace_links`
 
@@ -1035,13 +1036,13 @@ Returns which memories a session produced, or which sessions touched a memory. A
 
 **Input:** `session_id` and `path`, both optional, but at least one is required. Both together narrow with AND. A call with neither is refused, so no call answers with every link ever recorded.
 
-**Output:** `links`, newest first, capped at 500, `TRACE_LINKS_LIMIT` (`apps/cli/src/operations.ts:2447`). Each row carries `path`, `session_id`, `prompt_id`, `turn_uuid`, `link_kind`, and `at`, with `prompt_id` and `turn_uuid` nullable (`apps/mcp/src/handlers.ts:870-879`).
+**Output:** `links`, newest first, capped at 500, `TRACE_LINKS_LIMIT` (`apps/cli/src/operations.ts:2474`). Each row carries `path`, `session_id`, `prompt_id`, `turn_uuid`, `link_kind`, and `at`, with `prompt_id` and `turn_uuid` nullable (`apps/mcp/src/handlers.ts:870-879`).
 
-A link is recorded only when a call carries a `session_id`. `memory_write` and `memory_write_batch` record `wrote`, `memory_read` records `read`, and `memory_correct` records `corrected`. A failed link is logged and never fails the call (`apps/cli/src/operations.ts:201-218`). `memory_link`, `memory_archive`, `memory_reinforce`, and the resources record none.
+A link is recorded only when a call carries a `session_id`. `memory_write` and `memory_write_batch` record `wrote`, `memory_read` records `read`, and `memory_correct` records `corrected`. A failed link is logged and never fails the call (`apps/cli/src/operations.ts:206-223`). `memory_link`, `memory_archive`, `memory_reinforce`, and the resources record none.
 
-**Failure:** `ERR_INVALID_MEMORY`, an `InvalidMemory` reading "trace links needs a session_id or a path", when both are absent or blank (`apps/cli/src/operations.ts:2460-2466`). `ERR_STORAGE` from the query. Nothing is written.
+**Failure:** `ERR_INVALID_MEMORY`, an `InvalidMemory` reading "trace links needs a session_id or a path", when both are absent or blank (`apps/cli/src/operations.ts:2487-2493`). `ERR_STORAGE` from the query. Nothing is written.
 
-Source: `TraceLinks` at `apps/mcp/src/tools.ts:977-998`, its handler at `apps/mcp/src/handlers.ts:863-881`, and `traceLinks` at `apps/cli/src/operations.ts:2455-2506`.
+Source: `TraceLinks` at `apps/mcp/src/tools.ts:987-1008`, its handler at `apps/mcp/src/handlers.ts:863-881`, and `traceLinks` at `apps/cli/src/operations.ts:2482-2533`.
 
 ## `trace_search`
 
@@ -1074,17 +1075,17 @@ const TraceSearch = Tool.make("trace_search", {
 
 Finds past Claude Code sessions by what was asked in them. It reads the `traces` table, an index of pointers and capped heads that stores no session content.
 
-**Input:** `query` is required. `cwd`, `since`, and `limit` are optional. `limit` is clamped to 1..200 and defaults to 20 (`apps/cli/src/operations.ts:2383`). `cwd` is an exact match, and `since` is compared as text against `started_at`.
+**Input:** `query` is required. `cwd`, `since`, and `limit` are optional. `limit` is clamped to 1..200 and defaults to 20 (`apps/cli/src/operations.ts:2410`). `cwd` is an exact match, and `since` is compared as text against `started_at`.
 
 **Output:** `sessions`, each row carrying `session_id`, `slug`, `cwd`, `started_at`, `prompt_count`, `first_prompt`, and `ai_title`, with `cwd`, `started_at`, and `ai_title` nullable (`apps/mcp/src/handlers.ts:849-859`).
 
-A matched query is ordered by bm25. The all-terms form runs first, and the any-of form runs only when that finds nothing. A query with no searchable terms lists the most recent sessions instead (`apps/cli/src/operations.ts:2390-2426`).
+A matched query is ordered by bm25. The all-terms form runs first, and the any-of form runs only when that finds nothing. A query with no searchable terms lists the most recent sessions instead (`apps/cli/src/operations.ts:2417-2453`).
 
 No tool fills the table. `memhtml trace index` does, from `MEMHTML_TRACE_ROOT`, so a root that was never indexed answers with no sessions.
 
 **Failure:** `ERR_STORAGE` from the query. Nothing is written.
 
-Source: `TraceSearch` at `apps/mcp/src/tools.ts:951-975`, its handler at `apps/mcp/src/handlers.ts:840-861`, and `searchTraces` at `apps/cli/src/operations.ts:2379-2440`.
+Source: `TraceSearch` at `apps/mcp/src/tools.ts:961-985`, its handler at `apps/mcp/src/handlers.ts:840-861`, and `searchTraces` at `apps/cli/src/operations.ts:2406-2467`.
 
 ## See also
 

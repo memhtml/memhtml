@@ -89,6 +89,8 @@ describe("the event_at bug report, inverted: article_html over real MCP stdio", 
   /** The wire text of an XOR refusal and of a read at a path with no file behind it. */
   let xorText: string
   let notFoundText: string
+  /** The wire text of the report's original call: block markup sent as prose. */
+  let markupText: string
 
   beforeAll(async () => {
     /**
@@ -129,13 +131,15 @@ describe("the event_at bug report, inverted: article_html over real MCP stdio", 
     ).path as string
 
     /**
-     * The report's ORIGINAL call, verbatim, as the control.
+     * The control: the report's call with its `<p>` wrapper taken off, so the body carries the
+     * inline `<time>` element alone.
      *
      * Without it this suite would pass on an implementation that escaped both paths — or one that
      * escaped neither, which would be a sanitizer regression rather than a fix. The pair is the
-     * assertion: the prose path still escapes (that is its documented contract, and prose that
-     * silently became markup would be an injection surface), and `article_html` is the one way an
-     * event time is authorable at all.
+     * assertion: the prose path escapes an inline element (that is its documented contract, and prose
+     * that silently became markup would be an injection surface), and `article_html` is the one way an
+     * event time is authorable at all. The report's own call, with the `<p>` wrapper, holds a block
+     * tag, which the door refuses rather than escapes; that is `markupText` below.
      */
     prosePath = structured(
       await client.rpc("tools/call", {
@@ -143,10 +147,26 @@ describe("the event_at bug report, inverted: article_html over real MCP stdio", 
         arguments: {
           title: "Alice moved to Paris, written as prose",
           memory_type: "episodic",
-          body: '<p><time datetime="2023-05-20T02:21:00Z">2023-05-20T02:21:00Z</time> Alice moved to Paris.</p>'
+          body: '<time datetime="2023-05-20T02:21:00Z">2023-05-20T02:21:00Z</time> Alice moved to Paris.'
         }
       })
     ).path as string
+
+    /**
+     * The report's ORIGINAL call, verbatim. Its body is block markup sent as prose, which would land as
+     * the characters `&lt;p&gt;` inside the claim, so it is refused, and the refusal has to cross
+     * `McpServer`'s catch with its code and the parameter it names intact.
+     */
+    markupText = failureText(
+      await client.rpc("tools/call", {
+        name: "memory_write",
+        arguments: {
+          title: "Alice moved to Paris, written as markup in prose",
+          memory_type: "episodic",
+          body: '<p><time datetime="2023-05-20T02:21:00Z">2023-05-20T02:21:00Z</time> Alice moved to Paris.</p>'
+        }
+      })
+    )
 
     /**
      * The two FAILING calls, over the same real transport as the two writes above.
@@ -253,18 +273,30 @@ describe("the event_at bug report, inverted: article_html over real MCP stdio", 
     expect(prose).toBeDefined()
     expect(prose?.event_at).toBeNull()
     /**
-     * The report's secondary effect, still exactly as it recorded it: with no sentence terminator the
-     * claim regex accepts, the whole blob became the `<mark>` — so the Tier-1 disclosure line is
-     * markup-as-prose rather than a claim.
+     * The report's secondary effect, on the control: the body's only sentence terminator the claim
+     * regex accepts is its last character, so the whole blob became the `<mark>`, and the Tier-1
+     * disclosure line is markup-as-prose rather than a claim.
      *
      * Compared as TEXT, not as the disk bytes. `files.gist` is the `<mark>`'s text CONTENT, so the
-     * `&lt;` on disk decodes back to `<` on the way into the row — which is why the report's own
-     * recorded gist reads `"<p><time datetime=…"` while the file at the same path holds `&lt;time`.
-     * The two are the same escaping, seen from either side of the parser, and asserting the disk form
-     * here would be asserting the wrong plane.
+     * `&lt;` on disk decodes back to `<` on the way into the row, which is why the gist reads
+     * `"<time datetime=…"` while the file at the same path holds `&lt;time`. The two are the same
+     * escaping, seen from either side of the parser, and asserting the disk form here would be
+     * asserting the wrong plane.
      */
     expect(prose?.gist).toContain('<time datetime="2023-05-20T02:21:00Z">')
-    expect(prose?.gist.startsWith("<p>")).toBe(true)
+    expect(prose?.gist.startsWith("<time")).toBe(true)
+  })
+
+  it("refuses the report's original call, block markup sent as prose, naming article_html", () => {
+    /**
+     * The `<p>`-wrapped body is markup the caller meant, and escaped it would put `&lt;p&gt;` at the
+     * head of the claim. The refusal reaches a real client with the usage code the JSONL doors give for
+     * the same body, and it names the parameter that takes markup.
+     */
+    expect(markupText).toContain("ERR_INVALID_FLAG")
+    expect(markupText).toContain("`<p>`")
+    expect(markupText).toContain("article_html")
+    expect(markupText.toLowerCase()).not.toContain("internal server error")
   })
 
   it("delivers an XOR refusal as prose an agent can act on, not as an internal error", () => {

@@ -246,18 +246,7 @@ export const loadHeadAt = (
 
 /** The commit a ref resolves to, or `null` when it does not. A repo with no such ref is an answer. */
 export const revParse = (root: string, ref: string): Effect.Effect<string | null, GitFailure> =>
-  makeGit(root)
-    .run(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`])
-    .pipe(
-      Effect.map((out) => {
-        const sha = out.trim()
-        return /^[0-9a-f]{40}$/.test(sha) ? sha : null
-      }),
-      // `--verify --quiet` exits 1 for a ref that does not resolve; that is "none", not a failure.
-      Effect.catchTag("GitFailure", (failure) =>
-        failure.exitCode === 1 ? Effect.succeed(null) : Effect.fail(failure)
-      )
-    )
+  makeGit(root).revParse(ref)
 
 /**
  * The commit a session starts from or rebases onto: the ref's tip when it resolves, else `HEAD`.

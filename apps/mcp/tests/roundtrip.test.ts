@@ -873,6 +873,78 @@ describe("a tool call through the toolkit layer", () => {
     )
   })
 
+  it("refuses a body holding HTML block markup with ERR_INVALID_FLAG, naming article_html", async () => {
+    /**
+     * `body` is prose and the template escapes it, so markup sent there would land as the literal
+     * characters `&lt;p&gt;` inside the claim. The same refusal `memhtml apply` gives, under the same
+     * code, because the field names are the same on both wires.
+     */
+    const attempt = call("memory_write", {
+      title: "Markup sent as prose",
+      body: "<p>One.</p><p>Two.</p>",
+      memory_type: "semantic"
+    })
+    await expect(attempt).rejects.toThrow(/^ERR_INVALID_FLAG: /)
+    await expect(attempt).rejects.toThrow(/`<p>`/)
+    await expect(attempt).rejects.toThrow(/article_html/)
+    // A call that names both fields gets the XOR's answer, which is the rule it broke first.
+    await expect(
+      call("memory_write", {
+        title: "Markup sent as prose and as markup",
+        body: "<p>One.</p>",
+        article_html: "<p><mark>One.</mark></p>",
+        memory_type: "semantic"
+      })
+    ).rejects.toThrow(/^ERR_INVALID_MEMORY: .*exactly one of body or article_html/)
+    const listed = await call("memory_list", {})
+    const files = listed.files as ReadonlyArray<{ title: string }>
+    expect(files.some((file) => file.title === "Markup sent as prose")).toBe(false)
+
+    // A record that discusses a tag in backticks is prose about markup, and it writes.
+    const discussed = await call("memory_write", {
+      title: "The paragraph element",
+      body: "The `<p>` element holds one paragraph.",
+      memory_type: "semantic"
+    })
+    expect(discussed.created).toBe(true)
+    expect((await call("memory_read", { path: discussed.path })).gist).toBe(
+      "The `<p>` element holds one paragraph."
+    )
+  })
+
+  it("writes article_html whose <p> holds an escaped block tag, in an atomic batch", async () => {
+    /**
+     * `article_html` is verbatim markup, and a caller that escapes third-party text into a `<p>`
+     * means the characters: a quoted reply holding `&lt;h1&gt;` is text about a heading. The
+     * block-tag rule judges a prose `body`, and a session's puts; supplied markup here is not
+     * judged by it, so one such op does not fail an atomic batch.
+     */
+    const before = (await call("memory_status", {})).head_sha as string
+    const batch = await call("memory_write_batch", {
+      ops: [
+        {
+          title: "Quoted reply with a heading",
+          article_html:
+            "<p><mark>The reply opened with &lt;h1&gt;Manage API Access&lt;/h1&gt;.</mark></p>",
+          memory_type: "episodic",
+          workspace: "quoted-markup"
+        },
+        {
+          title: "Quoted reply in prose",
+          body: "The second reply was plain prose.",
+          memory_type: "episodic",
+          workspace: "quoted-markup"
+        }
+      ]
+    })
+    const results = batch.results as ReadonlyArray<{ ok: boolean; path: string | null }>
+    expect(results.map((result) => result.ok)).toEqual([true, true])
+    expect((await call("memory_status", {})).head_sha).not.toBe(before)
+    expect((await call("memory_read", { path: results[0]?.path })).gist).toBe(
+      "The reply opened with <h1>Manage API Access</h1>."
+    )
+  })
+
   it("memory_correct supersedes through article_html, and refuses both or neither", async () => {
     const original = await call("memory_write", {
       title: "The stale claim a correction will replace",
@@ -900,6 +972,15 @@ describe("a tool call through the toolkit layer", () => {
         reason: "neither supplied"
       })
     ).rejects.toThrow(/exactly one of body or article_html/)
+    // Markup sent as prose: refused before the target is touched.
+    await expect(
+      call("memory_correct", {
+        target_path: original.path,
+        title: "A correction written as markup in prose",
+        body: "The retry budget is per-connection.\n\n<dl><dt>Measured</dt></dl>",
+        reason: "markup in body"
+      })
+    ).rejects.toThrow(/ERR_INVALID_FLAG: .*`<dl>`.*article_html/s)
     expect((await call("memory_read", { path: original.path })).archived).toBe(false)
 
     // Markup only: the correction lands, the target archives, and the authored `<mark>` is the new
@@ -1342,6 +1423,37 @@ describe("a tool call through the toolkit layer", () => {
       expect(await commitCount()).toBe(commitsBefore + 1)
       const listed = await call("memory_list", { workspace: "batch-continue" })
       expect(listed.files as ReadonlyArray<unknown>).toHaveLength(2)
+    })
+
+    it("refuses an op whose body holds block markup, naming the op, in both modes", async () => {
+      const ops = [
+        {
+          title: "Batch markup op one, plain prose",
+          body: "A plain fact that lands only in continue mode.",
+          memory_type: "semantic",
+          workspace: "batch-markup"
+        },
+        {
+          title: "Batch markup op two, markup as prose",
+          body: "&lt;ul&gt;&lt;li&gt;An item.&lt;/li&gt;&lt;/ul&gt;",
+          memory_type: "semantic",
+          workspace: "batch-markup"
+        }
+      ]
+      const before = (await call("memory_status", {})).head_sha as string
+      const attempt = call("memory_write_batch", { ops })
+      await expect(attempt).rejects.toThrow(/^ERR_INVALID_FLAG: ops\[1\]: /)
+      await expect(attempt).rejects.toThrow(/`&lt;ul&gt;`.*article_html/s)
+      expect((await call("memory_status", {})).head_sha).toBe(before)
+
+      const batch = await call("memory_write_batch", { ops, continue_on_error: true })
+      const results = resultsOf(batch)
+      expect(results[0]?.ok).toBe(true)
+      expect(results[1]?.ok).toBe(false)
+      expect(results[1]?.skipped).toBe(false)
+      expect(results[1]?.code).toBe("ERR_INVALID_FLAG")
+      expect(results[1]?.error).toMatch(/article_html/)
+      expect(batch.summary).toMatchObject({ total: 2, written: 1, failed: 1 })
     })
 
     it("refuses an op whose markup violates the format, and never bypasses the render gate", async () => {

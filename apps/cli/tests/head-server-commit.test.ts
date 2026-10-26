@@ -14,6 +14,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest"
 import { COMMIT_DEADLINE_VAR, headSocketPath } from "../src/head-protocol.js"
 import { type HeadServer, holdingPermit, startHeadServer } from "../src/head-server.js"
 import { run } from "../src/run.js"
+import { type LogEntry, recordingLogger } from "./harness.js"
 import { writeStoreConfig } from "./strict-store.js"
 
 /**
@@ -59,6 +60,8 @@ import { writeStoreConfig } from "./strict-store.js"
  *   early round dropped" (`dropped` is empty).
  * - `v2.ts` `commitOverHead`: commit a log with no ops instead of answering `refused` -> "a commit
  *   of a log with no ops ... touches nothing" (main gains an empty `memhtml(session)` commit).
+ * - `head-server.ts` `commitBase`: ask through `git.run` and catch the failure as "no" -> "judges a
+ *   base off the ref's history from a version it loads" (`git merge-base exited 1` at Error).
  * - `v2.ts` `commitOverHead` (2026-10-26): the log committed without the repoints it lacks appended
  *   -> "completes the new edge when the log is committed after a rebase here" and "completes a log
  *   an older writer left with the archive alone" (both refused, naming the note that still cites
@@ -169,14 +172,23 @@ const corpus = async (): Promise<FixtureRepo> => {
 /** A server in its own scope, closed after the test; the poll is off unless a case turns it on. */
 const serve = async (
   root: string,
-  options: { readonly commitQueueWaitMs?: number } = {}
+  options: {
+    readonly commitQueueWaitMs?: number
+    /** Where the server's log entries go instead of stderr, when given. */
+    readonly logs?: Array<LogEntry>
+  } = {}
 ): Promise<HeadServer> => {
   const scope = Scope.makeUnsafe()
   scopes.push(scope)
+  const started = startHeadServer({
+    root,
+    pollMs: 0,
+    commitQueueWaitMs: options.commitQueueWaitMs
+  }).pipe(Scope.provide(scope))
   return run_(
-    startHeadServer({ root, pollMs: 0, commitQueueWaitMs: options.commitQueueWaitMs }).pipe(
-      Scope.provide(scope)
-    )
+    options.logs === undefined
+      ? started
+      : started.pipe(Effect.provide(recordingLogger(options.logs)))
   )
 }
 
@@ -452,7 +464,8 @@ describe("session commit and rebase through the head server", () => {
       await run_(repo.git.run(["branch", "-f", "main", "rewritten"]))
       await run_(repo.git.run(["checkout", "-q", "main"]))
     }
-    await serve(served.root)
+    const logs: Array<LogEntry> = []
+    await serve(served.root, { logs })
     const viaServer = await commitCli(served.root, "off")
     const viaLocal = await commitCli(local.root, "off", { local: true })
     expect(viaServer.exitCode).toBe(0)
@@ -460,6 +473,9 @@ describe("session commit and rebase through the head server", () => {
     expect(data).toMatchObject({ kind: "rebase-needed", via: "server" })
     expect(data.server).toMatchObject({ used: true, base: "loaded" })
     expect(printed(served.root, data)).toBe(printed(local.root, dataOf(viaLocal.body)))
+    // `merge-base --is-ancestor` exits 1 for a base off the history: the answer, not an error.
+    expect(logs.filter((entry) => entry.level === "Error")).toEqual([])
+    expect(logs.some((entry) => entry.message.includes("'s history, for a commit"))).toBe(true)
   })
 })
 
@@ -957,6 +973,56 @@ describe("an archive whose ref gained an edge to the archived path before the co
       dropped: []
     })
     await landedWhole(repo)
+  }, 60_000)
+})
+
+describe("a log that archives a record already under archive/", () => {
+  it("is refused by name at commit, with no repoint appended to the log", async () => {
+    const repo = await corpus()
+    const archived = archivePathFor("resources/acme-widget/b.html", 2031)
+    const html = renderTemplate({
+      title: "Widget batch size",
+      claim: "The acme widget ships in batches of twelve.",
+      memoryType: "semantic",
+      at: AT,
+      entities: ["project:acme-widget"]
+    })
+    await commitFiles(
+      repo,
+      [
+        { path: archived, html },
+        {
+          path: "resources/acme-widget/a.html",
+          html: note(
+            "Widget batch size, revised",
+            "The acme widget ships in batches of twenty.",
+            "supersedes",
+            `/${archived}`
+          )
+        }
+      ],
+      "a record at its archive slot and the successor citing it there"
+    )
+    await start(repo.root, "again")
+    // A log an older writer left: the archive alone, of a record that is already archived.
+    const file = sessionStateFile(repo.root, "again")
+    const state = JSON.parse(await readFile(file, "utf8")) as { ops: Array<unknown> }
+    const ops = [{ kind: "archive", path: archived, to: archivePathFor(archived, 2032), html }]
+    state.ops = ops
+    await writeFile(file, JSON.stringify(state), "utf8")
+    const refused = dataOf((await commitCli(repo.root, "again", { local: true })).body)
+    expect(refused, JSON.stringify(refused)).toMatchObject({
+      kind: "refused",
+      violations: [
+        {
+          kind: "format",
+          path: archived,
+          reasons: expect.arrayContaining([`archive source: already archived at ${archived}`])
+        }
+      ]
+    })
+    // The successor's supersedes edge is not repointed under archive/2032/archive/.
+    expect((await logOf(repo.root, "again")).ops).toEqual(ops)
   }, 60_000)
 })
 
