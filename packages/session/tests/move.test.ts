@@ -66,6 +66,9 @@ import {
  *   the kind and order -> "repoints a live holder's edge to a path the batch puts and then
  *   archives, and not one it puts at after the archive" (the archive comes back alone); only a
  *   move's source skipped -> the same case (the archive before the claim edit gains a pair).
+ * - withRepoints, archived sources (2026-10-26): the `activeRecordPathViolation` skip dropped -> all
+ *   three cases in "an archive or a move whose source is already archived gets no repoints" (a pair
+ *   aims the successor's supersedes edge under `archive/2032/archive/`, or out of the archive).
  * - afterDroppedVacates (2026-10-26): the `held.has(to)` check dropped, or the check that the record
  *   is live -> "takes the pairs and leaves the other kept ops alone when the destination is held or
  *   the record is not live" (the edges are aimed at the slot); the pairs taken only when those
@@ -678,6 +681,83 @@ describe("missingRepoints completes a written log by appending to it", () => {
     })
     // A log already over the cap is refused as it stands: nothing added, nothing named.
     expect(missingRepoints(head, log, "session", 0)).toEqual({ ops: [], overflow: [] })
+  })
+})
+
+describe("an archive or a move whose source is already archived gets no repoints", () => {
+  // The successor `correct` leaves: its supersedes edge names the record at its archive slot.
+  const CITER_HTML = addLink(
+    memory("Widget batch size, settled", "The acme widget ships in batches of twenty.", {
+      entities: ["project:acme-widget"],
+      at: "2031-03-03T12:00:00Z"
+    }),
+    "supersedes",
+    `/${SLOT}`
+  )
+  const headWithArchived = async () =>
+    mapHead(SHA, [await recordFrom(SUCCESSOR, CITER_HTML), await recordFrom(SLOT, RETIRED_HTML)])
+  const again: OverlayOp = {
+    kind: "archive",
+    path: SLOT,
+    to: archivePathFor(SLOT, 2032),
+    html: RETIRED_HTML
+  }
+
+  it("adds no pair aimed under archive/<YYYY>/archive/ for an archive of an archived record", async () => {
+    const head = await headWithArchived()
+    expect(withRepoints(head, [again])).toEqual([again])
+    // Nothing to append at commit, and no cap message telling the caller to archive it alone: the
+    // archive's own refusal is the one it gets.
+    expect(missingRepoints(head, [again])).toEqual({ ops: [], overflow: [] })
+    expect(missingRepoints(head, [again], "session", 1)).toEqual({ ops: [], overflow: [] })
+    expect(validateOps(head, [again])).toContainEqual(
+      expect.objectContaining({
+        kind: "format",
+        path: SLOT,
+        reasons: expect.arrayContaining([`archive source: already archived at ${SLOT}`])
+      })
+    )
+  })
+
+  it("adds none for an archive of a record the batch put under archive/", async () => {
+    const head = await headWithArchived()
+    const fresh = archivePathFor("resources/acme-widget/e.html", 2031)
+    const citer = addLink(
+      memory("Widget crate note", "Widget crates are stacked four high.", {
+        entities: ["project:acme-widget"]
+      }),
+      "relates_to",
+      `/${fresh}`
+    )
+    const put: OverlayOp = { kind: "put", path: fresh, html: RETIRED_HTML }
+    const archive: OverlayOp = {
+      kind: "archive",
+      path: fresh,
+      to: archivePathFor(fresh, 2032),
+      html: RETIRED_HTML
+    }
+    const withCiter = mapHead(SHA, [
+      ...head.records(),
+      await recordFrom("resources/acme-widget/c.html", citer)
+    ])
+    expect(withRepoints(withCiter, [put, archive])).toEqual([put, archive])
+    expect(missingRepoints(withCiter, [put, archive])).toEqual({ ops: [], overflow: [] })
+  })
+
+  it("adds none for a move out of archive/, which is refused for its source", async () => {
+    const head = await headWithArchived()
+    const reopen = move(SLOT, RETIRED, RETIRED_HTML)
+    expect(withRepoints(head, [reopen])).toEqual([reopen])
+    expect(missingRepoints(head, [reopen], "session", 1)).toEqual({ ops: [], overflow: [] })
+    expect(validateOps(head, [reopen])).toContainEqual(
+      expect.objectContaining({
+        kind: "format",
+        path: SLOT,
+        reasons: expect.arrayContaining([
+          "move source is not an active record in the head, or it left its path earlier in this batch"
+        ])
+      })
+    )
   })
 })
 
