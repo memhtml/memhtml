@@ -139,9 +139,11 @@ The Reference tier is generated from the same registries the binary parses its o
 so a flag, error code, or response type on those pages is the one the binary ships. Where this site
 and the binary disagree, the binary is right and a test is missing.
 
-Architectural claims cite the code in repo-relative `path:line` form. Those line numbers point into
-the commit this site was built from, so read them as a pointer into the source rather than as a
-permanent address. Every measurement on the site carries the date someone took it.
+Architectural claims cite the code by repo-relative path and the symbol it declares, as in
+`packages/index/src/retrieval-sql.ts::buildRrfSql`. A symbol survives the edits that move lines, and
+the repository's check fails when a cited file stops declaring one, so every citation names code the
+source this site was built from still declares. Every measurement on the site carries the date
+someone took it.
 
 Section numbers live in the heading text, as in `## 3.2. Edge encoding`, so the page, the contents,
 the search index, and the Markdown this site serves to an agent all agree on which section §3.2 is.

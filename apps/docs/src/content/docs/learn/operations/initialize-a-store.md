@@ -9,7 +9,7 @@ memhtml init
 memhtml index rebuild --embed
 ```
 
-`memhtml init` asks the repository what is already there and writes only what is missing (`packages/store/src/layout.ts:246`). It reaches the same end state from an empty directory, from a fully scaffolded repository, and from one an interrupted run left half-finished. Re-running it is always safe, and on a store that already has everything it writes nothing:
+`memhtml init` asks the repository what is already there and writes only what is missing (`packages/store/src/layout.ts::initRepo`). It reaches the same end state from an empty directory, from a fully scaffolded repository, and from one an interrupted run left half-finished. Re-running it is always safe, and on a store that already has everything it writes nothing:
 
 ```json
 {
@@ -28,7 +28,7 @@ memhtml index rebuild --embed
 
 Run it even when you cloned a store someone else already initialized. The scaffolded files travel with the clone; the git config one of them depends on does not.
 
-`.gitattributes` marks `index.html` and `sitemap.xml` with `merge=ours`, which tells git to keep the local version of those two files instead of merging them line by line. The attribute does nothing on its own: git only honors it when the clone's own config also names the driver as `merge.ours.driver` (`packages/store/src/layout.ts:76`), and git config is per clone and never travels with a clone. So a clone that skips `memhtml init` gets conflict markers written into a generated file the first time a merge touches one.
+`.gitattributes` marks `index.html` and `sitemap.xml` with `merge=ours`, which tells git to keep the local version of those two files instead of merging them line by line. The attribute does nothing on its own: git only honors it when the clone's own config also names the driver as `merge.ours.driver` (`packages/store/src/layout.ts::MERGE_OURS_DRIVER`), and git config is per clone and never travels with a clone. So a clone that skips `memhtml init` gets conflict markers written into a generated file the first time a merge touches one.
 
 Check the config directly:
 
@@ -64,7 +64,7 @@ sitemap.xml merge=ours
 
 ## What a clone gives you
 
-`.memhtml/index.db` and `.memhtml/state.db` are both gitignored (`packages/store/src/layout.ts:55`), along with the write-ahead log and shared-memory files SQLite keeps beside them, the session logs, the head's snapshots and vector cache, and a head server's socket:
+`.memhtml/index.db` and `.memhtml/state.db` are both gitignored (`packages/store/src/layout.ts::GITIGNORE`), along with the write-ahead log and shared-memory files SQLite keeps beside them, the session logs, the head's snapshots and vector cache, and a head server's socket:
 
 ```
 .memhtml/index.db

@@ -9,7 +9,7 @@ The system keeps two databases, and this page calls them planes. The index plane
 
 Those numbers change on every read. A commit per access bump would be a commit per memory an agent opens.
 
-So `state.db` is gitignored like the index, and unlike the index it cannot be rebuilt from the tree. Its durable copy is an append-only JSONL sidecar, `.memhtml/state/access.jsonl`, which `memhtml state export` writes for a commit (`packages/store/src/layout.ts:27-31`, `packages/index/src/sidecar.ts`).
+So `state.db` is gitignored like the index, and unlike the index it cannot be rebuilt from the tree. Its durable copy is an append-only JSONL sidecar, `.memhtml/state/access.jsonl`, which `memhtml state export` writes for a commit (`packages/store/src/layout.ts::STATE_DB_PATH`, `packages/store/src/layout.ts::STATE_SIDECAR_PATH`, `packages/index/src/sidecar.ts`).
 
 | Plane | File                | In git | Rebuildable                     |
 | ----- | ------------------- | ------ | ------------------------------- |
@@ -27,15 +27,15 @@ Figure 1 redraws that table as a circuit, which puts the two recovery paths side
 
 Rows arrive from SQL in path order, floats round to four decimals, keys are written in a fixed order, and an unchanged plane produces an identical file whose commit is empty (`packages/index/src/sidecar.ts`).
 
-Four decimals is the grid the outcome average already lives on (`packages/domain/src/decay.ts:13`), so a fifth digit would be float noise that changes the file's bytes without changing its meaning. `-0` is normalized to `0`, so two equal planes render identically.
+Four decimals is the grid the outcome average already lives on (`packages/domain/src/decay.ts::SCALE`), so a fifth digit would be float noise that changes the file's bytes without changing its meaning. `-0` is normalized to `0`, so two equal planes render identically.
 
 `parseSidecar` (`packages/index/src/sidecar.ts`) skips an unparseable line and counts it rather than failing the import. This is the only durable copy of the plane, and refusing a file that an interrupted write left truncated would turn a partial loss into a total one.
 
 ## 3. Cross-database references are explicit
 
-SQLite has no cross-database foreign keys, so a path move is mirrored by an explicit `onMove` hook that the store calls at the single place a path can change (`packages/store/src/store.ts:175-182`, `apps/cli/src/api-layer.ts:209`), and `memhtml doctor` reports rows the hook missed.
+SQLite has no cross-database foreign keys, so a path move is mirrored by an explicit `onMove` hook that the store calls at the single place a path can change (`packages/store/src/store.ts::MoveCallback`, `packages/store/src/store.ts::makeStore::stageArchive`, `apps/cli/src/api-layer.ts::layerStore::onMove`), and `memhtml doctor` reports rows the hook missed.
 
-The alternative would be to key the state plane on something other than the path, which means inventing a second identity for a memory. The path is the id (`packages/contracts/src/types.ts:102-107`).
+The alternative would be to key the state plane on something other than the path, which means inventing a second identity for a memory. The path is the id (`packages/contracts/src/types.ts::MemoryPath`).
 
 ## 4. An integration test proves the claim
 

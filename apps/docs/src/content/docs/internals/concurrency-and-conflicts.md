@@ -9,7 +9,7 @@ Two agents editing different files never interact. The tree is the shared state,
 
 Two kinds of writer share one tree. The v1 doors (`memhtml write`, `apply`, `correct`, and the MCP write tools) stage files in the shared git index and commit them. A session builds its commit in a temporary index of its own and moves the ref with a compare-and-swap. Both kinds hold the checkout lock while they change the shared index (§2), and a session that finds the ref moved since its base answers `rebase-needed` (§3).
 
-A CLI command and a running MCP server share one `index.db`. Write-ahead logging admits one writer and any number of readers, `busy_timeout = 5000` is set on every connection (`packages/index/src/database.ts:342-354`), and a contended write retries. Session commits never open the index, so they never wait on it.
+A CLI command and a running MCP server share one `index.db`. Write-ahead logging admits one writer and any number of readers, `busy_timeout = 5000` is set on every connection (`packages/index/src/database.ts::makeDatabase`), and a contended write retries. Session commits never open the index, so they never wait on it.
 
 Three actors share the tree, and Figure 1 shows the cycle they form through `main`. Only one of them may settle a contradiction.
 
@@ -20,7 +20,7 @@ Three actors share the tree, and Figure 1 shows the cycle they form through `mai
 
 ## 2. The checkout lock keeps writers out of each other's files
 
-One checkout has one git index, and before 0.16 nothing stopped two processes from staging into it at once. A `memhtml write` that ran while another process had staged a file could sweep that file into its own commit. The checkout lock, `.memhtml/checkout.lock`, closes that gap. Every v1 write holds it from its first stage to its commit (`StoreShape.exclusive`, `packages/store/src/store.ts:237`), and so do `init`, `task status`, `publish`, `state export`, `doctor --fix`, every session commit, and the `curate merge` fast-forward.
+One checkout has one git index, and before 0.16 nothing stopped two processes from staging into it at once. A `memhtml write` that ran while another process had staged a file could sweep that file into its own commit. The checkout lock, `.memhtml/checkout.lock`, closes that gap. Every v1 write holds it from its first stage to its commit (`StoreShape.exclusive`, `packages/store/src/store.ts::StoreShape::exclusive`), and so do `init`, `task status`, `publish`, `state export`, `doctor --fix`, every session commit, and the `curate merge` fast-forward.
 
 A writer waits up to 15 seconds for the lock and then fails with `ERR_STORAGE` (`checkout.locked`). Every writer but `doctor --fix` and `task status <path> done` has then written nothing, and running it again is safe. [Sessions and the commit path](/internals/sessions-and-the-commit-path/#5-the-checkout-lock) lists the timings and the one crash window that remains.
 
@@ -38,7 +38,7 @@ A head server commits one session at a time, so commits that go through it never
 
 An explicit `--path` that a file already occupies is refused with nothing written and nothing committed. Nothing in this corpus is overwritten, and the store doesn't add a `-2` suffix either, because the caller named one path and a quiet write to a neighboring one would leave that caller holding a path with no file behind it (`freePathFor`, `packages/store/src/store.ts`).
 
-The refusal is a typed `WriteConflict` carrying the path and the blob sha now at it (`packages/contracts/src/errors.ts:35`). It reaches an agent as `ERR_WRITE_CONFLICT`, with `memhtml read <path>` first in the suggestions, because reading the current content is the step every recovery starts with (`apps/cli/src/errors.ts:209`). The usual recovery is `memhtml correct <path>`, which writes the superseding memory and archives what it replaces in one commit. `correct`'s own target is the one path exempt from the check, since the same commit moves it into the archive before the correction's bytes are written.
+The refusal is a typed `WriteConflict` carrying the path and the blob sha now at it (`packages/contracts/src/errors.ts::WriteConflict`). It reaches an agent as `ERR_WRITE_CONFLICT`, with `memhtml read <path>` first in the suggestions, because reading the current content is the step every recovery starts with (`apps/cli/src/errors.ts::SUGGESTIONS::WriteConflict`). The usual recovery is `memhtml correct <path>`, which writes the superseding memory and archives what it replaces in one commit. `correct`'s own target is the one path exempt from the check, since the same commit moves it into the archive before the correction's bytes are written.
 
 ## 5. Re-running curation is cheap because the run never moved main
 
