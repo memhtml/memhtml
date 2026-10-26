@@ -154,9 +154,9 @@ One entry in a session's overlay log. There are seven kinds. A `put` writes a ne
 export const makeGit = (root: string): GitShape => ({
 ```
 
-Builds the `GitShape` service over the `git` binary. It runs every call as `git -C <root>` through `execFile` (`packages/store/src/git.ts:222-257`). Each spawn sets `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`, and `LC_ALL=C`, and removes the repository-selecting variables such as `GIT_DIR`, so a call made from inside a git hook still targets `root` (`packages/store/src/git.ts:174-207`). The user's own git config is still read, which is why every parsed call states its output format with explicit flags. `layerGit` wraps it as a layer (`packages/store/src/git.ts:493`). The CLI's v2 code calls it directly when it needs git for a root it already holds, as `loadVersion` does to load a head version (`apps/cli/src/head-cache.ts:177-183`). Tests use it to drive the real binary against a temporary repository.
+Builds the `GitShape` service over the `git` binary. It runs every call as `git -C <root>` through `execFile` (`packages/store/src/git.ts:229-264`). Each spawn sets `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`, and `LC_ALL=C`, sets `GIT_LITERAL_PATHSPECS`, `GIT_NOGLOB_PATHSPECS`, `GIT_GLOB_PATHSPECS`, and `GIT_ICASE_PATHSPECS` to `0` so a pathspec matches as git's default does whatever the calling shell exports, and removes the repository-selecting variables such as `GIT_DIR`, so a call made from inside a git hook still targets `root` (`packages/store/src/git.ts:177-214`). The user's own git config is still read, which is why every parsed call states its output format with explicit flags. `layerGit` wraps it as a layer (`packages/store/src/git.ts:500`). The CLI's v2 code calls it directly when it needs git for a root it already holds, as `loadVersion` does to load a head version (`apps/cli/src/head-cache.ts:177-183`). Tests use it to drive the real binary against a temporary repository.
 
-`packages/store/src/git.ts:292-467`, 16 importer files
+`packages/store/src/git.ts:299-474`, 16 importer files
 
 ### parseMemory
 

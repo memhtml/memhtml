@@ -7,7 +7,7 @@ import { Effect, Fiber, Result } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
 import { GitFailure, makeGit } from "../src/git.js"
-import { SESSION_TRAILER } from "../src/plumbing.js"
+import { parseNulPathList, SESSION_TRAILER } from "../src/plumbing.js"
 import { configureIdentity, type FixtureRepo, makeFixtureRepo } from "../src/testing.js"
 
 /**
@@ -616,6 +616,52 @@ describe("the environment cannot re-aim a call at another repository", () => {
       for (const [name, value] of saved) {
         if (value === undefined) delete process.env[name]
         else process.env[name] = value
+      }
+    }
+  })
+})
+
+describe("the environment cannot change how a pathspec matches", () => {
+  /**
+   * Four variables change every pathspec of every git call: `GIT_LITERAL_PATHSPECS` turns
+   * `:(literal)` and all other magic into plain characters, `GIT_NOGLOB_PATHSPECS` does the same to
+   * `*`, `?` and `[`, `GIT_GLOB_PATHSPECS` stops `*` from matching `/`, and `GIT_ICASE_PATHSPECS`
+   * folds case. Every caller of this service spells its pathspecs for git's default, so a value
+   * inherited from the calling shell must not move them. Each case compares a call made with the
+   * variable set against the same call made with it unset, after checking the pathspec is one the
+   * variable would change.
+   */
+  it("matches each pathspec as git's default does, whatever the four variables say", async () => {
+    const repo = await fixture()
+    for (const path of ["probe/a[b].html", "probe/ab.html", "probe/dir/x.html"]) {
+      await put(repo.root, path, "probe")
+    }
+    await run(repo.git.add(["probe"]))
+    await run(repo.git.commit("memhtml(write): probe"))
+    const listed = async (pathspec: string) =>
+      parseNulPathList(await run(repo.git.run(["ls-files", "-z", "--", pathspec])))
+
+    const cases = [
+      {
+        name: "GIT_LITERAL_PATHSPECS",
+        pathspec: ":(literal)probe/a[b].html",
+        has: "probe/a[b].html"
+      },
+      { name: "GIT_NOGLOB_PATHSPECS", pathspec: "probe/a[b].html", has: "probe/ab.html" },
+      { name: "GIT_GLOB_PATHSPECS", pathspec: "probe/*.html", has: "probe/dir/x.html" },
+      { name: "GIT_ICASE_PATHSPECS", pathspec: "PROBE/AB.HTML", has: null }
+    ] as const
+    for (const { name, pathspec, has } of cases) {
+      const unset = await listed(pathspec)
+      if (has === null) expect(unset, name).toEqual([])
+      else expect(unset, name).toContain(has)
+      const saved = process.env[name]
+      process.env[name] = "1"
+      try {
+        expect(await listed(pathspec), name).toEqual(unset)
+      } finally {
+        if (saved === undefined) delete process.env[name]
+        else process.env[name] = saved
       }
     }
   })

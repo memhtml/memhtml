@@ -4,7 +4,7 @@ Describes the source at 0.16.0 (2026-10-18). Citations are `path:line` into that
 
 These diagrams show the call order of six commands. `memhtml write` and `memhtml search` are the v1 doors over the SQLite index. `memhtml session commit`, `memhtml head search`, and `memhtml curate run` followed by `memhtml curate merge` are v2 commands over the head. Each participant is a file, a package, an Effect service tag, or a process defined in this repository, apart from the human or agent at the terminal. Each arrow is a call that the source makes, and the section under each diagram cites it.
 
-Every flow acts on the memhtml root, the separate memory tree that `--repo` or `MEMHTML_ROOT` names (`apps/cli/src/api-layer.ts:96-109`). `DatabaseService` is one connection to that root's `.memhtml/index.db` with `state.db` attached (`apps/cli/src/api-layer.ts:119-129`). `Git` runs `git` subprocesses in that root (`packages/store/src/git.ts:222-231`).
+Every flow acts on the memhtml root, the separate memory tree that `--repo` or `MEMHTML_ROOT` names (`apps/cli/src/api-layer.ts:96-109`). `DatabaseService` is one connection to that root's `.memhtml/index.db` with `state.db` attached (`apps/cli/src/api-layer.ts:119-129`). `Git` runs `git` subprocesses in that root (`packages/store/src/git.ts:229-238`).
 
 The two v1 commands run their dispatch arm over `layerApp`, the one production composition (`apps/cli/src/run.ts:2414-2431`, `apps/cli/src/api-layer.ts:409-419`). A handler in the MCP server reaches the same operations through the same layer. For example, `memory_write` calls `writeMemory` at `apps/mcp/src/handlers.ts:340`, and `memory_search` asks the head server first and calls `searchMemories` when it gets no answer (`apps/mcp/src/handlers.ts:581`). The MCP door itself is drawn in `architecture/data-flow.md`.
 
@@ -80,7 +80,7 @@ The note on `Store`: the store's `writeMemory` runs inside `exclusive`, which ta
 
 `Store->>Store`: `freePathFor` picks a free path (`packages/store/src/store.ts:746-754`), and `writeFileAt` writes the file with `node:fs` (`packages/store/src/store.ts:767`, `packages/store/src/store.ts:475-481`).
 
-`Store->>Git` and `Git-->>Store`: the store calls `git.add` and `git.commit` with provenance trailers (`packages/store/src/store.ts:768-771`). The `add` member of `Git` runs `git add` (`packages/store/src/git.ts:396-399`). Its `commit` member takes the checkout lock again, which the fiber already holds, then runs `git commit` and `git rev-parse HEAD` for the sha (`packages/store/src/git.ts:403-422`). The write, the stage, and the commit run under a journal that compensates a failure (`makeJournal`, `packages/store/src/store.ts:762-773`).
+`Store->>Git` and `Git-->>Store`: the store calls `git.add` and `git.commit` with provenance trailers (`packages/store/src/store.ts:768-771`). The `add` member of `Git` runs `git add` (`packages/store/src/git.ts:403-406`). Its `commit` member takes the checkout lock again, which the fiber already holds, then runs `git commit` and `git rev-parse HEAD` for the sha (`packages/store/src/git.ts:445-464`). The write, the stage, and the commit run under a journal that compensates a failure (`makeJournal`, `packages/store/src/store.ts:762-773`).
 
 `Store-->>Ops`: the result carries the path, `created`, `deduped`, the commit sha, and the content hash (`packages/store/src/store.ts:775-781`).
 

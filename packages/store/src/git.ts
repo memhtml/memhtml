@@ -163,7 +163,10 @@ interface ProcessResult {
 /**
  * Environment for every git call. `GIT_TERMINAL_PROMPT=0` keeps a credential prompt from hanging a
  * headless indexer forever, `GIT_OPTIONAL_LOCKS=0` stops a read from taking the index lock, and
- * `LC_ALL=C` pins the message locale so a parsed word is the same word everywhere.
+ * `LC_ALL=C` pins the message locale so a parsed word is the same word everywhere. The four
+ * `GIT_*_PATHSPECS` variables are pinned off because each one changes how every pathspec matches:
+ * literal makes `:(literal)` a plain prefix that matches nothing, noglob and glob change what `*`,
+ * `?` and `[` match, and icase folds case. Every caller writes its pathspecs for git's default.
  *
  * **A user's own config IS read.** Nothing here neutralizes `~/.gitconfig`, so every call whose output
  * a caller parses states its format with explicit flags rather than inheriting a default: `-z` against
@@ -174,7 +177,11 @@ interface ProcessResult {
 const GIT_ENV: Readonly<Record<string, string>> = {
   GIT_TERMINAL_PROMPT: "0",
   GIT_OPTIONAL_LOCKS: "0",
-  LC_ALL: "C"
+  LC_ALL: "C",
+  GIT_LITERAL_PATHSPECS: "0",
+  GIT_NOGLOB_PATHSPECS: "0",
+  GIT_GLOB_PATHSPECS: "0",
+  GIT_ICASE_PATHSPECS: "0"
 }
 
 /**
