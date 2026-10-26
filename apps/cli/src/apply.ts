@@ -2,7 +2,13 @@ import { readFile } from "node:fs/promises"
 
 import { type ErrorCode, type Failure, fail } from "./envelope.js"
 import type { BatchOpReport, BatchWriteResult, WriteParams } from "./operations.js"
-import { claimFromProse, proseTail } from "./prose.js"
+import {
+  claimFromProse,
+  MARKUP_IN_PROSE_SUGGESTIONS,
+  markupInProse,
+  markupInProseReason,
+  proseTail
+} from "./prose.js"
 
 /**
  * `memhtml apply`'s own layer: JSONL text in, decoded ops or a usage failure out.
@@ -182,7 +188,11 @@ const numeric = (value: unknown, field: string, at: Line): number | Failure => {
  * One line as a `WriteParams`, or the refusal naming the line.
  *
  * The shape rules AC-6-4 puts at this door and nowhere else: the line parses, it declares an op in
- * the vocabulary, and it carries `title` and `type` as non-empty strings. Everything past that is
+ * the vocabulary, and it carries `title` and `type` as non-empty strings. A prose `body` must also
+ * hold no HTML block tag outside code ({@link markupInProse}): prose is escaped as text, so such a
+ * line would write the tag's characters into the claim, and only this door still knows the caller
+ * sent markup. That one is checked only when `article_html` is absent, so a line that names both
+ * still reaches the per-op XOR refusal one layer down. Everything past that is
  * the operations layer's decode (is `type` in the vocabulary) or the store's render gate (is the
  * markup valid). Those are checked per op and reported per op, and they are not duplicated here,
  * because a second copy of the type vocabulary is a second thing to update when it moves.
@@ -272,7 +282,17 @@ const opAt = (record: Record<string, unknown>, at: Line): WriteParams | Failure 
    * guard between a missing claim and a silent write.
    */
   const prose = typeof params.body === "string" ? (params.body as string) : undefined
+  const markup = typeof params.articleHtml === "string" ? (params.articleHtml as string) : ""
   if (prose !== undefined && prose.trim() !== "") {
+    const refusal = markup.trim() === "" ? markupInProse(prose) : undefined
+    if (refusal !== undefined) {
+      return lineError(
+        "ERR_INVALID_FLAG",
+        at,
+        markupInProseReason(refusal),
+        MARKUP_IN_PROSE_SUGGESTIONS
+      )
+    }
     params.claim = claimFromProse(prose)
     params.body = proseTail(prose)
   } else if (prose !== undefined) {
