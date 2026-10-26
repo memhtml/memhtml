@@ -41,7 +41,9 @@ import {
  *   edited at its destination and never at the path it left" (the link on the old path passes).
  * - withRepoints: the `leaving.has(...)` skip dropped -> "withRepoints repoints every live holder
  *   before the first move and leaves archived holders and settled edges alone" (an unlink lands on
- *   a holder the batch archives).
+ *   a holder the batch archives); the `unlinked.has(key)` skip dropped -> the same case (a second
+ *   pair lands beside the batch's own unlink). Both calls run under `curate` (2026-10-26): under
+ *   `session` the holder, an arc, is skipped as reserved whichever skip is dropped.
  * - validate, destination anchor (2026-10-18): `bar.requireAnchor &&` dropped from the move loop ->
  *   "a moved record keeps to the write bar's anchor rule at its destination" (the library default
  *   bar refuses the bare move).
@@ -306,14 +308,14 @@ describe("withRepoints", () => {
     const labelOnly: OverlayOp = { kind: "label", path: FROM, entity: "system:agentd" }
     expect(withRepoints(head, [labelOnly])).toEqual([labelOnly])
     const dropped = [unlink(HOLDER, "part_of", `/${FROM}`), moved]
-    expect(withRepoints(head, dropped)).toEqual(dropped)
+    expect(withRepoints(head, dropped, "curate")).toEqual(dropped)
     const retire: OverlayOp = {
       kind: "archive",
       path: HOLDER,
       to: `archive/2026/${HOLDER}`,
       html: ARC
     }
-    expect(withRepoints(head, [retire, moved])).toEqual([retire, moved])
+    expect(withRepoints(head, [retire, moved], "curate")).toEqual([retire, moved])
     expect(validateOps(head, [retire, moved], { scope: "curate" })).toEqual([])
   })
 
