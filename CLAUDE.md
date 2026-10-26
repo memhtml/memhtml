@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `memhtml` is an agent's long-term memory store: a git repository of semantic HTML5 files (one fact per file) with a rebuildable SQLite index, four-arm RRF retrieval, sessions that each land as one commit over an in-memory head, and a curator that works on a branch a human merges. A pnpm + turbo TypeScript monorepo on Effect v4 (beta, pinned via catalog), Node 24, driven through `mise`.
 
-Read first, in this order: `README.md` (the system in one page), `docs/design.md` (every architectural decision with the file:line that implements it), `.lessons/INDEX.md` (prior-session lessons — grep `.lessons/solutions/**` before related work). `AGENTS.md` is **generated** — never hand-edit it.
+Read first, in this order: `README.md` (the system in one page), `docs/design.md` (every architectural decision with the symbol that implements it), `.lessons/INDEX.md` (prior-session lessons — grep `.lessons/solutions/**` before related work). `AGENTS.md` is **generated** — never hand-edit it.
 
 ## Commands
 
-`mise` is the command surface — `mise run check` is the definition of done, and it is exactly what CI runs, so the gate cannot drift from the local one. It resolves to `pnpm check` → `turbo run lint lint:repo lint:md typecheck test test:integration test:eval test:a11y`, and it is credential-free by construction (eval defaults to `--mode fake`; integration sets `MEMHTML_EMBED=off` / `MEMHTML_LLM=off` itself; the browser tier reads `apps/docs/dist` over a loopback static server).
+`mise` is the command surface — `mise run check` is the definition of done, and it is exactly what CI runs, so the gate cannot drift from the local one. It resolves to `pnpm check` → `turbo run lint lint:repo lint:md docs:citations typecheck test test:integration test:eval test:a11y`, and it is credential-free by construction (eval defaults to `--mode fake`; integration sets `MEMHTML_EMBED=off` / `MEMHTML_LLM=off` itself; the browser tier reads `apps/docs/dist` over a loopback static server).
 
 The browser tier needs a Chromium, which nothing fetches implicitly — Playwright 1.62 ships no install script. `mise run install` ends with `mise run browsers`, and CI runs that step behind a cache of `~/.cache/ms-playwright`. The binary is Chrome for Testing, which axe drives through Playwright.
 
@@ -19,6 +19,7 @@ Every mise task is a thin delegation to the pnpm script under it. **turbo owns t
 | `mise run build`                             | `tsc -b` across the project-reference graph                                                                                                                                                            |
 | `mise run lint` / `mise run format`          | per-package biome check / check --write, plus `lint:repo` (`biome check .`) so the linted set is `biome.json`'s `files.includes` rather than each package's `src tests`, then dprint over the Markdown |
 | `mise run lint:md` / `mise run format:md`    | dprint check / fmt over every authored `*.md` (textWrap: never — one line per paragraph)                                                                                                               |
+| `mise run docs:citations`                    | `scripts/doc-citations.mjs`: hand docs cite `path::Symbol`, never `path:N`, and each `docs/codebase/` page names a commit in the clone                                                                 |
 | `mise run typecheck`                         | `tsc --noEmit -p tsconfig.check.json` per package — tests included                                                                                                                                     |
 | `mise run test`                              | every package's unit + property suites                                                                                                                                                                 |
 | `mise run test:integration`                  | `tests-integration/` — real git repo, real database, whole stack                                                                                                                                       |
@@ -137,5 +138,7 @@ Releases are cut by release-please from those Conventional Commit subjects and p
 `package:smoke:live` adds the edge the credential-free run cannot see, Bedrock embeddings through the installed binary, and is what lefthook's pre-push runs when a credential is present, saying so on stderr when it cannot.
 
 `spec/memhtml.symspec.json` is the EARS requirements ledger (keys like `RET-3`, `STORE-2`, each naming its verification method and the code that satisfies it) — retiring or adding a requirement is its own `spec:` commit. `docs/backlog.md` is the fine-grained ledger, `ROADMAP.md` the system-level view with measured benchmark standing. Durable lessons land in `.lessons/solutions/**` as the rule, never the diff.
+
+**Docs cite code by symbol, never by line.** A hand-written doc cites `path::Symbol`, or `path::Outer::inner` for a declaration inside a top-level one (`packages/store/src/store.ts::makeStore::writeMemory`), or a bare path when the target is not a declaration (SQL, config, Markdown, a whole module). A line number goes stale at the next edit above it and still reads as a citation; a symbol fails `mise run docs:citations` at the commit that removes it. `docs/codebase/` is the exception, by design: it is generated against one commit and every page is stamped with that commit, so its line citations stay true for the commit they describe. Regenerate it instead of editing it by hand, and never move its citations to HEAD.
 
 Artifacts describe what the code does now — never what it did before. No "used to", "previously", "this replaces". A dated, probed external fact ("probed live 2026-08-03: …") is present-tense knowledge and stays.

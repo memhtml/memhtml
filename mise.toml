@@ -154,6 +154,15 @@ description = "Fail if any Markdown file is not dprint-formatted (also runs insi
 raw_args = true
 run = "pnpm lint:md"
 
+[tasks."docs:citations"]
+description = "Fail on a line citation, an undeclared symbol, or a missing path in the hand-written docs"
+# Also reached by `mise run check`, which names the root `//#docs:citations` turbo task. Hand docs cite
+# code as `path::Symbol`, never `path:N`, because a line number goes stale at the next edit above it
+# and still reads as a citation. `docs/codebase/` is held to a different rule: each page names the
+# commit it was generated against, and that commit has to exist in the clone.
+raw_args = true
+run = "pnpm docs:citations"
+
 [tasks.typecheck]
 description = "Strict tsc --noEmit per package, tests included"
 raw_args = true
