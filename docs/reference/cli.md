@@ -4,7 +4,7 @@ Describes the source at 0.16.0 (2026-10-18). Citations are `path:line` into that
 
 The `memhtml` binary is the operator surface for a memhtml root. Its entry point, `bin.ts`, passes `process.argv` to `run` and writes the result with `process.stdout.write` (`apps/cli/src/bin.ts:5`, `apps/cli/src/bin.ts:22`).
 
-Every subcommand is one entry in the `COMMANDS` array (`apps/cli/src/commands.ts:185-1746`). The same array drives the parser, the validator, `memhtml manifest`, `memhtml help`, and the generated `AGENTS.md`. At 0.16.0 it holds 57 commands, and this page has a section for 51 of them.
+Every subcommand is one entry in the `COMMANDS` array (`apps/cli/src/commands.ts:186-1811`). The same array drives the parser, the validator, `memhtml manifest`, `memhtml help`, and the generated `AGENTS.md`. It holds 58 commands, and this page has a section for 52 of them.
 
 The six commands without a section are `integrations install`, `integrations uninstall`, `integrations list`, `integrations doctor`, `integrations shell`, and `hook`. `docs/design.md` §12.1, "Host integrations", covers the receipt, the fragment grain, and the hook posture. Two docs-site task pages cover their use: `apps/docs/src/content/docs/learn/operations/wire-a-coding-agent.md` ("Wire up your coding agent") and `apps/docs/src/content/docs/learn/operations/hooks-and-recall.md` ("Hooks and recall"). They appear below only where they share a mechanism with the other commands.
 
@@ -1265,38 +1265,42 @@ Failure: nothing is written before the base checks out and the head loads, so a 
 ```
 memhtml session put --id s1 --file ops.jsonl
 memhtml session put --id s1 --file ops.jsonl --no-server
+memhtml session put --id s1 --file ops.jsonl --dry-run
 printf '%s\n' '{"op":"label","path":"areas/inbox/x.html","entity":"system:memhtml"}' | memhtml session put --id s1 --file -
 ```
 
-Appends write ops, and `label` or `unlabel` ops on existing records, to a session's overlay log (`sessionPut` at `apps/cli/src/v2.ts:611-699`). The whole op stream is read and decoded before anything opens. A `write` line goes through the same decoder `apply` uses, and a `label` or `unlabel` line names a `path` and an `entity` (`decodeSessionPut` at `apps/cli/src/apply.ts:391-441`, `apps/cli/src/run.ts:2127-2135`). Under `MEMHTML_SESSION` with no log yet, the session is started first (`ensureSession` at `apps/cli/src/v2.ts:442-469`).
+Appends write ops, and `label` or `unlabel` ops on existing records, to a session's overlay log (`sessionPut` at `apps/cli/src/v2.ts:642-754`). The whole op stream is read and decoded before anything opens. A `write` line goes through the same decoder `apply` uses, and a `label` or `unlabel` line names a `path` and an `entity` (`decodeSessionPut` at `apps/cli/src/apply.ts:391-441`, `apps/cli/src/run.ts:2127-2135`). Under `MEMHTML_SESSION` with no log yet, the session is started first (`ensureSession` at `apps/cli/src/v2.ts:463-490`).
 
-Then it asks the head server's `/v1/neighbors` route to place, judge, and rank the new ops over the version at the session's base. A session on a `refs/heads/curate/` branch is judged here under the `curate` scope, and so is any call the server doesn't answer within 100 ms to accept or 10 s to answer (`apps/cli/src/v2.ts:630-647`, `askHead` at `apps/cli/src/head-client.ts:226-229`). The local path reads the store policy, loads the base, and runs `preparePuts` (`apps/cli/src/v2.ts:650-668`):
+Then it asks the head server's `/v1/neighbors` route to place, judge, and rank the new ops over the version at the session's base. A session on a `refs/heads/curate/` branch is judged here under the `curate` scope, and so is any call the server doesn't answer within 100 ms to accept or 10 s to answer (`apps/cli/src/v2.ts:673-693`, `askHead` at `apps/cli/src/head-client.ts:226-229`). The request carries `placements: true`, which a server older than the `placements` answer refuses, so a put is never placed by an older server's slug rule. The local path reads the store policy, loads the base, and runs `preparePuts` (`apps/cli/src/v2.ts:696-714`):
 
-1. Each write is rendered the way the store would write it and placed at the path the store would choose. A valid explicit `path` is used as given, and a derived path already held by the view or by an earlier op in the call takes the store's `-2`, `-3` suffix (`putPathFor` at `apps/cli/src/v2.ts:305-328`).
-2. Every op in the log plus the new ones is judged against the base with `validateOps`, under the store's write bar (`apps/cli/src/v2.ts:556-559`, `validateOps` at `packages/session/src/validate.ts:181`). The violation kinds are `format`, `duplicate`, `claim-edit`, `reserved-path`, `batch-cap` (200 ops), and `write-bar` (`Violation` and `BATCH_CAP` at `packages/session/src/validate.ts:24-45`).
-3. A `format`, `reserved-path`, `batch-cap`, or `write-bar` violation at a path this call touches refuses the whole call, and in a run's own session so do `duplicate` and `claim-edit` (`BLOCKING_VIOLATIONS` at `apps/cli/src/v2.ts:334-339`, `apps/cli/src/v2.ts:560-568`). Outside a run those two are reported and left to the caller, because a rebase can change the answer.
-4. With nothing blocking, each put gets its three nearest existing records, ranked the way `head search` ranks. The vector arm joins when the store has a vector cache and an embedder is bound, with each put's text embedded as a document in one call per batch (`apps/cli/src/v2.ts:569-592`, `vectorsForPuts` at `apps/cli/src/head-vectors.ts:280-315`).
+1. Each write is rendered the way the store would write it and placed at the path the store would choose. A valid explicit `path` is used as given, and a derived path already held by the view or by an earlier op in the call takes the store's `-2`, `-3` suffix, and the put's placement records the ordinal it took (`putPathFor` at `apps/cli/src/v2.ts:324-349`).
+2. Every op in the log plus the new ones is judged against the base with `validateOps`, under the store's write bar (`apps/cli/src/v2.ts:582-585`, `validateOps` at `packages/session/src/validate.ts:181`). The violation kinds are `format`, `duplicate`, `claim-edit`, `reserved-path`, `batch-cap` (200 ops), and `write-bar` (`Violation` and `BATCH_CAP` at `packages/session/src/validate.ts:24-45`).
+3. A `format`, `reserved-path`, `batch-cap`, or `write-bar` violation at a path this call touches refuses the whole call, and in a run's own session so do `duplicate` and `claim-edit` (`BLOCKING_VIOLATIONS` at `apps/cli/src/v2.ts:355-360`, `apps/cli/src/v2.ts:586-594`). Outside a run those two are reported and left to the caller, because a rebase can change the answer.
+4. With nothing blocking, each put gets its three nearest existing records, ranked the way `head search` ranks. The vector arm joins when the store has a vector cache and an embedder is bound, with each put's text embedded as a document in one call per batch (`apps/cli/src/v2.ts:595-618`, `vectorsForPuts` at `apps/cli/src/head-vectors.ts:280-315`).
 
 The append always happens in this process, under the session's lock, and only when the log on disk still holds the ops this call read (`appendOps` at `packages/session/src/session.ts:325-335`).
+
+With `--dry-run` the call runs the same steps and stops before the append, so it answers where each put would land, with the same refusal when a violation blocks, and writes nothing (`apps/cli/src/v2.ts:723`). It also skips the implicit start: under `MEMHTML_SESSION` with no log yet, it answers over the base that start would take, with an empty log (`apps/cli/src/v2.ts:657-670`). `memhtml path` answers the same question for one write over the version at HEAD, but reads no session and judges nothing, so inside a session the dry run is the answer.
 
 Flags:
 
 - `--id` (string): "The session to append to. Defaults to $MEMHTML_SESSION; with neither, the call is ERR_MISSING_ARGUMENT. With the id taken from $MEMHTML_SESSION and no log yet, the session is started on `refs/heads/main`'s tip first (one `rev-parse`, no head load), so a run's first write needs no `session start`; a `--id` given on the line must name a started session."
 - `--file` (string, required): "JSONL, one object per line. A `write` line takes the same fields `memhtml apply` accepts; each is rendered to the file the store would write and lands at the path the store would choose. A `label` line, `{"op":"label","path":"areas/inbox/x.html","entity":"system:memhtml"}`, adds one `memhtml-entity` to an existing record's head, and an `unlabel` line with the same fields removes one; neither touches the article, so the record keeps its content hash. A label value is a lowercase `type:name` (`service:memhtml`, `project:agent-runtime`, `person:laura`) the record does not carry yet; an unlabel names a value the record carries, exactly as written. `-` reads stdin. A malformed op, a reserved path, a label that is malformed or already carried, an unlabel of a value the record lacks, an unlabel that leaves a record with no entity outside `projects/<slug>/` while the store requires an anchor, or a record below the write bar refuses the whole call and appends nothing. The bar is the store's policy, `writeBar` in `memhtml.config.json` at the store root (`memhtml config` shows the effective values): `refusedTypes` names the types no writer may put, each refused with the reason the file gives, and `requireAnchor` makes every record name the system, project, or person it is about (an `entities` value, or a `workspace`; a task is anchored by either). With no file the bar refuses no type and requires no anchor; the format and integrity refusals hold either way, and a file that does not decode refuses the call with ERR_STORE_CONFIG. The bar holds for every writer and every type, the curator and tasks included. The response lists each put's nearest existing records under `neighbors`, so a near-duplicate can be skipped and the related records linked before the commit. `neighbors` is ranked the way `head search` ranks, the vector arm included when the store has a vector cache (`memhtml head embed`) and an embedder is configured: each put's own text is embedded as a document, one call per batch. When the arm cannot run the neighbors come from the lexical arm alone and `vector` says why (`used: false` with a `reason`); the put itself never fails for it."
 - `--server` (boolean, default `true`): "Ask the head server on `.memhtml/head.sock` first (`memhtml head serve`), falling back to loading the head here when no server accepts within 100 ms or answers within 10 s; `--no-server` always loads here. The placements, violations, and neighbors (label lines included, the vector arm run with the server's cache and embedder) are then computed by the server over the version at the session's base; the append always happens here. The payload's `head.source` is `server` when the server answered."
+- `--dry-run` (boolean, default `false`): "Answer as the put would and append nothing: the same `paths`, `placements` (each put's `path` and the collision `ordinal` it took: 1 unsuffixed, 2 for `-2`, null for an explicit `path` used as given), neighbors, and violations, and the same refusal when a violation blocks, with `dryRun: true`, `appended: 0`, and the log untouched. Under $MEMHTML_SESSION with no log yet, no session is started: the answer is over the base that start would take, with an empty log. The answer holds for the session's base and log as they are; a put that lands first can take a path."
 
 `--file` is required in the table, so a bare `session put` reading stdin is refused. `--file -` reads stdin, and so does a positional `-`, which wins over a `--file` path given beside it (`apps/cli/src/run.ts:2128-2130`).
 
 Response: `session.appended`.
 
-A caller reads `id`, `started` (true when this call started the session), `baseSha`, `appended` (ops this call added), `ops` (the log's length after it), `paths` (where the puts landed, in input order), `labels`, `neighbors` (per put, its `path` and `hits`), `vector`, `violations`, and `head` (`apps/cli/src/v2.ts:678-698`). `violations` lists every violation over the whole log, the ones that didn't block included, so a `duplicate` reported here is one the next commit will refuse unless a rebase changes it. `vector` is null when the call ranked nothing.
+A caller reads `id`, `dryRun`, `started` (true when this call started the session), `baseSha`, `appended` (ops this call added, 0 under `--dry-run`), `ops` (the log's length after it), `paths` (where the puts landed, in input order), `placements` (per put, its `path` and the collision `ordinal` it took: 1 for the unsuffixed name, 2 for `-2`, and `null` for an explicit `path` used as given), `labels`, `neighbors` (per put, its `path` and `hits`), `vector`, `violations`, and `head` (`apps/cli/src/v2.ts:724-753`). `violations` lists every violation over the whole log, the ones that didn't block included, so a `duplicate` reported here is one the next commit will refuse unless a rebase changes it. `vector` is null when the call ranked nothing.
 
 Errors:
 
 - `ERR_PATH_NOT_FOUND` (exit 2) when `--file` can't be read, and `ERR_INVALID_FLAG` or `ERR_MISSING_ARGUMENT` (exit 2) for a line that isn't a JSON object, an `op` outside `write`, `label`, and `unlabel`, a bad field, or a stream with no ops. The message names the line (`applyText` at `apps/cli/src/apply.ts:450-466`, `decodeSessionPut` at `apps/cli/src/apply.ts:391-441`).
-- `ERR_INVALID_MEMORY` (exit 1) when a blocking violation refuses the call, naming each one (`apps/cli/src/v2.ts:670-676`), or when a write line's values don't decode, such as a bad `due`.
-- `ERR_STORE_CONFIG` (exit 1) when `memhtml.config.json` exists and doesn't decode (`apps/cli/src/v2.ts:654`).
-- `ERR_STORAGE` (exit 1) as `session.read` for an id with no log, `session.decode` for a log that doesn't decode, `session.locked` for a held lock, `session.moved` when another writer changed the log during the call, and `session.put.pathExhausted` when every suffix through `-1000` is taken (`resumeSession` at `packages/session/src/session.ts:290-301`, `LOG_MOVED` at `packages/session/src/session.ts:304`, `apps/cli/src/v2.ts:327`).
+- `ERR_INVALID_MEMORY` (exit 1) when a blocking violation refuses the call, naming each one (`apps/cli/src/v2.ts:716-722`), or when a write line's values don't decode, such as a bad `due`.
+- `ERR_STORE_CONFIG` (exit 1) when `memhtml.config.json` exists and doesn't decode (`apps/cli/src/v2.ts:700`).
+- `ERR_STORAGE` (exit 1) as `session.read` for an id with no log, `session.decode` for a log that doesn't decode, `session.locked` for a held lock, `session.moved` when another writer changed the log during the call, and `session.put.pathExhausted` when every suffix through `-1000` is taken (`resumeSession` at `packages/session/src/session.ts:290-301`, `LOG_MOVED` at `packages/session/src/session.ts:304`, `apps/cli/src/v2.ts:348`).
 - `ERR_GIT`, `ERR_INVALID_MEMORY`, or `ERR_STORAGE` (exit 1) from loading the base.
 
 Failure: a refused call appends nothing, and the log is written whole or not at all. An implicit start that was followed by a refused put leaves the started session with an empty log. Nothing is committed: the ops wait in the log for `session commit`.
@@ -1546,6 +1550,45 @@ Errors:
 - `ERR_GIT` (exit 1) when the root isn't a git repository, or a git read during the load fails.
 
 Failure: a local `head search` writes nothing, apart from deleting a snapshot it can't use, as `head status` does. Through a server, the request can advance the server's version, and an embed past its deadline may keep running in the server after the answer.
+
+## path
+
+```
+memhtml path --title 'Checkout retries' --type semantic
+memhtml path --title 'Checkout retries' --type procedural --workspace payments --claimed claimed.txt
+memhtml path --title 'Checkout retries' --type semantic --path areas/inbox/checkout-retries.html
+```
+
+Prints the path a write with these fields would land at, and the collision ordinal it took, over the version at HEAD (`pathPreview` at `apps/cli/src/v2.ts:799-836`). It resolves HEAD and loads that version as `head status` does, then places the write with `putPathFor`, the function `session put` places a write line with (`apps/cli/src/v2.ts:324-349`). So the directory comes from the same placement rules, the filename from the same slug, and a derived path the head already holds takes the same `-2`, `-3` suffix. It never asks the head server, builds no app layer, and writes nothing.
+
+It reads no session. A session places its puts over its base, which can trail HEAD, and over the puts it already holds, so inside a session `memhtml path` can name a path the next `session put` won't take. There, `session put --dry-run` is the answer (see [session put](#session-put)).
+
+It places and does not judge. A path the write bar refuses is still answered, such as `areas/inbox/index.html` for a title `Index` (a filename the site generator owns) or a path under `areas/arcs/`, which only the `curate` scope writes (`isReservedPath` at `packages/session/src/validate.ts:87-97`). `session put --dry-run` judges each line as the put does and refuses such a line.
+
+`--claimed` names paths pending elsewhere, such as another session's puts or a draft not written yet. The file holds one repo-relative memory path per line, and each counts as taken, as a path the head holds does. It's read and judged before anything opens, so a file of another shape is refused rather than read as claiming nothing (`claimedPathsOf` at `apps/cli/src/v2.ts:762-782`, `apps/cli/src/run.ts:2219-2251`).
+
+Flags:
+
+- `--title` (string, required): "The write's title, as a write line gives it. Its slug is the filename stem: kebab-case, at most 80 characters, a longer title cut at its last word boundary that keeps at least 60, else at 80."
+- `--type` (string, required, one of `episodic`, `semantic`, `procedural`, `agent_insight`, `user_preference`, `error_pattern`, `verdict`, `precedent`, `arc`, `task`): "The memory type, as a write line gives it. `episodic` takes the `YYYYMMDD-` prefix of the current UTC day, `task` routes to `tasks/` under its workspace or the inbox, and `arc` to `areas/arcs/`, which only the `curate` scope writes."
+- `--workspace` (string): "Routes the write to `projects/<slug>/`, as a write line's `workspace` does."
+- `--tag` (string, repeatable): "A tag, as a write line's `tags` holds one. Repeatable; the first non-blank one routes a semantic, procedural, or precedent write with no workspace to `resources/<slug>/`, except one that slugs to `people`, which no rule routes into, so that write falls to the inbox."
+- `--path` (string): "An explicit path, as a write line's `path`. A usable one is the answer as given, in canonical form, with `ordinal: null` and no suffix, and `occupied` says whether the head or --claimed already holds it (a put there is judged against that record rather than stepped past it). One that is not a usable memory path is ignored and the path derived, as a put derives it."
+- `--claimed` (string): "A file of paths pending elsewhere (another session's puts, a draft not written yet), one repo-relative memory path per line, blank lines skipped; `-` reads stdin. Each counts as taken, as a path the head holds does, so the answer steps past it. An unreadable file is ERR_PATH_NOT_FOUND and a line that is not a usable memory path is ERR_INVALID_FLAG naming the line, both at exit 2 before anything opens."
+
+Response: `memory.path`.
+
+A caller reads `path`, `ordinal`, `occupied`, `claimed`, and `head` (`apps/cli/src/v2.ts:825-835`). `ordinal` is 1 for the unsuffixed name, 2 for `-2`, and so on, and `null` for an explicit `path` used as given. `occupied` is true only for an explicit path the head or `--claimed` already holds, since a derived path is always a free one. `claimed` counts the distinct paths the file named. `head` has the fields `head status` reports, without `server`. The answer holds for `head.sha` and the claimed set given, and a write that lands first can take the path.
+
+Errors:
+
+- `ERR_MISSING_ARGUMENT` (exit 2) without `--title` or `--type`, and `ERR_INVALID_FLAG` (exit 2) for a `--type` outside the list or a blank `--title`, which a write line refuses too (`pathFlags` at `apps/cli/src/run.ts:1033-1042`).
+- `ERR_PATH_NOT_FOUND` (exit 2) when `--claimed` can't be read, and `ERR_INVALID_FLAG` (exit 2) for a line in it that isn't a usable memory path, naming the line.
+- `ERR_INVALID_MEMORY` (exit 1) when HEAD is unborn (`headSha` at `apps/cli/src/v2.ts:290-299`).
+- `ERR_GIT` (exit 1) when the root isn't a git repository, or a git read during the load fails.
+- `ERR_STORAGE` (exit 1) as `session.put.pathExhausted` when every suffix through `-1000` is taken, as `session put` reports it (`apps/cli/src/v2.ts:348`).
+
+Failure: `path` writes nothing, apart from deleting a snapshot it can't use, as `head status` does.
 
 ## head serve
 

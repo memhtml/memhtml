@@ -1,4 +1,4 @@
-import { filenameFor, slugify } from "./slug.js"
+import { filenameFor, slugify, slugifyStem } from "./slug.js"
 import { PARA_BUCKETS, type ParaBucket } from "./types.js"
 
 /**
@@ -189,14 +189,15 @@ export const placementFor = (input: PlacementInput): string => {
 /**
  * The full path for a new memory. An explicit valid `path` is authoritative and returned
  * verbatim in canonical form; otherwise the directory comes from {@link placementFor} and
- * the filename from {@link filenameFor}, which date-prefixes an episodic entry.
+ * the filename from {@link filenameFor} over the title's {@link slugifyStem} stem, which
+ * date-prefixes an episodic entry.
  */
 export const memoryPathFor = (
   input: PlacementInput & { readonly title: string; readonly at: Date }
 ): string => {
   if (input.path !== undefined && isValidMemoryPath(input.path)) return normalizePath(input.path)
   const filename = filenameFor({
-    slug: slugify(input.title),
+    slug: slugifyStem(input.title),
     episodic: input.memoryType === "episodic",
     at: input.at
   })

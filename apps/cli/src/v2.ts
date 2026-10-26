@@ -9,8 +9,14 @@ import {
   StorageFailure,
   type StoreConfigInvalid
 } from "@memhtml/contracts/errors"
-import { isValidMemoryPath, memoryPathFor } from "@memhtml/contracts/paths"
-import { filenameFor, slugify, withCollisionOrdinal } from "@memhtml/contracts/slug"
+import {
+  isValidMemoryPath,
+  memoryPathFor,
+  memoryPathViolation,
+  normalizePath,
+  type PlacementInput
+} from "@memhtml/contracts/paths"
+import { filenameFor, slugifyStem, withCollisionOrdinal } from "@memhtml/contracts/slug"
 import {
   type HeadVersion,
   recordFrom,
@@ -44,7 +50,7 @@ import {
   withRepoints
 } from "@memhtml/session"
 import { readSnapshot, snapshotPathFor } from "@memhtml/snapshot"
-import { type GitFailure, isoSecond, makeGit, type WriteInput } from "@memhtml/store"
+import { type GitFailure, isoSecond, makeGit } from "@memhtml/store"
 import { Effect } from "effect"
 import ms from "ms"
 import type { EmbedderShape } from "./api-layer.js"
@@ -97,7 +103,7 @@ import {
   vectorsForPuts,
   vectorsForQuery
 } from "./head-vectors.js"
-import { toWriteInput } from "./operations.js"
+import { decodeOperatorType, toWriteInput } from "./operations.js"
 import {
   commitSubjectOf,
   mergeBase,
@@ -293,28 +299,43 @@ const headSha = (root: string): Effect.Effect<string, GitFailure | InvalidMemory
   })
 
 /**
+ * Where a put lands and how it got there: `ordinal` is the collision ordinal the derived path took
+ * (1 for the unsuffixed name, 2 for `-2`, and so on), or `null` when an explicit valid `path` was
+ * used as given, which takes no ordinal.
+ */
+export interface Placement {
+  readonly path: string
+  readonly ordinal: number | null
+}
+
+/** What placing a put reads from a write: the placement fields, the title, and the write's instant. */
+export type PutPlacementInput = PlacementInput & { readonly title: string; readonly at: string }
+
+/**
  * The path a `put` lands at: the path the store would choose for the same write.
  *
  * `memoryPathFor` decides the directory and the filename. An explicit valid `path` is authoritative
  * and gets no collision suffix, exactly as the store treats one: a session's validator then reports
  * `claim-edit` or `duplicate` at commit if it is occupied, which is the session's spelling of the
- * store's `WriteConflict`. A derived path that the view or an earlier put in this batch already holds
- * takes the store's ordinal suffix (`-2`, `-3`, ...) so two ops sharing a title in one call cannot
- * silently become one file.
+ * store's `WriteConflict`. A derived path that the view or a path in `claimed` (an earlier put in
+ * this batch, or a path `memhtml path --claimed` names) already holds takes the store's ordinal
+ * suffix (`-2`, `-3`, ...) so two ops sharing a title in one call cannot silently become one file.
  */
-const putPathFor = (
+export const putPathFor = (
   view: HeadView,
-  input: WriteInput,
+  input: PutPlacementInput,
   claimed: ReadonlySet<string>
-): Effect.Effect<string, StorageFailure> => {
+): Effect.Effect<Placement, StorageFailure> => {
   const at = new Date(input.at)
   const first = memoryPathFor({ ...input, at })
-  if (input.path !== undefined && isValidMemoryPath(input.path)) return Effect.succeed(first)
+  if (input.path !== undefined && isValidMemoryPath(input.path)) {
+    return Effect.succeed({ path: first, ordinal: null })
+  }
   const free = (candidate: string): boolean =>
     !claimed.has(candidate) && view.get(candidate) === undefined
-  if (free(first)) return Effect.succeed(first)
+  if (free(first)) return Effect.succeed({ path: first, ordinal: 1 })
   const directory = first.slice(0, first.lastIndexOf("/"))
-  const base = slugify(input.title)
+  const base = slugifyStem(input.title)
   const episodic = input.memoryType === "episodic"
   for (let ordinal = 2; ordinal <= 1000; ordinal += 1) {
     const candidate = `${directory}/${filenameFor({
@@ -322,7 +343,7 @@ const putPathFor = (
       episodic,
       at
     })}`
-    if (free(candidate)) return Effect.succeed(candidate)
+    if (free(candidate)) return Effect.succeed({ path: candidate, ordinal })
   }
   return Effect.fail(StorageFailure.make({ operation: "session.put.pathExhausted" }))
 }
@@ -474,6 +495,8 @@ export interface PreparedPuts {
   readonly appended: ReadonlyArray<OverlayOp>
   /** The puts alone, rendered the way the store would write them and placed at the paths it would choose. */
   readonly puts: ReadonlyArray<Extract<OverlayOp, { readonly kind: "put" }>>
+  /** Per put, in input order, its path and the collision ordinal that path took ({@link Placement}). */
+  readonly placements: ReadonlyArray<Placement>
   /** Per put, the records the view already holds nearest it; empty when the call is blocked. */
   readonly neighbors: ReadonlyArray<{
     readonly path: string
@@ -536,6 +559,7 @@ export const preparePuts = (input: {
     const touched = new Set<string>()
     const appended: Array<OverlayOp> = []
     const puts: Array<Extract<OverlayOp, { readonly kind: "put" }>> = []
+    const placements: Array<Placement> = []
     const queries: Array<string> = []
     for (const line of input.lines) {
       if (line.op !== "write") {
@@ -544,7 +568,9 @@ export const preparePuts = (input: {
         continue
       }
       const write = yield* toWriteInput(line.params, input.at)
-      const path = yield* putPathFor(view, write, claimed)
+      const placement = yield* putPathFor(view, write, claimed)
+      placements.push(placement)
+      const { path } = placement
       claimed.add(path)
       touched.add(path)
       const put = { kind: "put", path, html: renderTemplate(write) } as const
@@ -564,7 +590,7 @@ export const preparePuts = (input: {
     )
     // A blocked call appends nothing, so it pays for no embed.
     if (blocking.length > 0) {
-      return { appended, puts, neighbors: [], violations, blocking, vector: null }
+      return { appended, puts, placements, neighbors: [], violations, blocking, vector: null }
     }
     // Read before write: the records the view already holds nearest each put, so the writer can see
     // a near-duplicate it should skip or the records it should link to before it commits. The vector
@@ -589,7 +615,7 @@ export const preparePuts = (input: {
         })
       }
     })
-    return { appended, puts, neighbors, violations, blocking, vector: arm.use }
+    return { appended, puts, placements, neighbors, violations, blocking, vector: arm.use }
   })
 
 /**
@@ -607,6 +633,11 @@ export const preparePuts = (input: {
  * leaves a record unanchored would make every later commit of this session `refused`, and the log
  * has no removal op. `duplicate` and `claim-edit` are reported, not refused, because they are
  * judged against the base the session currently sees and a rebase can change the answer either way.
+ *
+ * Under `dryRun` the call computes the same answer and stops before the append: the same
+ * placements, neighbors, and violations, the same refusal when one blocks, and no write anywhere.
+ * An implicit start is not run either; a session the variable names with no log yet is answered
+ * over the base that start would take (`refs/heads/main`'s tip, else `HEAD`) with an empty log.
  */
 export const sessionPut = (input: {
   readonly root: string
@@ -618,13 +649,25 @@ export const sessionPut = (input: {
   readonly implicitStart?: boolean | undefined
   /** The id is `MEMHTML_SESSION`'s: `duplicate` and `claim-edit` block too. */
   readonly runBound?: boolean | undefined
+  /** `--dry-run`: answer where each put would land and append nothing. */
+  readonly dryRun?: boolean | undefined
 }) =>
   Effect.gen(function* () {
+    const dryRun = input.dryRun === true
     const started =
-      input.implicitStart === true
+      input.implicitStart === true && !dryRun
         ? yield* ensureSession({ root: input.root, id: input.id })
         : false
-    const session = yield* resumeSession({ root: input.root, id: input.id })
+    const session: Session =
+      dryRun && input.implicitStart === true && !(yield* logExists(input.root, input.id))
+        ? {
+            root: input.root,
+            id: input.id,
+            baseSha: yield* baseShaFor(input.root, DEFAULT_REF),
+            ref: DEFAULT_REF,
+            ops: []
+          }
+        : yield* resumeSession({ root: input.root, id: input.id })
     const scope = sessionScopeOf(session.ref)
     const at = isoSecond(yield* Effect.clockWith((clock) => clock.currentTimeMillis))
     // A curate-scope session judges locally, as the curate commands do: the head server's
@@ -641,8 +684,11 @@ export const sessionPut = (input: {
               ops: session.ops,
               lines: input.ops,
               at,
-              // Sent only when true, so a call outside a run stays readable by an older server.
-              ...(input.runBound === true ? { runBound: true } : {})
+              // Sent only when true; absent is false.
+              ...(input.runBound === true ? { runBound: true } : {}),
+              // Always sent: a server that predates `placements` refuses the request rather than
+              // answer with paths placed by the old cut (`NeighborsRequest`).
+              placements: true
             }
           })
     let prepared: PreparedPuts
@@ -674,22 +720,26 @@ export const sessionPut = (input: {
         })
       )
     }
-    const next = yield* appendOps(session, appended)
+    const next = dryRun ? session : yield* appendOps(session, appended)
     return {
       id: session.id,
+      /** True under `--dry-run`: every field below is the answer, and nothing was appended. */
+      dryRun,
       /** True when this call started the session (the id came from `MEMHTML_SESSION` and had no log). */
       started,
       /**
        * The session's base after the append: the base the puts were judged at, unless the log carried
        * a `pending` commit that had landed, which the append settled first (`appendOps`), moving the
-       * session onto it.
+       * session onto it. Under `--dry-run`, the base as read.
        */
       baseSha: next.baseSha,
-      /** Every op this call appended: the puts and the entity edits. */
-      appended: appended.length,
+      /** Every op this call appended: the puts and the entity edits. 0 under `--dry-run`. */
+      appended: dryRun ? 0 : appended.length,
       ops: next.ops.length,
-      /** The paths the puts landed at, in input order. */
+      /** The paths the puts landed at (under `--dry-run`, would land at), in input order. */
       paths: puts.map((put) => put.path),
+      /** Per put, in input order, its path and the collision ordinal it took ({@link Placement}). */
+      placements: prepared.placements,
       /** The `label` and `unlabel` ops this call appended, in input order. */
       labels: appended.flatMap((op) =>
         op.kind === "label" || op.kind === "unlabel"
@@ -700,6 +750,88 @@ export const sessionPut = (input: {
       vector: prepared.vector,
       violations,
       head
+    }
+  })
+
+/**
+ * The paths a `memhtml path --claimed` file names: one repo-relative memory path per line, blank
+ * lines skipped, each kept in its canonical form. The first line that is not a usable memory path
+ * is the answer instead, with its 1-based number and why, so a file of another shape (a JSONL op
+ * stream, say) is refused rather than read as claiming nothing.
+ */
+export const claimedPathsOf = (
+  text: string
+):
+  | { readonly ok: true; readonly paths: ReadonlySet<string> }
+  | { readonly ok: false; readonly line: number; readonly reason: string } => {
+  const paths = new Set<string>()
+  for (const [index, raw] of text.split("\n").entries()) {
+    const line = raw.trim()
+    if (line === "") continue
+    const violation = memoryPathViolation(line)
+    if (violation !== undefined) {
+      return {
+        ok: false,
+        line: index + 1,
+        reason: `${JSON.stringify(line.slice(0, 200))} is not a memory path: ${violation}`
+      }
+    }
+    paths.add(normalizePath(line))
+  }
+  return { ok: true, paths }
+}
+
+/**
+ * `memhtml path`: the path a write with these fields would land at over the version at `HEAD`, and
+ * the collision ordinal it took, placed by {@link putPathFor}, the function `session put` runs.
+ * `claimed` holds paths pending elsewhere (another session's puts, a draft not written yet), and
+ * each counts as taken, as a path the head holds does. Read-only: the head is loaded the cheapest
+ * way and nothing is written, so the answer holds for `head.sha` and the claimed set given, and a
+ * write that lands first can take the path.
+ *
+ * It reads no session, and it places without judging. `session put` places over the session's base,
+ * which can trail `HEAD`, and the session's own puts, and it refuses a line the write bar refuses
+ * (a reserved path, say), so inside a session `session put --dry-run` is the answer.
+ *
+ * `occupied` is true when the answer is an explicit path the head or `claimed` already holds: a put
+ * there is judged against that record (`claim-edit` or `duplicate`) rather than stepped past it.
+ */
+export const pathPreview = (input: {
+  readonly root: string
+  readonly title: string
+  readonly memoryType: string
+  readonly workspace?: string | undefined
+  readonly tags?: ReadonlyArray<string> | undefined
+  readonly path?: string | undefined
+  readonly claimed: ReadonlySet<string>
+}) =>
+  Effect.gen(function* () {
+    const memoryType = yield* decodeOperatorType(input.memoryType)
+    const sha = yield* headSha(input.root)
+    const loaded = yield* loadHeadAt(input.root, sha)
+    const at = isoSecond(yield* Effect.clockWith((clock) => clock.currentTimeMillis))
+    const placement = yield* putPathFor(
+      loaded.view,
+      {
+        title: input.title,
+        memoryType,
+        at,
+        workspace: input.workspace,
+        tags: input.tags,
+        path: input.path
+      },
+      input.claimed
+    )
+    return {
+      /** Where the write would land. */
+      path: placement.path,
+      /** The collision ordinal the derived path took, or `null` for an explicit path used as given. */
+      ordinal: placement.ordinal,
+      /** True when the answer is a path the head or `claimed` already holds (an explicit one). */
+      occupied: input.claimed.has(placement.path) || loaded.view.get(placement.path) !== undefined,
+      /** How many distinct paths `--claimed` named. */
+      claimed: input.claimed.size,
+      head: headStats(loaded)
     }
   })
 
@@ -1931,6 +2063,8 @@ export interface V2Input {
   readonly runBound: boolean
   /** `session commit --drop-refused`. */
   readonly dropRefused: boolean
+  /** `session put --dry-run`: answer where each put would land and append nothing. */
+  readonly dryRun: boolean
 }
 
 /** One arm per command, each returning its response type beside its payload. */
