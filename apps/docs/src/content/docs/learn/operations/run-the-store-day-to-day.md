@@ -1,6 +1,6 @@
 ---
 title: Run the store day to day
-description: The daily verbs, the cron schedule that keeps a store fresh, and exactly what moves the access plane.
+description: The everyday commands, the upkeep commands that keep a store current, and exactly what moves the access plane.
 ---
 
 ```bash
@@ -9,35 +9,35 @@ memhtml write --title "One writer and many readers share the index" --type seman
 memhtml apply --file ops.jsonl        # many memories, ONE commit, ONE index pass
 memhtml search "one writer many readers"
 memhtml recall "one writer many readers" --budget 16000
-memhtml read areas/inbox/some-memory.html
+memhtml read areas/inbox/one-writer-and-many-readers-share-the-index.html
 memhtml list --type semantic --limit 50
 ```
 
-Reach for `memhtml apply` once a task writes more than about three memories. A batch stages every file, makes one commit, and reindexes once, where the same memories written one at a time make one commit and one index pass each. `apply` is atomic by default, and `--continue-on-error` makes it best-effort. Both `apply` and `exec` read stdin when you omit `--file` or pass `-`.
+Reach for `memhtml apply` once a task writes more than about three memories. A batch stages every file, makes one commit, and reindexes once. The same memories written one at a time make one commit and one index pass each. `apply` is atomic by default, so one refused line means nothing is written. `--continue-on-error` makes it best-effort instead. Both `apply` and `exec` read stdin when you omit `--file` or pass `-`.
 
-Inside an agent run that exports `MEMHTML_SESSION`, the same writes go through a session instead: `memhtml session put` takes the same lines `apply` does, `memhtml session exec` takes a heredoc script, and the runtime commits the session once when the run ends. [Write through a session](/learn/operations/write-through-a-session/) covers it.
+Inside an agent run that exports `MEMHTML_SESSION`, `memhtml write` and `memhtml apply` refuse with `ERR_SESSION_BOUND` at exit 2 under the store's default `v1Doors` policy, and write nothing. Write through the session instead: `memhtml session put` takes the same lines `apply` does, and `memhtml session exec` takes a heredoc script. Nothing reaches git until the agent runtime runs `memhtml session commit` when the run ends. [Write through a session](/learn/operations/write-through-a-session/) covers it.
 
 ## Every removal is a move into the archive
 
-- `memhtml correct <target>` writes the superseding file and archives the target in one commit, so an interrupted run can never leave two live memories contradicting each other.
-- `memhtml archive <path> --reason ...` is a `git mv` into `archive/<YYYY>/`, with the original path mirrored beneath.
+- `memhtml correct <target>` writes the superseding file and archives the target in one commit. An interrupted run therefore never leaves two live memories contradicting each other.
+- `memhtml archive <path> --reason ...` is a `git mv` to `archive/<YYYY>/<path>`, plus the archive stamps in the file's head.
 - `--include-archived` on `search`, `recall`, `list`, and `task list` brings evicted memories back into view. They still exist; eviction moved them.
 
-`git log --follow` therefore reads straight through a memory's whole life, including the eviction.
+`git log --follow` on the archive path therefore reads straight through a memory's whole life, including the eviction.
 
 ## Reinforcement has a cooldown
 
-`memhtml reinforce <path>` bumps the access bookkeeping for a path at most once every 900 seconds (`packages/domain/src/ranking.ts:17`), so a loop reinforcing one path records one bump. That number is written once in the domain layer and once in the salience arm's SQL, and a property test pins the two to agree at the boundary.
+`memhtml reinforce <path>` bumps the access bookkeeping for a path at most once every 900 seconds (`REINFORCE_COOLDOWN_S` in `packages/domain/src/ranking.ts`), so a loop reinforcing one path records one bump. A `memhtml read` of the path starts the same window. The `state.access` upsert in `packages/index/src/reinforce.ts` binds that constant into its SQL guard, and a property test pins the guard to the domain layer's `shouldBumpAccess` at the boundary.
 
 ```bash
-memhtml reinforce areas/inbox/some-memory.html --signal positive
+memhtml reinforce areas/inbox/one-writer-and-many-readers-share-the-index.html --signal positive
 ```
 
 `--signal` takes `positive`, `negative`, or `neutral`, and `neutral` is the default. A `neutral` signal bumps the access count without claiming the memory was right. `positive` and `negative` are the two values that move the outcome EWMA, a running average of how well a memory has served.
 
 ## What moves the access plane
 
-Read this section when a salience number surprises you. Salience is one of retrieval's four ranking arms, alongside full-text search, vector similarity, and recency, and it favors memories you have opened before by reading the access plane.
+Read this section when a salience number surprises you. Salience is one of the four ranking arms `memhtml search` and `memhtml recall` fuse, beside full-text search, vector similarity, and recency. It reads the access plane and favors memories you have opened before.
 
 Three things bump a memory's access count:
 
@@ -50,31 +50,33 @@ Two things leave the count alone:
 - `memhtml search` and `memhtml recall`, however many paths they return.
 - Every curation pass over the whole corpus.
 
-Those two are the ranker's guess and the curator's sweep, and counting either would feed the ranker's own output back into its input. Today's top five would rank higher tomorrow purely for having been listed, while the memory that should displace them would never get a first bump.
+Those two are the ranker's guess and the curator's sweep. Counting either would feed the ranker's own output back into its input. Today's top five would rank higher tomorrow purely for having been listed. The memory that should displace them would never get a first bump.
 
 So a corpus that has been searched all day and never read has an empty `state.access`. That is the expected state.
 
-The salience arm also ignores `task` rows and everything under `resources/people/`. Their access counts exist and never affect a rank, because you reach a task by predicate and a person by key. Salience there would reward a stale task and decay a person's identity.
+The salience arm also ignores `task` rows and everything under `resources/people/`. Their access counts still grow but never affect a rank. You reach a task by predicate and a person by key. Salience there would reward a stale task and decay a person's identity.
 
 ## Working-tree edits are legitimate
 
-`memhtml index update` projects uncommitted changes as well as committed ones, so a file you edited by hand is searchable before you commit it. You own the commit, though.
+`memhtml index update` projects uncommitted changes as well as committed ones, so a file you edited by hand shows up in `memhtml search` and `memhtml recall` before you commit it. A head server and `memhtml head search` read commits only, so they see the edit after you commit it. You own the commit, though.
 
-## The cron schedule
+## The upkeep commands
 
-```cron
-*/10 * * * *  cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml index update --embed >> /var/log/memhtml/index.log 2>&1
-17 * * * *    cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml trace index      >> /var/log/memhtml/trace.log 2>&1
-30 3 * * *    cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml curate run       >> /var/log/memhtml/curate.log 2>&1
-0 6 * * *     cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml publish         >> /var/log/memhtml/publish.log 2>&1
-30 6 * * *    cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml state export    >> /var/log/memhtml/state.log 2>&1
-0 7 * * *     cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml doctor          >> /var/log/memhtml/doctor.log 2>&1
-0 5 * * 0     cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml session prune --older-than 7d >> /var/log/memhtml/prune.log 2>&1
+```bash
+memhtml index update --repo $HOME/memhtml >> /var/log/memhtml/index.log 2>> /var/log/memhtml/index.err
+MEMHTML_TRACE_ROOT=$HOME/.claude memhtml trace index --repo $HOME/memhtml >> /var/log/memhtml/trace.log 2>> /var/log/memhtml/trace.err
+memhtml curate run --repo $HOME/memhtml --model bedrock:global.anthropic.claude-opus-5 >> /var/log/memhtml/curate.log 2>> /var/log/memhtml/curate.err
+memhtml publish --repo $HOME/memhtml >> /var/log/memhtml/publish.log 2>> /var/log/memhtml/publish.err
+memhtml state export --repo $HOME/memhtml >> /var/log/memhtml/state.log 2>> /var/log/memhtml/state.err
+memhtml doctor --repo $HOME/memhtml >> /var/log/memhtml/doctor.log 2>> /var/log/memhtml/doctor.err
+memhtml session prune --repo $HOME/memhtml --older-than 7d >> /var/log/memhtml/prune.log 2>> /var/log/memhtml/prune.err
 ```
 
-`index update` also keeps the index current after session commits, which never touch it. `curate run` needs a model, from `--model` or `MEMHTML_CURATOR_MODEL`, and it only commits to a `curate/<date>` branch. Landing that branch with `memhtml curate merge` stays a step a person takes after reading it, as [curate the corpus](/learn/operations/curate-the-corpus/) describes. `state export` writes the access sidecar, which nothing else writes for you.
+`index update` and `trace index` want to run often. `index update` catches the index up after session commits, `curate merge`, `publish`, and `state export`, which all land commits without touching it. `trace index` reads only the transcripts that changed since its last run. The other five want to run once in a while. Run `publish` after an `index update`, because it lists what the index holds. Run `doctor` after the `index update` that follows `publish` and `state export`, because it reports `healthy: false` while the index is behind. `state export` writes and commits the access sidecar, which nothing else writes for you.
 
-Each line is safe to repeat. An unchanged HEAD and a clean tree touch nothing, and `index update` on a converged store answers `unchanged: true` and writes nothing:
+`curate run` takes its model from `--model`, else `MEMHTML_CURATOR_MODEL`, else a proxy model when `MEMHTML_LLM_BASE_URL` is set. It only commits to a `curate/<date>` branch. Landing that branch with `memhtml curate merge` stays a step a person takes after reading it, as [curate the corpus](/learn/operations/curate-the-corpus/) describes.
+
+Every command in the block except `curate run` is safe to repeat. A second `curate run` on the same UTC date is refused with `ERR_STORAGE` (`session.exists`) at exit 1, and `--resume` reopens that date's session instead. On a converged store, `index update` answers `unchanged: true` with every count at zero:
 
 ```json
 {
@@ -99,10 +101,10 @@ Each line is safe to repeat. An unchanged HEAD and a clean tree touch nothing, a
 
 ## Reading the log files
 
-The cron lines above send both streams to one file, which suits a human reader and defeats a parser. The envelope is pretty-printed across many lines by default, and the progress and warning lines on stderr interleave with it. Split the streams and add `--dense`, which minifies the JSON and drops null fields, so each run contributes exactly one line:
+The upkeep commands send stdout and stderr to separate files, so the progress and warning lines on stderr stay out of the envelope's file. The envelope is still pretty-printed across many lines by default. Add `--dense`, which minifies the JSON and drops null fields, so each run adds exactly one line to the stdout file:
 
-```cron
-*/10 * * * *  cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml index update --embed --dense >> /var/log/memhtml/index.jsonl 2>> /var/log/memhtml/index.err
+```bash
+memhtml index update --repo $HOME/memhtml --dense >> /var/log/memhtml/index.jsonl 2>> /var/log/memhtml/index.err
 ```
 
 ```bash
