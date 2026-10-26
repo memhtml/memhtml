@@ -544,6 +544,106 @@ describe("a tool call through the toolkit layer", () => {
     expect([...bumped, ...cooled]).toEqual([path])
   })
 
+  describe("memory_reinforce's singular path", () => {
+    /**
+     * A memory no earlier case has opened, so its first reinforcement is outside every cooldown and
+     * lands in `bumped`. A write stamps no access row; only a read or a reinforcement does.
+     */
+    const freshPath = async (title: string, body: string): Promise<string> => {
+      const written = await call("memory_write", { title, body, memory_type: "semantic" })
+      return written.path as string
+    }
+
+    it("reinforces `path` exactly as it reinforces `paths: [path]`", async () => {
+      /**
+       * `path` is how `memory_read`, `memory_archive`, `memory_neighbors`, and `memory_resolve` name one
+       * memory, so it is the key an agent reinforcing the one memory it just used reaches for. It has
+       * to land on the same row the plural would: the closing call, in the plural, finds that row
+       * inside its cooldown, which it could not if the singular had bumped anything else.
+       */
+      const single = await freshPath(
+        "Acme widget bins are relabeled on Mondays",
+        "The acme widget bins are relabeled every Monday before the first pick wave."
+      )
+      const plural = await freshPath(
+        "Acme widget pallets ship shrink-wrapped",
+        "Every acme widget pallet ships shrink-wrapped, including partial pallets."
+      )
+
+      expect(await call("memory_reinforce", { path: single, signal: "positive" })).toEqual({
+        bumped: [single],
+        cooled_down: []
+      })
+      expect(await call("memory_reinforce", { paths: [plural], signal: "positive" })).toEqual({
+        bumped: [plural],
+        cooled_down: []
+      })
+      expect(await call("memory_reinforce", { paths: [single], signal: "positive" })).toEqual({
+        bumped: [],
+        cooled_down: [single]
+      })
+    })
+
+    it("reinforces every path a call names when it sends both `paths` and `path`", async () => {
+      /**
+       * Merged, not refused. Two lists of paths have one union, and `reinforce` dedups it, so nothing
+       * the caller sent is dropped. A path named on both sides is one path and is bumped once.
+       */
+      const first = await freshPath(
+        "Acme widget returns go to dock four",
+        "Returned acme widgets are received at dock four, never at the main dock."
+      )
+      const second = await freshPath(
+        "Acme widget labels carry a lot number",
+        "Each acme widget label carries the lot number beside the barcode."
+      )
+      expect(
+        await call("memory_reinforce", { paths: [first], path: second, signal: "neutral" })
+      ).toEqual({ bumped: [first, second], cooled_down: [] })
+
+      const third = await freshPath(
+        "Acme widget cartons hold twelve units",
+        "A full acme widget carton holds twelve units in two layers."
+      )
+      expect(
+        await call("memory_reinforce", { paths: [third], path: third, signal: "neutral" })
+      ).toEqual({ bumped: [third], cooled_down: [] })
+    })
+
+    it("refuses a call that names no path, and the refusal names `paths`", async () => {
+      /**
+       * Neither key can be schema-required while the other may stand in for it, so the decoder admits
+       * a call naming no path, and a misspelled key decodes to exactly that: the schema drops a key it
+       * does not declare. The refusal is the only place such a caller learns which key this tool reads,
+       * so it has to name `paths` and say what to send.
+       */
+      const path = await freshPath(
+        "Acme widget cycle counts run weekly",
+        "Cycle counts for acme widget locations run weekly, on Thursday nights."
+      )
+      for (const params of [
+        { pathz: [path], signal: "positive" },
+        { paths: null, path: null, signal: "positive" },
+        { signal: "positive" }
+      ]) {
+        await expect(call("memory_reinforce", params)).rejects.toThrow(
+          /ERR_INVALID_MEMORY: memory_reinforce needs .*`paths`.* Try: call memory_reinforce again with paths/
+        )
+      }
+
+      // Nothing was recorded, so the path's first real reinforcement still lands.
+      expect(await call("memory_reinforce", { paths: [path], signal: "positive" })).toEqual({
+        bumped: [path],
+        cooled_down: []
+      })
+      // An empty `paths` names its paths, none of them, and answers as it always has.
+      expect(await call("memory_reinforce", { paths: [], signal: "positive" })).toEqual({
+        bumped: [],
+        cooled_down: []
+      })
+    })
+  })
+
   it("trace_links refuses a call with neither side named", async () => {
     /**
      * The failure path through the toolkit, and it must be a typed refusal rather than an unbounded
