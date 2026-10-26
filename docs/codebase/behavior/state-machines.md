@@ -33,7 +33,7 @@ Defined at: `packages/integrations/src/types.ts:128`
 
 ## MemoryStatus
 
-`MemoryStatus` has two values, `active` and `archived`, and moves one way. `newMemoryDoc` hardcodes `status: "active"` on every fresh memory document (`packages/html/src/template.ts:207-214`). Three writers stamp `memhtml-status` as `archived` while moving the file under `archive/`.
+`MemoryStatus` has two values, `active` and `archived`, and moves one way. `newMemoryDoc` hardcodes `status: "active"` on every fresh memory document (`packages/html/src/template.ts:207-214`). Four writers stamp `memhtml-status` as `archived` while moving the file under `archive/`.
 
 ```mermaid
 stateDiagram-v2
@@ -41,6 +41,7 @@ stateDiagram-v2
   active --> archived: archiveMemory
   active --> archived: correctMemory
   active --> archived: archiveBody
+  active --> archived: supersedeMemories
   archived --> [*]
 ```
 

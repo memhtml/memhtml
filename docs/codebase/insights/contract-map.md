@@ -74,7 +74,7 @@ export const archivePathFor = (path: string, year: number, generation = 1): stri
 **Assumptions consumers make:**
 
 - Every archiving writer takes the slot `archiveSlotFor` returns, and session's validator recomputes it against the view and the batch's own destinations. `packages/session/src/validate.ts:347-351`
-- `originalPathFor` strips exactly one archive prefix, so the CLI walks repeatedly for a task archived twice. `apps/cli/src/operations.ts:2055-2060`
+- `originalPathFor` strips exactly one archive prefix, so for a task archived twice it names another archive path, and the CLI leaves the reopen advice out of the refusal. `apps/cli/src/operations.ts:2055-2060`
 - Replay finds an archived twin by comparing `originalPathFor(candidate)` to the live path. `apps/cli/src/replay.ts:147`
 
 **Drift risk:** a change to the `archive/<YYYY>.<n>/` layout in `archivePathFor` (`packages/contracts/src/paths.ts:237-238`) would orphan archives already in git trees, since `originalPathFor` (`:267-268`) would stop recognizing them. Mitigation: keep the left-inverse property under the existing contracts tests and add a fixture of old-format paths.

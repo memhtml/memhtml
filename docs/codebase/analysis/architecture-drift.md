@@ -9,7 +9,7 @@ generated: 2026-10-26
 
 The code follows the inward dependency direction the repository declares: the module graph has no cycles, every package edge points toward `packages/contracts`, and no import runs from a lower layer back up to `apps`. The declaration is prose in `CLAUDE.md:65-69` backed by TypeScript project references, since the repository has no import-linter, tach or dependency-cruiser config.
 
-The module graph comes from codegraph's file dependencies, grouped by top-level directory (no import contract declares modules), and the analysis measured each module's afferent and efferent coupling, the cycles and the imports that break a declared rule. Reviewers confirmed none of the architecture drift candidates.
+The module graph comes from codegraph's file dependencies, grouped by top-level directory (no import contract declares modules), and the analysis measured each module's afferent and efferent coupling, the cycles and the imports that break a declared rule. That resolution misses some package imports (for example `packages/index/src/indexer.ts:8` imports `@memhtml/html`), so the Ca, Ce and I figures below undercount a few edges. Reviewers confirmed none of the architecture drift candidates.
 
 ## Declared rules
 

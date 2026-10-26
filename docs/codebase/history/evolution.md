@@ -27,7 +27,7 @@ The two weeks after `946eed5` carried 39 commits and 12,210 changed lines, 10,04
 
 ## Authors
 
-The history holds one author cohort, 2026-Q3, whose only human author is Laith Al-Saadoon; its one other identity is automation, and the counts set the release-please and dependabot commits aside as bots.
+Every human commit falls in one author cohort, 2026-Q3, with one human author. The history's three other identities are automation, and the counts set the release-please and dependabot commits aside as bots.
 
 ## Line age
 

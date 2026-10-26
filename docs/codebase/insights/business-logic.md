@@ -7,7 +7,7 @@ generated: 2026-10-26
 
 > Generated from commit [`3406f7089918`](https://github.com/memhtml/memhtml/tree/3406f7089918528856905902284309cc11fc065d). Line citations refer to that commit.
 
-Business logic in memhtml is the set of rules that decide what a memory record may be, where it lives, whether a write clears the store's bar, and how records are scored, fused and merged. Most of it lives in two pure libraries, `packages/contracts` (types, paths, slugs, edges, store policy) and `packages/domain` (scoring, ranking, merge and frame rules), and is enforced at the session validator, the store and the CLI and MCP write doors. This index covers rules enforced in TypeScript; SQL `CHECK` constraints in the index migrations are out of scope. Domain names follow the package sections of the [module map](../../architecture/module-map.md).
+Business logic in memhtml is the set of rules that decide what a memory record may be, where it lives, whether a write clears the store's bar, and how records are scored, fused and merged. Most of it lives in two pure libraries, `packages/contracts` (types, paths, slugs, edges, store policy) and `packages/domain` (scoring, ranking, merge and frame rules), and is enforced at the session validator, the store and the CLI and MCP write doors. This index covers rules enforced in TypeScript; SQL `CHECK` constraints in the index migrations are out of scope. Domain names follow the package sections of the [module map](../architecture/module-map.md).
 
 ## Validations
 

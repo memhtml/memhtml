@@ -7,7 +7,7 @@ generated: 2026-10-26
 
 > Generated from commit [`3406f7089918`](https://github.com/memhtml/memhtml/tree/3406f7089918528856905902284309cc11fc065d). Line citations refer to that commit.
 
-memhtml splits into fourteen named modules: a schema leaf (`packages/contracts`) that every other module imports, one `apps` module holding the two binaries and the docs site, and twelve single-purpose libraries between them. The page is built from the module import graph (modules, edges, afferent and efferent coupling), each directory's git history (commit counts that skip bot and bulk commits), the file import counts (which order each module's file list by how many files import it) and `wc -l` for every LOC figure.
+memhtml splits into fourteen named modules: a schema leaf (`packages/contracts`) that every other module imports, one `apps` module holding the two binaries and the docs site, and twelve single-purpose libraries between them. The page is built from the module import graph (modules, edges, afferent and efferent coupling), each directory's git history (commits that changed a file now under the directory, followed through renames, leaving out bot commits and bulk commits of more than 30 code files), the file import counts (which order each module's file list by how many files import it) and `wc -l` for every LOC figure. The graph resolves file dependencies and misses some package imports, so each "Depends on" line lists the `@memhtml/` packages the module's source imports at this commit, while the Ca and Ce figures are the graph's.
 
 Sections follow the module import graph's order, which sorts modules by neighbor count. Each bullet list holds a module's most-imported source files, highest first.
 
@@ -30,7 +30,7 @@ Coupling: Ca 78, Ce 0.
 
 The `apps` module holds the `memhtml` binary (`apps/cli/package.json:5`), the `memhtml-mcp` stdio server (`apps/mcp/package.json:5`) and the docs site, whose `gates.ts` declares what the built site may contain and which pages the browser gates audit (`apps/docs/src/gates.ts:1-6`). Its most-imported file is the CLI's `envelope.ts`, the machine contract with an `apiVersion` and an append-only list of response discriminators (`apps/cli/src/envelope.ts:1-12`); `api-layer.ts` is the composition root `AppLive` (`apps/cli/src/api-layer.ts:62`), and `commands.ts` holds the `COMMANDS` table (`apps/cli/src/commands.ts:186`). The MCP server reuses the CLI's layer and serves over `McpServer.layerStdio` (`apps/mcp/src/server.ts:1-8`, `apps/mcp/src/server.ts:44-50`). It is the busiest module, with 164 commits in its history and a peak of 30 in the week of 2026-08-31.
 
-Depends on: contracts, index, session, head, curator, store, integrations, llm, domain, eval and traces. The map's edge list omits telemetry, though `apps/mcp/src/server.ts:2` imports `layerTelemetry` from `@memhtml/telemetry`.
+Depends on: contracts, curator, domain, eval, head, html, index, integrations, llm, session, snapshot, store, telemetry and traces.
 
 Coupling: Ca 0, Ce 33.
 
@@ -63,7 +63,7 @@ Coupling: Ca 5, Ce 4.
 
 The index package owns the SQLite schema, migrations, the git-driven indexer and four-arm retrieval (`packages/index/package.json:5`). Its most-imported file, `database.ts`, wraps Node's built-in `DatabaseSync` so there is no third-party database dependency (`packages/index/src/database.ts:4-11`), and `indexer.ts` projects memory files parsed by `@memhtml/html` into it (`packages/index/src/indexer.ts:1-14`). Its history counts 43 commits, peaking at 10 in the week of 2026-08-24.
 
-Depends on: contracts, domain.
+Depends on: contracts, domain, html.
 
 Coupling: Ca 11, Ce 3.
 
@@ -80,7 +80,7 @@ Coupling: Ca 11, Ce 3.
 
 The head package holds the corpus as a value: one immutable version per commit in persistent `effect` structures, advanced by delta and searched by RRF over a lexical and a vector arm (`packages/head/src/index.ts:1-6`). Its most-imported file, `version.ts`, builds a version from git tree entries read through `@memhtml/store` (`packages/head/src/version.ts:1-5`). Its history counts 15 commits.
 
-Depends on: contracts, domain, store.
+Depends on: contracts, domain, html, store.
 
 Coupling: Ca 6, Ce 4.
 
@@ -97,7 +97,7 @@ Coupling: Ca 6, Ce 4.
 
 The eval package generates the fixture corpus and runs the retrieval discrimination gate (`packages/eval/package.json:5`). Its largest file, `corpus.ts`, is the fixture corpus as a pure specification (`packages/eval/src/corpus.ts:12-13`), and `discriminate.ts` asks whether retrieval ranks a memory above its own high-similarity wrong twin (`packages/eval/src/discriminate.ts:8-11`). Its history counts 23 commits.
 
-Depends on: index, contracts, store.
+Depends on: contracts, domain, html, index, llm, store.
 
 Coupling: Ca 2, Ce 5.
 
@@ -148,7 +148,7 @@ Coupling: Ca 7, Ce 4.
 
 The curator is a bounded model-driven tool loop over a curator session, with its charter, budget and model factory (`packages/curator/package.json:5`). `loop.ts` runs `generateText` with tools and stop conditions and ends on a `finish` tool call (`packages/curator/src/loop.ts:12-14`), fed by the briefing that `briefing.ts` builds from a `HeadView` (`packages/curator/src/briefing.ts:1-9`). It is the newest module: its history starts on 2026-10-19 with 8 commits.
 
-Depends on: contracts, session.
+Depends on: contracts, domain, head, html, llm, session.
 
 Coupling: Ca 2, Ce 3.
 
@@ -228,7 +228,7 @@ Coupling: Ca 0, Ce 2.
 
 The integrations package wires a coding agent (Claude Code, Codex, Cursor, OpenCode) to a memhtml store through an MCP entry, hooks, an instruction block, a skill and a receipt (`packages/integrations/package.json:5`). Its most-imported file, `types.ts`, holds the closed vocabularies every other module in the package and the CLI's `integrations` and `hook` commands import (`packages/integrations/src/types.ts:2-5`), and its largest, `install.ts`, plans every write and lands the whole set or none of it (`packages/integrations/src/install.ts:1-3`). Its history counts 10 commits.
 
-Depends on: no other module.
+Depends on: contracts.
 
 Coupling: Ca 2, Ce 0.
 
