@@ -1,5 +1,5 @@
 import { archivePathFor, type OverlayOp } from "@memhtml/contracts"
-import { addLink } from "@memhtml/html"
+import { addLink, renderTemplate } from "@memhtml/html"
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
 
@@ -11,7 +11,7 @@ import {
   validateOps,
   writeBarReasons
 } from "../src/validate.js"
-import { mapHead, memory, recordFrom, STRICT_BAR } from "./helpers.js"
+import { FIXTURE_ENTITY, mapHead, memory, recordFrom, STRICT_BAR } from "./helpers.js"
 
 /**
  * The mechanical checks, over a `Map`-backed head. Pure, so no repo.
@@ -240,6 +240,96 @@ describe("validateOps", () => {
       expect(violation.reasons.some((reason) => reason.startsWith("path:"))).toBe(true)
       expect(violation.reasons.length).toBeGreaterThan(1)
     }
+  })
+
+  it("refuses a put whose <mark> or <p> text holds an escaped block tag, and takes one in code", async () => {
+    /**
+     * The prose path escapes its text, so markup a writer meant as `article_html` lands as the
+     * characters `&lt;p&gt;` inside the claim's `<mark>`. The doors refuse that line; this holds a
+     * `session exec` script's file, and any other put, to the same rule.
+     */
+    const view = await head()
+    const [escaped] = validateOps(view, [
+      put("areas/inbox/markup.html", memory("Markup", "<p>One.</p><p>Two.</p>"))
+    ])
+    expect(escaped?.kind).toBe("format")
+    if (escaped?.kind === "format") {
+      expect(escaped.path).toBe("areas/inbox/markup.html")
+      expect(escaped.reasons).toHaveLength(1)
+      expect(escaped.reasons[0]).toContain("`<p>`")
+      expect(escaped.reasons[0]).toContain("article_html")
+    }
+    const [inBody] = validateOps(view, [
+      put(
+        "areas/inbox/list.html",
+        memory("List", "A list follows.", { body: ["Its items are &lt;li&gt; rows."] })
+      )
+    ])
+    expect(inBody?.kind === "format" && inBody.reasons[0]).toContain("`&lt;li&gt;`")
+
+    // A tag the record discusses, in backticks (the prose path's own spelling) or in <code>.
+    expect(
+      validateOps(view, [
+        put("areas/inbox/tags.html", memory("Tags", "The `<p>` element holds one paragraph.")),
+        put(
+          "areas/inbox/code.html",
+          renderTemplate({
+            title: "Code",
+            claim: "",
+            articleHtml: "<p><mark>The <code>&lt;ul&gt;</code> element holds a list.</mark></p>",
+            entities: [FIXTURE_ENTITY],
+            memoryType: "semantic",
+            at: "2031-01-01T00:00:00Z"
+          })
+        )
+      ])
+    ).toEqual([])
+  })
+
+  it("reads a code element as a space and lowercase names only, as the doors do", async () => {
+    const view = await head()
+    const authored = (path: string, articleHtml: string): OverlayOp =>
+      put(
+        path,
+        renderTemplate({
+          title: "Authored",
+          claim: "",
+          articleHtml,
+          entities: [FIXTURE_ENTITY],
+          memoryType: "semantic",
+          at: "2031-01-01T00:00:00Z"
+        })
+      )
+    expect(
+      validateOps(view, [
+        authored(
+          "areas/inbox/tab.html",
+          "<p><mark>Type a &lt;<code>Tab</code>p&gt; to indent.</mark></p>"
+        ),
+        authored(
+          "areas/inbox/table.html",
+          "<p><mark>A &lt;Table&gt; component renders rows.</mark></p>"
+        ),
+        authored("areas/inbox/generic.html", "<p><mark>It returns List&lt;Article&gt;.</mark></p>")
+      ])
+    ).toEqual([])
+  })
+
+  it("holds only a put to the block-tag rule, so an existing record carrying one still archives", async () => {
+    const legacy = memory("Legacy", "<p>Old.</p>")
+    const view = await mapHead("0".repeat(40), [
+      await recordFrom("areas/inbox/legacy.html", legacy)
+    ])
+    expect(
+      validateOps(view, [
+        {
+          kind: "archive",
+          path: "areas/inbox/legacy.html",
+          to: "archive/2031/areas/inbox/legacy.html",
+          html: legacy
+        }
+      ])
+    ).toEqual([])
   })
 
   it("checks an archive op's source, destination shape, and a link op's source and rel", async () => {

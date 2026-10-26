@@ -14,7 +14,14 @@ import {
   pathToHref,
   STORE_CONFIG_FILE
 } from "@memhtml/contracts"
-import { checkMemory, contentHash, isRootRelativeHref, parseMemory, readLinks } from "@memhtml/html"
+import {
+  blockTagInArticle,
+  checkMemory,
+  contentHash,
+  isRootRelativeHref,
+  parseMemory,
+  readLinks
+} from "@memhtml/html"
 import { Effect, Exit } from "effect"
 
 /**
@@ -106,6 +113,24 @@ const WORKSPACE_PREFIX = "projects/"
  */
 export const UNANCHORED_REASON =
   'names no system, project, or person: add at least one memhtml-entity (<meta name="memhtml-entity" content="system:<name>"> in the head, an entities value in a write op, or a label op) or write it in a workspace (projects/<slug>/)'
+
+/**
+ * Why a put's article falls to the block-tag rule, or nothing when it does not.
+ *
+ * The prose path escapes every claim and paragraph, so markup a writer meant as `article_html`
+ * becomes the characters `&lt;p&gt;` in the file, which every format constraint accepts. The doors
+ * refuse such a body before rendering it; this holds every put to the same rule, a `session exec`
+ * file and a curator's record included, with the one detector they share (`blockTagInArticle`).
+ * Only a put is judged: an archive or a move carries an existing record's bytes unchanged.
+ */
+const blockTagReasons = (html: string): ReadonlyArray<string> => {
+  const found = blockTagInArticle(html)
+  return found === undefined
+    ? []
+    : [
+        `a <${found.element}>'s text holds the block tag \`${found.tag}\` as characters, outside code: markup goes in as elements (\`article_html\` on a write line), and a tag the record discusses goes in <code>, or in backticks that open and close on one line`
+      ]
+}
 
 /** True when a record's entities or its path say what it is about: the write bar's anchor rule. */
 const isAnchored = (path: string, entities: Iterable<string>): boolean =>
@@ -268,7 +293,7 @@ export const validateOps = (
         const reasons: Array<string> = []
         const pathReason = memoryPathViolation(op.path)
         if (pathReason !== undefined) reasons.push(`path: ${pathReason}`)
-        reasons.push(...checkMemory(op.html).violations)
+        reasons.push(...checkMemory(op.html).violations, ...blockTagReasons(op.html))
         if (reasons.length > 0) {
           violations.push({ kind: "format", path: op.path, reasons })
           break

@@ -850,6 +850,26 @@ describe("the render gate refuses a file checkMemory rejects", () => {
     expect((await run(repo.store.readMemory(result.path))).doc.article.gist).toBe("Claim.")
     expect(await run(repo.store.dirtyPaths())).toEqual([])
   })
+
+  it("writes articleHtml whose <p> holds an escaped block tag, verbatim", async () => {
+    /**
+     * `articleHtml` is verbatim markup, and a caller that escapes third-party text into a `<p>`
+     * means the characters: a reply quoting `&lt;h1&gt;` is text about a heading. The block-tag
+     * rule judges a prose body at the doors and a session's puts in `validateOps`; the render gate
+     * does not apply it to supplied markup.
+     */
+    const repo = await fixture()
+    const asText =
+      "<p><mark>The reply opened with &lt;h1&gt;Manage API Access&lt;/h1&gt;.</mark></p>"
+    const result = await run(
+      repo.store.writeMemory(
+        writeInput({ title: "Quoted heading", claim: "", articleHtml: asText })
+      )
+    )
+    const onDisk = await readFile(join(repo.root, result.path), "utf8")
+    expect(onDisk).toContain("&lt;h1&gt;Manage API Access&lt;/h1&gt;")
+    expect(await run(repo.store.dirtyPaths())).toEqual([])
+  })
 })
 
 describe("archiveMemory", () => {

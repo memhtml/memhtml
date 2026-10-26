@@ -3,7 +3,7 @@ import { subscribe, unsubscribe } from "node:diagnostics_channel"
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
-import { Effect, Fiber, Result } from "effect"
+import { Effect, Fiber, Logger, Result } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
 import { GitFailure, literalPathspecs, makeGit } from "../src/git.js"
@@ -298,6 +298,115 @@ describe("branches", () => {
     const failure = await runErr(repo.git.mergeFastForward("side"))
     expect(failure).toBeInstanceOf(GitFailure)
     expect(failure.command).toBe("merge-ff")
+  })
+})
+
+interface LogEntry {
+  readonly level: string
+  readonly message: string
+}
+
+/** Run `effect` to its exit under a logger that records every entry instead of printing it. */
+const logged = async <A, E>(
+  effect: Effect.Effect<A, E>
+): Promise<{ readonly result: Result.Result<A, E>; readonly entries: ReadonlyArray<LogEntry> }> => {
+  const entries: Array<LogEntry> = []
+  const capture = Logger.layer([
+    Logger.make((options) =>
+      entries.push({ level: options.logLevel, message: String(options.message) })
+    )
+  ])
+  const result = await run(Effect.result(effect).pipe(Effect.provide(capture)))
+  return { result, entries }
+}
+
+/** The value of a call that must succeed and must log nothing. */
+const quietly = async <A, E>(effect: Effect.Effect<A, E>): Promise<A> => {
+  const { result, entries } = await logged(effect)
+  expect(entries).toEqual([])
+  if (Result.isFailure(result)) throw new Error("expected a value, got a failure")
+  return result.success
+}
+
+describe("answers git gives as exit 1", () => {
+  /**
+   * `merge-base --is-ancestor` on a commit off the ref's history, `merge-base` over histories that
+   * share no commit, `rev-parse --verify --quiet` of a ref that does not resolve, and
+   * `symbolic-ref -q HEAD` on a detached HEAD all exit 1 with nothing on stdout. Each is an answer,
+   * so it is a value and logs nothing. Exit 128 is git failing, and stays a logged `GitFailure`.
+   */
+  const forked = async (): Promise<{
+    repo: FixtureRepo
+    base: string
+    main: string
+    side: string
+  }> => {
+    const repo = await fixture()
+    const base = (await run(repo.git.revParseHead())) ?? ""
+    await run(repo.git.checkoutBranch("side", { create: true }))
+    await put(repo.root, "areas/x/side.html", "<p>side</p>")
+    await run(repo.git.add(["areas/x/side.html"]))
+    const side = (await run(repo.git.commit("memhtml(write): side"))).sha ?? ""
+    await run(repo.git.checkoutBranch("main"))
+    await put(repo.root, "areas/x/main.html", "<p>main</p>")
+    await run(repo.git.add(["areas/x/main.html"]))
+    const main = (await run(repo.git.commit("memhtml(write): main"))).sha ?? ""
+    return { repo, base, main, side }
+  }
+
+  it("isAncestor answers true and false, and mergeBase names the fork point", async () => {
+    const { repo, base, main, side } = await forked()
+    expect(await quietly(repo.git.isAncestor(base, main))).toBe(true)
+    expect(await quietly(repo.git.isAncestor(base, "refs/heads/side"))).toBe(true)
+    expect(await quietly(repo.git.isAncestor(side, main))).toBe(false)
+    expect(await quietly(repo.git.isAncestor(main, base))).toBe(false)
+    expect(await quietly(repo.git.mergeBase(main, side))).toBe(base)
+  })
+
+  it("mergeBase answers null for two histories that share no commit", async () => {
+    const { repo, main } = await forked()
+    await run(repo.git.run(["checkout", "-q", "--orphan", "unrelated"]))
+    await put(repo.root, "areas/x/orphan.html", "<p>orphan</p>")
+    await run(repo.git.add(["areas/x/orphan.html"]))
+    const orphan = (await run(repo.git.commit("memhtml(write): orphan"))).sha ?? ""
+    expect(await quietly(repo.git.isAncestor(main, orphan))).toBe(false)
+    expect(await quietly(repo.git.mergeBase(main, orphan))).toBeNull()
+  })
+
+  it("revParse resolves a ref to its commit, and answers null for one that does not resolve", async () => {
+    const { repo, main, side } = await forked()
+    expect(await quietly(repo.git.revParse("refs/heads/main"))).toBe(main)
+    expect(await quietly(repo.git.revParse("side"))).toBe(side)
+    expect(await quietly(repo.git.revParse(main.slice(0, 12)))).toBe(main)
+    expect(await quietly(repo.git.revParse("refs/heads/curate/absent"))).toBeNull()
+  })
+
+  it("headRef names the branch HEAD is on, and answers null for a detached HEAD", async () => {
+    const { repo, side } = await forked()
+    expect(await quietly(repo.git.headRef())).toBe("refs/heads/main")
+    await run(repo.git.run(["checkout", "-q", "--detach", side]))
+    expect(await quietly(repo.git.headRef())).toBeNull()
+  })
+
+  it("fails typed and logs at Error when git exits 128", async () => {
+    const { repo, main } = await forked()
+    const gone = "f".repeat(40)
+    // Outside a repository there is no ref or HEAD to answer about, so git exits 128, not 1.
+    const notARepo = makeGit((await fixture({ init: false })).root)
+    const calls: ReadonlyArray<readonly [string, Effect.Effect<unknown, GitFailure>]> = [
+      ["merge-base", repo.git.isAncestor(gone, main)],
+      ["merge-base", repo.git.mergeBase(gone, main)],
+      ["rev-parse", notARepo.revParse("main")],
+      ["symbolic-ref", notARepo.headRef()]
+    ]
+    for (const [command, call] of calls) {
+      const { result, entries } = await logged(call)
+      if (Result.isSuccess(result)) throw new Error(`expected git ${command} to fail, got a value`)
+      expect(result.failure).toBeInstanceOf(GitFailure)
+      expect(result.failure).toMatchObject({ command, exitCode: 128 })
+      expect(entries.map((entry) => entry.level)).toEqual(["Error"])
+      expect(entries[0]?.message.startsWith(`git ${command} exited 128: `)).toBe(true)
+    }
   })
 })
 

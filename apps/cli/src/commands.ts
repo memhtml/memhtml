@@ -2005,12 +2005,21 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "is one paragraph after it) or you supply `--article-html` and own the markup yourself. " +
       "On a `memhtml apply` line the prose form is the `body` field, whose first sentence becomes the claim, " +
       "and the markup form is `article_html`. " +
+      "Prose is stored as escaped text, so a `body` on an `apply` or `session put` line that holds an HTML " +
+      "block tag (`<p>`, `<ul>`, `<li>`, `<dl>`, `<table>`, `<h2>` and the like, raw or escaped as " +
+      "`&lt;p&gt;`) outside code is refused at exit 2 with ERR_INVALID_FLAG naming the line: send that " +
+      "article as `article_html`. A tag the memory discusses counts as code in backticks that open and " +
+      "close on one line, or in a fenced block that is a paragraph of its own, set off by blank lines, " +
+      "once the body's first sentence has ended with `.`, `!` or `?` and then a space or a line break. " +
+      "Until it ends, that sentence is the claim, blank lines and fences included. " +
       "When you supply markup you own two constraints. It must contain EXACTLY ONE `<mark>`, and that " +
       "`<mark>` must sit in the article's first `<p>` or `<li>` and not inside an `<aside>` or " +
       "`<details>`. The claim leads the article and is never a caveat or behind a fold. And the first " +
       "`<time datetime>` in your markup becomes the memory's event time, which is what recency ranks " +
       "on, so a memory about something that happened last year should say so rather than being ranked " +
-      "as today's news. " +
+      "as today's news. A `session put` file meets one more rule, because the commit check reads it: " +
+      "no `<p>`, nor a `<mark>` outside a `<p>`, may hold a block tag as text outside code, such as " +
+      "`&lt;li&gt;` typed into a paragraph. `apply`, `write` and `correct` write such markup verbatim. " +
       "Markup is checked before anything is written: the store renders your article, runs the format " +
       "check, and refuses with the list of violations before it creates a file, stages it, or commits. " +
       "A refused write leaves the tree byte-identical, so a failed attempt costs nothing and you can fix " +
