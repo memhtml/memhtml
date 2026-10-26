@@ -108,7 +108,7 @@ memhtml init
 }
 ```
 
-`created: true` means this call created the repository. On a re-run it is `false`, `wrote` is empty, and `headSha` is the existing HEAD: `memhtml init` is convergent, asking the repository what is already true and supplying only what is missing (`packages/store/src/layout.ts:246`). It reaches the same end state from an empty directory, from a fully scaffolded repository, and from one a killed run left half finished, so re-running it is always safe.
+`created: true` means this call created the repository. On a re-run it is `false`, `wrote` is empty, and `headSha` is the existing HEAD: `memhtml init` is convergent, asking the repository what is already true and supplying only what is missing (`packages/store/src/layout.ts::initRepo`). It reaches the same end state from an empty directory, from a fully scaffolded repository, and from one a killed run left half finished, so re-running it is always safe.
 
 The top level is fixed at four PARA buckets: `projects/`, `areas/`, `resources/`, and `archive/`. A workspace is a directory under `projects/`, and there is no workspaces table. [Store layout and path algebra](/internals/store-layout-and-path-algebra/) explains the rest of the tree.
 

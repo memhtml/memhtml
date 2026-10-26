@@ -40,6 +40,14 @@
       "inputs": ["**/*.md", "dprint.json"],
       "outputs": []
     },
+    // Root-package task: `scripts/doc-citations.mjs` over the hand-written docs and the stamped
+    // `docs/codebase/` pages. `cache: false` for the reason `//#lint:repo` gives: its honest inputs
+    // are every Markdown file, every source file a citation can name, and the git object store a
+    // stamp is checked against, and a cached pass that skips the file that changed is the drift it
+    // exists to catch. It reads source text only, so it needs no build.
+    "//#docs:citations": {
+      "cache": false
+    },
     "test": {
       "dependsOn": ["build"],
       "outputs": []
