@@ -1,6 +1,7 @@
 import type { HeadView, OverlayOp, WriteBarPolicy } from "@memhtml/contracts"
 import {
   ARCS_DIR,
+  activeRecordPathViolation,
   DEFAULT_WRITE_BAR,
   hrefToPath,
   isArchivePath,
@@ -296,6 +297,11 @@ export const validateOps = (
         } else if (movedAway.has(normalizePath(op.path))) {
           reasons.push("archive source was moved away earlier in this batch")
         }
+        // A put earlier in this batch satisfies the check above, and a put under archive/ passes
+        // every put check, so the source's path is judged on its own: archived again, it would land
+        // under archive/<YYYY>/archive/.
+        const sourcePath = activeRecordPathViolation(op.path)
+        if (sourcePath !== undefined) reasons.push(`archive source: ${sourcePath}`)
         if (originalPathFor(op.to) !== normalizePath(op.path)) {
           reasons.push("archive destination is not archive/<YYYY>/<original path>")
         }
