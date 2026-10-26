@@ -219,38 +219,43 @@ export const removeMeta = (html: string, name: string, value?: string): string =
 }
 
 /**
- * Append a `<link rel="memhtml-…">` edge. Idempotent on the `(rel, href)` pair, because a caller
- * can add the same edge on every run, as a session's `link` op can, and a duplicated `<link>`
- * would become a duplicated `edges` row.
+ * True when a link carries `rel`, read the way {@link readLinks} and `parseMemory` read it:
+ * `relForToken` takes `memhtml-part-of` and `memhtml-part_of` alike as `part_of`, so every
+ * spelling the reader accepts is one the editors recognize and cut. They write only the
+ * hyphenated token `relTokenFor` builds.
+ */
+const carriesRel = (link: Element, rel: EdgeRel): boolean =>
+  relForToken(attr(link, "rel") ?? "") === rel
+
+/**
+ * Append a `<link rel="memhtml-…">` edge. Idempotent on the `(rel, href)` pair, in any spelling of
+ * the rel the reader accepts, because a caller can add the same edge on every run, as a session's
+ * `link` op can, and a duplicated `<link>` would become a duplicated `edges` row.
  */
 export const addLink = (html: string, rel: EdgeRel, href: string): string => {
-  const token = relTokenFor(rel)
   const document = parseDocument(html)
   const head = headOf(document)
   if (head === undefined) return html
-  if (
-    memhtmlLinks(head).some((link) => attr(link, "rel") === token && attr(link, "href") === href)
-  ) {
+  if (memhtmlLinks(head).some((link) => carriesRel(link, rel) && attr(link, "href") === href)) {
     return html
   }
   const offset = insertionOffsetForLink(html, head)
-  return offset === undefined ? html : insertAt(html, offset, `${linkLine(token, href)}\n`)
+  return offset === undefined
+    ? html
+    : insertAt(html, offset, `${linkLine(relTokenFor(rel), href)}\n`)
 }
 
 /**
- * Drop a `<link rel="memhtml-…">` edge. Omitting `href` drops every link of that rel; naming one
- * drops just that pair, which is what the integrity phase does when it replaces a dangling
- * href with the target's new path.
+ * Drop a `<link rel="memhtml-…">` edge, in every spelling of the rel the reader accepts. Omitting
+ * `href` drops every link of that rel; naming one drops just that pair, which is what the
+ * integrity phase does when it replaces a dangling href with the target's new path.
  */
 export const removeLink = (html: string, rel: EdgeRel, href?: string): string => {
-  const token = relTokenFor(rel)
   const document = parseDocument(html)
   const head = headOf(document)
   if (head === undefined) return html
   const spans = memhtmlLinks(head)
-    .filter(
-      (link) => attr(link, "rel") === token && (href === undefined || attr(link, "href") === href)
-    )
+    .filter((link) => carriesRel(link, rel) && (href === undefined || attr(link, "href") === href))
     .flatMap((link) => {
       const span = spanOf(link)
       return span === undefined

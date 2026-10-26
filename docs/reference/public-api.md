@@ -29,7 +29,7 @@ export const renderTemplate = (input: NewMemoryInput): string =>
   serializeMemory(newMemoryDoc(input))
 ```
 
-Renders a fresh memory file as bytes from write-tool parameters. It puts the claim in the first paragraph's `<mark>`, sets the status to `active` and both timestamps to `at`, and stamps `memhtml-content-hash` from the article it just built. A `task` gets the status `todo` when none is supplied (`packages/html/src/template.ts:152-202`). When `articleHtml` is supplied, it's used in place of `claim` and `body`, and the caller then owns the `<mark>` (`packages/html/src/template.ts:34-40`). `session put` renders each write it's given through `renderTemplate` before it validates the batch (`apps/cli/src/v2.ts:539`). It performs no format check and never fails. `parseMemory` is what rejects a malformed file.
+Renders a fresh memory file as bytes from write-tool parameters. It puts the claim in the first paragraph's `<mark>`, sets the status to `active` and both timestamps to `at`, and stamps `memhtml-content-hash` from the article it just built. A `task` gets the status `todo` when none is supplied (`packages/html/src/template.ts:152-202`). When `articleHtml` is supplied, it's used in place of `claim` and `body`, and the caller then owns the `<mark>` (`packages/html/src/template.ts:34-40`). `session put` renders each write it's given through `renderTemplate` before it validates the batch (`apps/cli/src/v2.ts:568`). It performs no format check and never fails. `parseMemory` is what rejects a malformed file.
 
 `packages/html/src/template.ts:209-210`, 36 importer files
 
@@ -100,7 +100,7 @@ export class ModelUnavailable extends Schema.TaggedError<ModelUnavailable>()("Mo
 }) {}
 ```
 
-The typed failure for a model call that produced no usable answer, carrying `modelId` and a `reason` string. The source comment names throttling, an unavailable model, and a denied region. The code raises it in more cases than a refusal by Bedrock. Any transport rejection or unparseable payload raises it, with the SDK error's name and message as `reason` (`packages/llm/src/client.ts:47-83`). So does a response that stopped at `max_tokens` or `refusal` (`packages/llm/src/model-client.ts:178-186`), a `generate` answer with no text (`packages/llm/src/model-client.ts:207-217`), and an embedding response with the wrong vector count or width (`packages/llm/src/embeddings.ts:83-102`). Two v2 commands raise it too. `head embed` raises it when no document embedder is bound (`apps/cli/src/head-vectors.ts:357-366`). `curate run` raises it when a model failure stops the curator, and its `reason` counts the ops that stay in the session for `--resume` (`apps/cli/src/curate-run.ts:619-626`).
+The typed failure for a model call that produced no usable answer, carrying `modelId` and a `reason` string. The source comment names throttling, an unavailable model, and a denied region. The code raises it in more cases than a refusal by Bedrock. Any transport rejection or unparseable payload raises it, with the SDK error's name and message as `reason` (`packages/llm/src/client.ts:47-83`). So does a response that stopped at `max_tokens` or `refusal` (`packages/llm/src/model-client.ts:178-186`), a `generate` answer with no text (`packages/llm/src/model-client.ts:207-217`), and an embedding response with the wrong vector count or width (`packages/llm/src/embeddings.ts:83-102`). Two v2 commands raise it too. `head embed` raises it when no document embedder is bound (`apps/cli/src/head-vectors.ts:357-366`). `curate run` raises it when a model failure stops the curator, and its `reason` counts the ops that stay in the session for `--resume` (`apps/cli/src/curate-run.ts:652-659`).
 
 `packages/contracts/src/errors.ts:42-45`, 22 importer files
 
@@ -112,7 +112,7 @@ export class InvalidMemory extends Schema.TaggedError<InvalidMemory>()("InvalidM
 }) {}
 ```
 
-The typed failure for a memory file that breaks the format or the type and placement vocabulary. Its one field, `reason`, is free text. `parseMemory` fills it with every violation it found, joined by `VIOLATION_SEPARATOR`, which is `"; "` (`packages/html/src/constraints.ts:42`). Other sites write their own reason. The store writes `a memory cannot link to itself: <path>` (`packages/store/src/store.ts:1332-1334`), and the CLI writes one for an unknown memory type (`apps/cli/src/operations.ts:83-92`). The head's overlay raises it for an op that doesn't parse or doesn't resolve, such as a `link` on a path the view doesn't hold or an `unlink` of an edge the file doesn't carry (`packages/head/src/overlay.ts:45-88`). `curate merge` also uses it to report a replay that was refused at commit (`apps/cli/src/v2.ts:1826-1831`).
+The typed failure for a memory file that breaks the format or the type and placement vocabulary. Its one field, `reason`, is free text. `parseMemory` fills it with every violation it found, joined by `VIOLATION_SEPARATOR`, which is `"; "` (`packages/html/src/constraints.ts:42`). Other sites write their own reason. The store writes `a memory cannot link to itself: <path>` (`packages/store/src/store.ts:1332-1334`), and the CLI writes one for an unknown memory type (`apps/cli/src/operations.ts:83-92`). The head's overlay raises it for an op that doesn't parse or doesn't resolve, such as a `link` on a path the view doesn't hold or an `unlink` of an edge the file doesn't carry (`packages/head/src/overlay.ts:45-88`). `curate merge` also uses it to report a replay that was refused at commit (`apps/cli/src/v2.ts:2100-2105`).
 
 `packages/contracts/src/errors.ts:48-50`, 20 importer files
 
@@ -154,9 +154,9 @@ One entry in a session's overlay log. There are seven kinds. A `put` writes a ne
 export const makeGit = (root: string): GitShape => ({
 ```
 
-Builds the `GitShape` service over the `git` binary. It runs every call as `git -C <root>` through `execFile` (`packages/store/src/git.ts:241-276`). Each spawn sets `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`, and `LC_ALL=C`, and removes the repository-selecting variables such as `GIT_DIR`, so a call made from inside a git hook still targets `root` (`packages/store/src/git.ts:190-223`). The user's own git config is still read, which is why every parsed call states its output format with explicit flags. `layerGit` wraps it as a layer (`packages/store/src/git.ts:593`). The CLI's v2 code calls it directly when it needs git for a root it already holds, as `loadVersion` does to load a head version (`apps/cli/src/head-cache.ts:164-170`). Tests use it to drive the real binary against a temporary repository.
+Builds the `GitShape` service over the `git` binary. It runs every call as `git -C <root>` through `execFile` (`packages/store/src/git.ts:281-317`). Each spawn sets `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`, and `LC_ALL=C`, sets `GIT_LITERAL_PATHSPECS`, `GIT_NOGLOB_PATHSPECS`, `GIT_GLOB_PATHSPECS`, and `GIT_ICASE_PATHSPECS` to `0` so a pathspec matches as git's default does whatever the calling shell exports, and removes the repository-selecting variables such as `GIT_DIR`, so a call made from inside a git hook still targets `root` (`packages/store/src/git.ts:200-237`). The user's own git config is still read, which is why every parsed call states its output format with explicit flags. `layerGit` wraps it as a layer (`packages/store/src/git.ts:625`). The CLI's v2 code calls it directly when it needs git for a root it already holds, as `loadVersion` does to load a head version (`apps/cli/src/head-cache.ts:164-170`). Tests use it to drive the real binary against a temporary repository.
 
-`packages/store/src/git.ts:349-567`, 16 importer files
+`packages/store/src/git.ts:378-599`, 16 importer files
 
 ### parseMemory
 
@@ -400,16 +400,7 @@ The path of one session's log, `.memhtml/sessions/<id>.json` under the root (`pa
 
 ```ts
 export const slugify = (title: string): string => {
-  const folded = title
-    .normalize("NFKD")
-    .replace(/\p{Mn}+/gu, "")
-    .toLowerCase()
-
-  const kebab = folded
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+/, "")
-    .replace(/-+$/, "")
-
+  const kebab = kebabOf(title)
   if (kebab === "") return SLUG_FALLBACK
 
   return kebab.length <= SLUG_MAX_LENGTH
@@ -418,9 +409,23 @@ export const slugify = (title: string): string => {
 }
 ```
 
-Kebab-cases a title into `[a-z0-9-]`. It applies NFKD, strips combining marks so diacritics fold to base letters, and lowercases. Then it replaces each run of other characters with one hyphen and trims hyphens from both ends. A title that reduces to nothing returns `SLUG_FALLBACK`, which is `untitled`. A result longer than `SLUG_MAX_LENGTH` (80) is cut there, and any exposed trailing hyphen is trimmed (`packages/contracts/src/slug.ts:7-15`). A slug fed back in comes out unchanged.
+Kebab-cases a title into `[a-z0-9-]`. `kebabOf` applies NFKD, strips combining marks so diacritics fold to base letters, and lowercases. Then it replaces each run of other characters with one hyphen and trims hyphens from both ends (`packages/contracts/src/slug.ts:36-44`). A title that reduces to nothing returns `SLUG_FALLBACK`, which is `untitled`. A result longer than `SLUG_MAX_LENGTH` (80) is cut there, and any exposed trailing hyphen is trimmed (`packages/contracts/src/slug.ts:7-22`). A slug fed back in comes out unchanged. This is the slug of every name that is recomputed each time it's used, such as a workspace's `projects/<slug>/` folder and a tag's `resources/<slug>/`, so its cut never changes and a long workspace or tag stays one folder. A new record's filename stem is `slugifyStem`'s.
 
-`packages/contracts/src/slug.ts:28-44`, 7 importer files
+`packages/contracts/src/slug.ts:62-69`, 5 importer files
+
+### slugifyStem
+
+```ts
+export const slugifyStem = (title: string): string => {
+  const kebab = kebabOf(title)
+  if (kebab === "") return SLUG_FALLBACK
+  return cutAtWord(kebab, SLUG_MAX_LENGTH) || SLUG_FALLBACK
+}
+```
+
+The filename stem a new record takes from its title, which `memoryPathFor` and both collision loops use (`packages/contracts/src/paths.ts:200`, `packages/store/src/store.ts:460`, `apps/cli/src/v2.ts:330`). It kebab-cases as `slugify` does, and a result longer than 80 is cut at its last hyphen at or before 80 when that leaves at least `SLUG_MIN_WORD_CUT` (60) characters, so it ends on a whole word, and at 80 otherwise (`cutAtWord` at `packages/contracts/src/slug.ts:24-34`). It equals `slugify` for every title whose slug fits the budget. `withCollisionOrdinal` cuts its stem by the same rule to make room for a `-N` suffix. A stem is computed only when a record is minted, and the path is the record's id from then on, so the rule decides new filenames and never moves an existing file.
+
+`packages/contracts/src/slug.ts:82-86`, 2 importer files
 
 ### DirtyTree
 
@@ -430,7 +435,7 @@ export class DirtyTree extends Schema.TaggedError<DirtyTree>()("DirtyTree", {
 }) {}
 ```
 
-The typed failure for an operation that needs a clean tree and found uncommitted changes. It carries the dirty `paths`, and the CLI maps it to `ERR_DIRTY_TREE` (`apps/cli/src/errors.ts:55-56`). When the target ref is checked out, `landOnRef` checks the paths a landing changes and answers `worktree-dirty` when any of them has uncommitted state (`packages/session/src/commit.ts:308-313`). `curate merge` turns that answer into `DirtyTree` on both its fast-forward and its replay (`apps/cli/src/v2.ts:1730-1732`, `apps/cli/src/v2.ts:1832-1833`). `curate run` does the same when it lands (`apps/cli/src/curate-run.ts:503-504`). Nothing moves in either case. `session commit` reports the same case as its `worktree-dirty` outcome (`apps/cli/src/v2.ts:1074-1079`). The store's `requireCleanTree` raises it over every dirty path that isn't ignored (`packages/store/src/store.ts:1360-1373`).
+The typed failure for an operation that needs a clean tree and found uncommitted changes. It carries the dirty `paths`, and the CLI maps it to `ERR_DIRTY_TREE` (`apps/cli/src/errors.ts:55-56`). When the target ref is checked out, `landOnRef` checks the paths a landing changes and answers `worktree-dirty` when any of them has uncommitted state (`packages/session/src/commit.ts:308-313`). `curate merge` turns that answer into `DirtyTree` on both its fast-forward and its replay (`apps/cli/src/v2.ts:2004-2006`, `apps/cli/src/v2.ts:2106-2107`). `curate run` does the same when it lands (`apps/cli/src/curate-run.ts:530-531`). Nothing moves in either case. `session commit` reports the same case as its `worktree-dirty` outcome (`apps/cli/src/v2.ts:1297-1299`). The store's `requireCleanTree` raises it over every dirty path that isn't ignored (`packages/store/src/store.ts:1360-1373`).
 
 `packages/contracts/src/errors.ts:67-69`, 6 importer files
 
@@ -474,7 +479,7 @@ export type Violation =
   | { readonly kind: "write-bar"; readonly path: string; readonly reasons: ReadonlyArray<string> }
 ```
 
-One mechanical refusal from `validateOps`, the check a session commit runs before it writes anything. The check reads only the view and the ops, with no model call and no I/O (`packages/session/src/validate.ts:19-22`). There are six kinds. A batch over `BATCH_CAP`, which is 200 ops, gets a single `batch-cap` violation, and nothing else is judged (`packages/session/src/validate.ts:45`, `packages/session/src/validate.ts:181-189`). For a put, a path or format problem is `format`. A content hash that an active record or an earlier put in the batch holds is `duplicate`, and a different article at an active path is `claim-edit` (`packages/session/src/validate.ts:264-279`). `reserved-path` covers `.memhtml/`, the policy file, `index.html`, and `sitemap.xml` under every scope, plus the arcs and people prefixes outside the `curate` scope (`packages/session/src/validate.ts:86-97`). `write-bar` carries the store policy's reasons for a new record. A commit refuses the whole batch on any violation and writes nothing (`packages/session/src/commit.ts:495-500`). `session put` and `session exec` refuse a call only for `batch-cap` or for a blocking kind on a path the call touches. The blocking kinds are `format`, `reserved-path`, `batch-cap`, and `write-bar`, plus `duplicate` and `claim-edit` in a session bound by `MEMHTML_SESSION` (`apps/cli/src/v2.ts:322-343`).
+One mechanical refusal from `validateOps`, the check a session commit runs before it writes anything. The check reads only the view and the ops, with no model call and no I/O (`packages/session/src/validate.ts:19-22`). There are six kinds. A batch over `BATCH_CAP`, which is 200 ops, gets a single `batch-cap` violation, and nothing else is judged (`packages/session/src/validate.ts:45`, `packages/session/src/validate.ts:181-189`). For a put, a path or format problem is `format`. A content hash that an active record or an earlier put in the batch holds is `duplicate`, and a different article at an active path is `claim-edit` (`packages/session/src/validate.ts:264-279`). `reserved-path` covers `.memhtml/`, the policy file, `index.html`, and `sitemap.xml` under every scope, plus the arcs and people prefixes outside the `curate` scope (`packages/session/src/validate.ts:86-97`). `write-bar` carries the store policy's reasons for a new record. A commit refuses the whole batch on any violation and writes nothing (`packages/session/src/commit.ts:495-500`). `session put` and `session exec` refuse a call only for `batch-cap` or for a blocking kind on a path the call touches. The blocking kinds are `format`, `reserved-path`, `batch-cap`, and `write-bar`, plus `duplicate` and `claim-edit` in a session bound by `MEMHTML_SESSION` (`apps/cli/src/v2.ts:346-367`).
 
 `packages/session/src/validate.ts:24-42`, 6 importer files
 
@@ -508,7 +513,7 @@ export const appendOps = (
 }
 ```
 
-Appends ops to a session's log, persists the log, and returns the session the caller should keep using. It doesn't validate the ops. `session put` runs `validateOps` first and appends nothing when a blocking violation applies (`apps/cli/src/v2.ts:545-557`). The write runs under the session's exclusive lock. A second writer of the same id fails at once with `session.locked` (`packages/session/src/session.ts:161-188`). A lock whose mtime goes 30 seconds without a refresh counts as stale (`packages/session/src/session.ts:66-67`). Under the lock, `requireLogUnmoved` re-reads the log. It fails with `session.moved` and writes nothing when the ops on disk differ from the ops the caller read (`packages/session/src/session.ts:304-319`). Every failure is a `StorageFailure`.
+Appends ops to a session's log, persists the log, and returns the session the caller should keep using. It doesn't validate the ops. `session put` runs `validateOps` first and appends nothing when a blocking violation applies (`apps/cli/src/v2.ts:574-586`). The write runs under the session's exclusive lock. A second writer of the same id fails at once with `session.locked` (`packages/session/src/session.ts:161-188`). A lock whose mtime goes 30 seconds without a refresh counts as stale (`packages/session/src/session.ts:66-67`). Under the lock, `requireLogUnmoved` re-reads the log. It fails with `session.moved` and writes nothing when the ops on disk differ from the ops the caller read (`packages/session/src/session.ts:304-319`). Every failure is a `StorageFailure`.
 
 `packages/session/src/session.ts:325-335`, 6 importer files
 

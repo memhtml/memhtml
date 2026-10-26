@@ -6,8 +6,8 @@ import { join } from "node:path"
 import { Effect, Fiber, Logger, Result } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
-import { GitFailure, makeGit } from "../src/git.js"
-import { SESSION_TRAILER } from "../src/plumbing.js"
+import { GitFailure, literalPathspecs, makeGit } from "../src/git.js"
+import { parseNulPathList, SESSION_TRAILER } from "../src/plumbing.js"
 import { configureIdentity, type FixtureRepo, makeFixtureRepo } from "../src/testing.js"
 
 /**
@@ -727,6 +727,122 @@ describe("the environment cannot re-aim a call at another repository", () => {
         else process.env[name] = value
       }
     }
+  })
+})
+
+describe("the environment cannot change how a pathspec matches", () => {
+  /**
+   * Four variables change every pathspec of every git call: `GIT_LITERAL_PATHSPECS` turns
+   * `:(literal)` and all other magic into plain characters, `GIT_NOGLOB_PATHSPECS` does the same to
+   * `*`, `?` and `[`, `GIT_GLOB_PATHSPECS` stops `*` from matching `/`, and `GIT_ICASE_PATHSPECS`
+   * folds case. Every caller of this service spells its pathspecs for git's default, so a value
+   * inherited from the calling shell must not move them. Each case compares a call made with the
+   * variable set against the same call made with it unset, after checking the pathspec is one the
+   * variable would change.
+   */
+  it("matches each pathspec as git's default does, whatever the four variables say", async () => {
+    const repo = await fixture()
+    for (const path of ["probe/a[b].html", "probe/ab.html", "probe/dir/x.html"]) {
+      await put(repo.root, path, "probe")
+    }
+    await run(repo.git.add(["probe"]))
+    await run(repo.git.commit("memhtml(write): probe"))
+    const listed = async (pathspec: string) =>
+      parseNulPathList(await run(repo.git.run(["ls-files", "-z", "--", pathspec])))
+
+    const cases = [
+      {
+        name: "GIT_LITERAL_PATHSPECS",
+        pathspec: ":(literal)probe/a[b].html",
+        has: "probe/a[b].html"
+      },
+      { name: "GIT_NOGLOB_PATHSPECS", pathspec: "probe/a[b].html", has: "probe/ab.html" },
+      { name: "GIT_GLOB_PATHSPECS", pathspec: "probe/*.html", has: "probe/dir/x.html" },
+      { name: "GIT_ICASE_PATHSPECS", pathspec: "PROBE/AB.HTML", has: null }
+    ] as const
+    for (const { name, pathspec, has } of cases) {
+      const unset = await listed(pathspec)
+      if (has === null) expect(unset, name).toEqual([])
+      else expect(unset, name).toContain(has)
+      const saved = process.env[name]
+      process.env[name] = "1"
+      try {
+        expect(await listed(pathspec), name).toEqual(unset)
+      } finally {
+        if (saved === undefined) delete process.env[name]
+        else process.env[name] = saved
+      }
+    }
+  })
+})
+
+describe("add stages the paths it is given and no others", () => {
+  /**
+   * Every caller hands `add` the concrete paths it wrote, and `[`, `*` and `?` are ordinary
+   * characters in a record's path. Read as pathspecs, `probe/a[b].html` would also stage an
+   * untracked `probe/ab.html` and `probe/*.html` every untracked page beside it.
+   */
+  it("stages a path whose name is a glob pattern, and not the files the pattern matches", async () => {
+    const repo = await fixture()
+    for (const path of ["probe/a[b].html", "probe/ab.html", "probe/*.html", "probe/c.html"]) {
+      await put(repo.root, path, "probe")
+    }
+
+    await run(repo.git.add(["probe/a[b].html", "probe/*.html"]))
+
+    const staged = await run(repo.git.run(["diff", "--cached", "--name-only", "-z"]))
+    expect(parseNulPathList(staged)).toEqual(["probe/*.html", "probe/a[b].html"])
+  })
+
+  it("still stages a directory's contents and a tracked file's removal", async () => {
+    const repo = await fixture()
+    await put(repo.root, "probe/gone.html", "probe")
+    await run(repo.git.add(["probe/gone.html"]))
+    await run(repo.git.commit("memhtml(write): probe"))
+    await rm(join(repo.root, "probe/gone.html"))
+    await put(repo.root, "probe/dir/x.html", "probe")
+
+    await run(repo.git.add(["probe/gone.html", "probe/dir"]))
+
+    const status = ["diff", "--cached", "--name-status", "--no-renames", "-z"]
+    const staged = await run(repo.git.run(status))
+    expect(staged.split("\0").filter(Boolean)).toEqual([
+      "A",
+      "probe/dir/x.html",
+      "D",
+      "probe/gone.html"
+    ])
+  })
+
+  it("refuses an empty path before git runs, rather than staging the whole tree", async () => {
+    /**
+     * Git refuses a bare `""` as a pathspec, but `:(literal)` with nothing after it matches every
+     * path, so an empty path would stage every untracked file and every deletion for the next
+     * commit, which takes the whole index.
+     */
+    const repo = await fixture()
+    for (const path of ["probe/a.html", "probe/b.html"]) await put(repo.root, path, path)
+
+    const failure = await runErr(repo.git.add(["probe/a.html", ""]))
+
+    expect(failure).toBeInstanceOf(GitFailure)
+    expect(failure.command).toBe("add")
+    expect(failure.exitCode).toBeNull()
+    const staged = await run(repo.git.run(["diff", "--cached", "--name-only", "-z"]))
+    expect(parseNulPathList(staged)).toEqual([])
+  })
+})
+
+describe("literalPathspecs", () => {
+  it("spells each path as a literal pathspec and refuses an empty one", async () => {
+    expect(await run(literalPathspecs("rm", ["a[b]/index.html", "*.html"]))).toEqual([
+      ":(literal)a[b]/index.html",
+      ":(literal)*.html"
+    ])
+    const failure = await runErr(literalPathspecs("rm", ["a.html", ""]))
+    expect(failure).toBeInstanceOf(GitFailure)
+    expect(failure.command).toBe("rm")
+    expect(failure.exitCode).toBeNull()
   })
 })
 

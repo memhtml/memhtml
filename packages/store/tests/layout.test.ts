@@ -315,3 +315,46 @@ describe("the merge=ours driver", () => {
     await run(repo.git.mergeAbort())
   })
 })
+
+describe("an archive move is never read as a directory rename", () => {
+  it("sets merge.directoryRenames to false, per clone like the driver", async () => {
+    const repo = await bareDirectory()
+    await run(initRepo(repo.git))
+    // The key spelled out rather than read from the constant, so a misspelled key cannot pass.
+    const value = await run(repo.git.run(["config", "--get", "merge.directoryRenames"]))
+    expect(value.trim()).toBe("false")
+  })
+
+  it("keeps a record written into a directory the other side's archive emptied", async () => {
+    /**
+     * Archiving is a per-file `git mv` into `archive/<YYYY>/<the same path>`. When the move takes
+     * a directory's last file, git's merge reads it as the directory's rename and carries the
+     * other side's new file there into `archive/`: under git's default the merge stops with
+     * `CONFLICT (file location)`, and under `merge.directoryRenames=true` the live record lands in
+     * the archive with no conflict at all.
+     */
+    const repo = await bareDirectory()
+    await run(initRepo(repo.git))
+    await mkdir(join(repo.root, "resources/old"), { recursive: true })
+    await writeFile(join(repo.root, "resources/old/a.html"), "<p>a</p>", "utf8")
+    await run(repo.git.add(["resources/old/a.html"]))
+    await run(repo.git.commit("memhtml(write): a"))
+
+    await run(repo.git.checkoutBranch("side", { create: true }))
+    await mkdir(join(repo.root, "archive/2031/resources/old"), { recursive: true })
+    await run(repo.git.mv("resources/old/a.html", "archive/2031/resources/old/a.html"))
+    await run(repo.git.commit("memhtml(archive): a"))
+
+    await run(repo.git.checkoutBranch("main"))
+    await writeFile(join(repo.root, "resources/old/d.html"), "<p>d</p>", "utf8")
+    await run(repo.git.add(["resources/old/d.html"]))
+    await run(repo.git.commit("memhtml(write): d"))
+
+    const outcome = await run(repo.git.merge("side"))
+    expect(outcome).toEqual({ merged: true, conflicted: [] })
+    const head = (await run(repo.git.lsTreeR("HEAD"))).map((entry) => entry.path)
+    expect(head).toContain("resources/old/d.html")
+    expect(head).toContain("archive/2031/resources/old/a.html")
+    expect(head).not.toContain("archive/2031/resources/old/d.html")
+  })
+})

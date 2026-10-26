@@ -32,7 +32,7 @@ An agent runs `memhtml write --title … --claim … --type semantic`. The proce
 16. The format check follows. `renderChecked` renders the article and rejects it with `InvalidMemory` on any `checkMemory` violation, before the file is written, staged, or committed `packages/store/src/store.ts:727`, `packages/store/src/store.ts:676-683`.
 17. The duplicate check follows the format check. The store hashes the rendered bytes and asks the injected `dedupeLookup`, and an existing active path is returned with `deduped: true` and no commit `packages/store/src/store.ts:728-744`.
 18. The lookup is the index recorder's `activePathForHash`, one query for a live, non-archived, non-task row with that content hash `apps/cli/src/api-layer.ts:196`, `packages/index/src/traces-persist.ts:196-203`.
-19. The store picks a free path, then writes the file, stages it with `git add`, and makes one commit with provenance trailers, all under a journal that compensates a failure `packages/store/src/store.ts:746-773`. `Git.commit` takes the checkout lock too, and the lock is reentrant within one fiber, so the nested take runs at once `packages/store/src/git.ts:485-504`, `packages/contracts/src/checkout-lock.ts:88-97`.
+19. The store picks a free path, then writes the file, stages it with `git add`, and makes one commit with provenance trailers, all under a journal that compensates a failure `packages/store/src/store.ts:746-773`. `Git.commit` takes the checkout lock too, and the lock is reentrant within one fiber, so the nested take runs at once `packages/store/src/git.ts:517-536`, `packages/contracts/src/checkout-lock.ts:88-97`.
 20. Back in the operation, only a created file triggers `reindex`, because a dedupe changed nothing `apps/cli/src/operations.ts:350`.
 21. `reindex` calls `indexer.update({ embed: true })` over the whole commit rather than a list of paths, because a rename is only expressible as a diff and the watermark is what makes freshness answerable `apps/cli/src/operations.ts:248-271`.
 22. `update` falls through to a full reprojection when no watermark row exists, and refuses with `IndexStale` when a rebuild died before writing one `packages/index/src/indexer.ts:808-846`.
@@ -164,34 +164,34 @@ sequenceDiagram
 
 An agent writes into a session with `memhtml session put` or `memhtml session exec`, then lands the whole log as one commit with `memhtml session commit`. Each of the three steps asks the head server first and runs locally when no server takes the request. Every append takes the session's lock, and every commit runs `commitSession`. See `docs/design.md` §17 and §22.
 
-The session commands resolve the root themselves and never build `layerApp`, because none of them reads `index.db` `apps/cli/src/run.ts:1223-1229`, `apps/cli/src/v2.ts:122-128`. A session is a base sha, a ref, and an op log in `.memhtml/sessions/<id>.json` `packages/session/src/session.ts:13-17`, `packages/session/src/session.ts:38-53`. `session start --id <id>` writes that log at the ref's tip `apps/cli/src/v2.ts:375-400`. Under `MEMHTML_SESSION`, `session put` and `session exec` start the session on first use instead `apps/cli/src/v2.ts:414-458`.
+The session commands resolve the root themselves and never build `layerApp`, because none of them reads `index.db` `apps/cli/src/run.ts:1223-1229`, `apps/cli/src/v2.ts:122-128`. A session is a base sha, a ref, and an op log in `.memhtml/sessions/<id>.json` `packages/session/src/session.ts:13-17`, `packages/session/src/session.ts:38-53`. `session start --id <id>` writes that log at the ref's tip `apps/cli/src/v2.ts:399-424`. Under `MEMHTML_SESSION`, `session put` and `session exec` start the session on first use instead `apps/cli/src/v2.ts:438-482`.
 
 `session put` appends rendered writes and entity edits.
 
 1. `run` reads the op stream (the JSONL `apply` takes, plus `label` and `unlabel` lines) before anything opens, so a bad line is exit 2 with nothing appended `apps/cli/src/run.ts:2126-2134`.
-2. `sessionPut` resumes the session and posts its base sha, its ops, and the new lines to `/v1/neighbors`, unless `--no-server` is set or the session is on a curate ref `apps/cli/src/v2.ts:611-636`.
+2. `sessionPut` resumes the session and posts its base sha, its ops, and the new lines to `/v1/neighbors`, unless `--no-server` is set or the session is on a curate ref `apps/cli/src/v2.ts:647-685`.
 3. The server reads the policy, builds the version at the session's base from the version it holds, and runs `preparePuts` over it with the vector cache it holds `apps/cli/src/head-server.ts:1423-1440`, `apps/cli/src/head-server.ts:995-999`.
-4. With no answer, the CLI reads the policy, loads the head at the base from a snapshot or git, and runs the same `preparePuts` over the vector cache file `apps/cli/src/v2.ts:639-657`.
-5. `preparePuts` overlays the session's ops on the base, renders each write the way the store would, judges the whole log against the base with `validateOps`, and ranks each put's nearest records with `searchHead` when nothing blocks `apps/cli/src/v2.ts:503-582`.
-6. A blocking violation fails the call with `InvalidMemory` and appends nothing. Otherwise `appendOps` writes the log under the session's lock, refusing when another writer changed it meanwhile `apps/cli/src/v2.ts:658-666`, `packages/session/src/session.ts:321-335`.
+4. With no answer, the CLI reads the policy, loads the head at the base from a snapshot or git, and runs the same `preparePuts` over the vector cache file `apps/cli/src/v2.ts:688-706`.
+5. `preparePuts` overlays the session's ops on the base, renders each write the way the store would, judges the whole log against the base with `validateOps`, and ranks each put's nearest records with `searchHead` when nothing blocks `apps/cli/src/v2.ts:529-611`.
+6. A blocking violation fails the call with `InvalidMemory` and appends nothing. Otherwise `appendOps` writes the log under the session's lock, refusing when another writer changed it meanwhile `apps/cli/src/v2.ts:707-715`, `packages/session/src/session.ts:321-335`.
 
 `session exec` runs a script and appends what it wrote.
 
 1. `run` reads the script from `--script`, `--file`, or stdin, and refuses a blank one or one past the server's request cap, for both paths `apps/cli/src/run.ts:2081-2125`.
-2. `sessionExec` posts it to `/v1/exec` with an answer timeout that covers the server's queue waits and the script's own deadline `apps/cli/src/v2.ts:858-871`, `apps/cli/src/v2.ts:824-825`.
+2. `sessionExec` posts it to `/v1/exec` with an answer timeout that covers the server's queue waits and the script's own deadline `apps/cli/src/v2.ts:1016-1024`, `apps/cli/src/v2.ts:977-978`.
 3. The server reads the policy, resumes the session, builds its base from the held tip or an ancestor, and runs `execOverHead` in a sandbox worker `apps/cli/src/head-server.ts:1084-1134`.
-4. With no server, a refusal, or a decline, the CLI runs the same `execOverHead` in process. A request the server took and never answered fails naming `session status`, because the server may have appended the harvest `apps/cli/src/v2.ts:872-917`.
-5. `execOverHead` overlays the log on the base, runs the script in the just-bash sandbox, judges the log plus the harvest, and appends the harvest only on exit 0 with no blocking violation `apps/cli/src/v2.ts:729-772`.
+4. With no server, a refusal, or a decline, the CLI runs the same `execOverHead` in process. A request the server took and never answered fails naming `session status`, because the server may have appended the harvest `apps/cli/src/v2.ts:1050-1055`.
+5. `execOverHead` overlays the log on the base, runs the script in the just-bash sandbox, judges the log plus the harvest, and appends the harvest only on exit 0 with no blocking violation `apps/cli/src/v2.ts:870-917`.
 
 `session commit` lands the log as one commit.
 
-1. `sessionCommit` reads the policy before it asks the server, so a malformed `memhtml.config.json` fails with `ERR_STORE_CONFIG` on either path `apps/cli/src/v2.ts:1103-1105`.
-2. It posts `{ id, message, dropRefused }` to `/v1/commit` and waits for the answer up to `MEMHTML_COMMIT_DEADLINE_MS`, 60000 by default `apps/cli/src/v2.ts:1106-1115`, `apps/cli/src/head-protocol.ts:373-376`.
+1. `sessionCommit` reads the policy before it asks the server, so a malformed `memhtml.config.json` fails with `ERR_STORE_CONFIG` on either path `apps/cli/src/v2.ts:1325-1327`.
+2. It posts `{ id, message, dropRefused }` to `/v1/commit` and waits for the answer up to `MEMHTML_COMMIT_DEADLINE_MS`, 60000 by default `apps/cli/src/v2.ts:1329-1337`, `apps/cli/src/head-protocol.ts:373-376`.
 3. The server runs one commit or rebase at a time and declines `busy` after a 20 s wait `apps/cli/src/head-server.ts:1232-1241`, `apps/cli/src/head-protocol.ts:384`. It reads the policy per request, declines a session on another ref or one whose log doesn't read, builds the version at the session's base, and runs `commitOverHead` `apps/cli/src/head-server.ts:1243-1290`.
-4. A served answer comes back with `via: "server"` `apps/cli/src/v2.ts:1116-1124`.
-5. A decline, a 4xx, or no server sends the commit to the local path. A 5xx or a lost answer fails with `ERR_STORAGE` and isn't retried locally, because the ref may already have moved `apps/cli/src/v2.ts:1028-1066`, `apps/cli/src/v2.ts:1125-1128`.
-6. Locally, the CLI resumes the session, loads the head at its base, and runs the same `commitOverHead` `apps/cli/src/v2.ts:1130-1139`.
-7. `commitOverHead` calls `commitSession`, repeats it with the refused ops dropped under `--drop-refused`, and writes the new commit's snapshot on `committed` `apps/cli/src/v2.ts:933-985`.
+4. A served answer comes back with `via: "server"` `apps/cli/src/v2.ts:1338-1347`.
+5. A decline, a 4xx, or no server sends the commit to the local path. A 5xx or a lost answer fails with `ERR_STORAGE` and isn't retried locally, because the ref may already have moved `apps/cli/src/v2.ts:1245-1283`, `apps/cli/src/v2.ts:1349-1351`.
+6. Locally, the CLI resumes the session, loads the head at its base, and runs the same `commitOverHead` `apps/cli/src/v2.ts:1353-1362`.
+7. `commitOverHead` calls `commitSession`, repeats it with the refused ops dropped under `--drop-refused`, and writes the new commit's snapshot on `committed` `apps/cli/src/v2.ts:1091-1202`.
 8. `commitSession` holds the session's lock and refuses a log that changed since it was read `packages/session/src/commit.ts:451-458`.
 9. It settles a `pending` commit an earlier call left, answering `committed` with `recovered: true` when that commit landed `packages/session/src/commit.ts:465-491`.
 10. It validates the ops, answers `refused` on any violation, and answers `rebase-needed` when the ref moved past the base `packages/session/src/commit.ts:493-508`.
@@ -237,14 +237,14 @@ sequenceDiagram
 An agent runs `memhtml head search "<prose>"`. The CLI asks the head server, which answers over the version it holds at its ref's tip. When no server answers, the CLI loads the head itself and runs the same `searchHead`. Either way the ranking is a BM25 lexical arm plus, when a vector cache and an embedder exist, a vector arm, fused by RRF with recency only as an exact-tie break. See `docs/design.md` §16 and §22.
 
 1. `head search` is one of the four v2 commands that bind an embedder, and it builds no app layer `apps/cli/src/run.ts:1231-1241`, `apps/cli/src/run.ts:2271-2278`.
-2. `headSearch` posts the query and limit to `/v1/search`, plus `embedDeadlineMs` when `MEMHTML_EMBED_DEADLINE_MS` is set `apps/cli/src/v2.ts:1396-1410`, `apps/cli/src/run.ts:2161-2167`. `--no-server` skips the ask.
+2. `headSearch` posts the query and limit to `/v1/search`, plus `embedDeadlineMs` when `MEMHTML_EMBED_DEADLINE_MS` is set `apps/cli/src/v2.ts:1668-1681`, `apps/cli/src/run.ts:2161-2167`. `--no-server` skips the ask.
 3. `askHead` dials `.memhtml/head.sock` and answers `null` for every way of not getting an answer, so a server can make a call faster and never makes it fail `apps/cli/src/head-client.ts:10-25`, `apps/cli/src/head-client.ts:221-229`.
 4. The server decodes the body with excess properties refused and calls `fresh`, which reads the ref and advances the held version when the ref moved `apps/cli/src/head-server.ts:1363-1368`, `apps/cli/src/head-server.ts:958-969`.
 5. `vectorsForQuery` embeds the query against the held vector cache within the deadline, 450 ms by default. Past it the search answers on the lexical arm with `embed-timeout` `apps/cli/src/head-server.ts:1369-1377`, `apps/cli/src/head-vectors.ts:206-266`, `apps/cli/src/head-protocol.ts:123`.
 6. `searchHead` runs over the version, with the request's scope as a predicate when the request named one `apps/cli/src/head-server.ts:1378-1385`, `packages/head/src/search.ts:211-234`.
 7. The server answers with the hits, the vector arm's report, the search time, and the head it searched `apps/cli/src/head-server.ts:1406-1414`.
-8. The CLI returns the answer with `head.source` set to `server` `apps/cli/src/v2.ts:1411-1421`, `apps/cli/src/v2.ts:201-210`.
-9. With no answer, the CLI loads the head at `HEAD` from its snapshot, an ancestor's snapshot advanced, or git, then runs `vectorsForQuery` over the cache file and the same `searchHead` `apps/cli/src/v2.ts:1423-1436`, `apps/cli/src/head-cache.ts:164-211`.
+8. The CLI returns the answer with `head.source` set to `server` `apps/cli/src/v2.ts:1682-1692`, `apps/cli/src/v2.ts:201-210`.
+9. With no answer, the CLI loads the head at `HEAD` from its snapshot, an ancestor's snapshot advanced, or git, then runs `vectorsForQuery` over the cache file and the same `searchHead` `apps/cli/src/v2.ts:1694-1707`, `apps/cli/src/head-cache.ts:164-211`.
 
 ```mermaid
 sequenceDiagram

@@ -210,9 +210,9 @@ const collapseMarkup = (html: string): string =>
 
 /**
  * Every `<link rel="memhtml-...">` element, whatever its attribute order or spelling of the rel.
- * Matched on the bytes rather than cut by `removeLink`, because the parser accepts a token the
- * editor does not spell (`memhtml-relates_to` parses as `relates_to`; the editor writes and cuts
- * `memhtml-relates-to`), and a link the parser counted must be the link this strips.
+ * Matched on the bytes rather than cut by `removeLink` rel by rel, so one pass strips every memhtml
+ * link in every spelling the parser accepts (`memhtml-relates_to` parses as `relates_to`, and the
+ * editor writes `memhtml-relates-to`): a link the parser counted must be the link this strips.
  */
 const MEMHTML_LINK_ELEMENT = new RegExp(
   `<link\\s[^>]*\\brel\\s*=\\s*["']${LINK_REL_PREFIX}[^"']*["'][^>]*>`,

@@ -4,7 +4,7 @@ Describes the source at 0.16.0 (2026-10-18). Citations are `path:line` into that
 
 These diagrams show the call order of six commands. `memhtml write` and `memhtml search` are the v1 doors over the SQLite index. `memhtml session commit`, `memhtml head search`, and `memhtml curate run` followed by `memhtml curate merge` are v2 commands over the head. Each participant is a file, a package, an Effect service tag, or a process defined in this repository, apart from the human or agent at the terminal. Each arrow is a call that the source makes, and the section under each diagram cites it.
 
-Every flow acts on the memhtml root, the separate memory tree that `--repo` or `MEMHTML_ROOT` names (`apps/cli/src/api-layer.ts:96-109`). `DatabaseService` is one connection to that root's `.memhtml/index.db` with `state.db` attached (`apps/cli/src/api-layer.ts:119-129`). `Git` runs `git` subprocesses in that root (`packages/store/src/git.ts:241-250`).
+Every flow acts on the memhtml root, the separate memory tree that `--repo` or `MEMHTML_ROOT` names (`apps/cli/src/api-layer.ts:96-109`). `DatabaseService` is one connection to that root's `.memhtml/index.db` with `state.db` attached (`apps/cli/src/api-layer.ts:119-129`). `Git` runs `git` subprocesses in that root (`packages/store/src/git.ts:281-317`).
 
 The two v1 commands run their dispatch arm over `layerApp`, the one production composition (`apps/cli/src/run.ts:2414-2431`, `apps/cli/src/api-layer.ts:409-419`). A handler in the MCP server reaches the same operations through the same layer. For example, `memory_write` calls `writeMemory` at `apps/mcp/src/handlers.ts:371`, and `memory_search` asks the head server first and calls `searchMemories` when it gets no answer (`apps/mcp/src/handlers.ts:612`). The MCP door itself is drawn in `architecture/data-flow.md`.
 
@@ -80,7 +80,7 @@ The note on `Store`: the store's `writeMemory` runs inside `exclusive`, which ta
 
 `Store->>Store`: `freePathFor` picks a free path (`packages/store/src/store.ts:746-754`), and `writeFileAt` writes the file with `node:fs` (`packages/store/src/store.ts:767`, `packages/store/src/store.ts:475-481`).
 
-`Store->>Git` and `Git-->>Store`: the store calls `git.add` and `git.commit` with provenance trailers (`packages/store/src/store.ts:768-771`). The `add` member of `Git` runs `git add` (`packages/store/src/git.ts:478-481`). Its `commit` member takes the checkout lock again, which the fiber already holds, then runs `git commit` and `git rev-parse HEAD` for the sha (`packages/store/src/git.ts:485-504`). The write, the stage, and the commit run under a journal that compensates a failure (`makeJournal`, `packages/store/src/store.ts:762-773`).
+`Store->>Git` and `Git-->>Store`: the store calls `git.add` and `git.commit` with provenance trailers (`packages/store/src/store.ts:768-771`). The `add` member of `Git` runs `git add` with each path as a `:(literal)` pathspec, so a `[`, `*` or `?` in a record's path never stages a file beside it (`packages/store/src/git.ts:507-513`). Its `commit` member takes the checkout lock again, which the fiber already holds, then runs `git commit` and `git rev-parse HEAD` for the sha (`packages/store/src/git.ts:517-536`). The write, the stage, and the commit run under a journal that compensates a failure (`makeJournal`, `packages/store/src/store.ts:762-773`).
 
 `Store-->>Ops`: the result carries the path, `created`, `deduped`, the commit sha, and the content hash (`packages/store/src/store.ts:775-781`).
 
@@ -242,21 +242,21 @@ sequenceDiagram
 
 ### Session commit call sites
 
-`Agent->>Run` and `Run->>V2`: `run` takes the v2 branch for `session commit` and hands it to `runV2` (`apps/cli/src/run.ts:2345-2373`), which calls `sessionCommit` (`apps/cli/src/v2.ts:1916-1917`).
+`Agent->>Run` and `Run->>V2`: `run` takes the v2 branch for `session commit` and hands it to `runV2` (`apps/cli/src/run.ts:2345-2373`), which calls `sessionCommit` (`apps/cli/src/v2.ts:2192-2193`).
 
-`V2->>V2`, policy: `sessionCommit` reads `memhtml.config.json` before it asks the server, so a malformed file fails with `ERR_STORE_CONFIG` on either path (`apps/cli/src/v2.ts:1103-1105`).
+`V2->>V2`, policy: `sessionCommit` reads `memhtml.config.json` before it asks the server, so a malformed file fails with `ERR_STORE_CONFIG` on either path (`apps/cli/src/v2.ts:1325-1327`).
 
-`V2->>Client` and `Client->>Server`: `askHeadFor` posts `{ id, message, dropRefused }` to the commit route and waits up to `MEMHTML_COMMIT_DEADLINE_MS`, 60000 by default (`apps/cli/src/v2.ts:1106-1115`, `apps/cli/src/head-protocol.ts:373-376`). The client dials the store's socket, and a failure before the connection completes means no server (`apps/cli/src/head-client.ts:21-25`, `apps/cli/src/head-client.ts:147-219`).
+`V2->>Client` and `Client->>Server`: `askHeadFor` posts `{ id, message, dropRefused }` to the commit route and waits up to `MEMHTML_COMMIT_DEADLINE_MS`, 60000 by default (`apps/cli/src/v2.ts:1329-1337`, `apps/cli/src/head-protocol.ts:373-376`). The client dials the store's socket, and a failure before the connection completes means no server (`apps/cli/src/head-client.ts:21-25`, `apps/cli/src/head-client.ts:147-219`).
 
 The first `Server->>Server`: the server runs one commit or rebase at a time and declines `busy` after a 20 s wait (`apps/cli/src/head-server.ts:1232-1241`, `apps/cli/src/head-protocol.ts:384`). `serveCommit` reads the policy per request, declines a session on another ref or one whose log doesn't read, and builds the version at the session's base from what it holds (`apps/cli/src/head-server.ts:1263-1276`, `apps/cli/src/head-server.ts:1243-1261`, `apps/cli/src/head-server.ts:1145-1171`).
 
-`Server->>Commit`: the server runs `commitOverHead` with an `afterCommit` hook (`apps/cli/src/head-server.ts:1277-1284`). `commitOverHead` calls `commitSession`, repeats it with the refused ops dropped under `--drop-refused`, and writes the new commit's snapshot on `committed` (`apps/cli/src/v2.ts:933-985`).
+`Server->>Commit`: the server runs `commitOverHead` with an `afterCommit` hook (`apps/cli/src/head-server.ts:1277-1284`). `commitOverHead` calls `commitSession`, repeats it with the refused ops dropped under `--drop-refused`, and writes the new commit's snapshot on `committed` (`apps/cli/src/v2.ts:1091-1202`).
 
 The second `Server->>Server`: `landed` builds the version at the new commit from the base over the commit's diff, holds it when the ref is still there, writes its snapshot, and starts the vector fill (`apps/cli/src/head-server.ts:1198-1230`).
 
-`Server-->>Client` and `Client-->>V2`: a served answer comes back with `via: "server"` (`apps/cli/src/v2.ts:1116-1124`).
+`Server-->>Client` and `Client-->>V2`: a served answer comes back with `via: "server"` (`apps/cli/src/v2.ts:1338-1347`).
 
-The `else` branch: no server, a 4xx, or a decline sends the commit to the local path (`apps/cli/src/v2.ts:1036-1066`, `apps/cli/src/v2.ts:1125-1128`). A 5xx or a lost answer fails with `ERR_STORAGE` instead, because the ref may already have moved. Locally, `sessionCommit` resumes the session, loads the head at its base, and runs the same `commitOverHead` (`apps/cli/src/v2.ts:1130-1139`).
+The `else` branch: no server, a 4xx, or a decline sends the commit to the local path (`apps/cli/src/v2.ts:1245-1283`, `apps/cli/src/v2.ts:1349-1351`). A 5xx or a lost answer fails with `ERR_STORAGE` instead, because the ref may already have moved. Locally, `sessionCommit` resumes the session, loads the head at its base, and runs the same `commitOverHead` (`apps/cli/src/v2.ts:1353-1362`).
 
 `Caller->>Commit` and `Commit->>Log`: `commitSession` holds the session's lock for the whole call and refuses a log that changed since the caller read it (`packages/session/src/commit.ts:451-458`).
 
@@ -316,9 +316,9 @@ sequenceDiagram
 
 `Run->>Run`: `head search` reads `MEMHTML_EMBED_DEADLINE_MS` and binds an embedder, one of four v2 commands that do (`apps/cli/src/run.ts:2161-2167`, `apps/cli/src/run.ts:1231-1241`, `apps/cli/src/run.ts:2271-2278`).
 
-`Run->>V2`: `runV2` calls `headSearch` and names the response type `head.search` (`apps/cli/src/v2.ts:1924-1925`).
+`Run->>V2`: `runV2` calls `headSearch` and names the response type `head.search` (`apps/cli/src/v2.ts:2200-2201`).
 
-`V2->>Client` and `Client->>Server`: `headSearch` posts the query and limit, plus the deadline when one is set, unless `--no-server` is given (`apps/cli/src/v2.ts:1396-1410`). `askHead` answers `null` for every way of not getting an answer, so a server can make a call faster and never makes it fail (`apps/cli/src/head-client.ts:14-19`, `apps/cli/src/head-client.ts:221-229`).
+`V2->>Client` and `Client->>Server`: `headSearch` posts the query and limit, plus the deadline when one is set, unless `--no-server` is given (`apps/cli/src/v2.ts:1668-1681`). `askHead` answers `null` for every way of not getting an answer, so a server can make a call faster and never makes it fail (`apps/cli/src/head-client.ts:14-19`, `apps/cli/src/head-client.ts:221-229`).
 
 The first `Server->>Server`: the server decodes the body with excess properties refused, then `fresh` reads the ref and advances the held version when the ref moved (`apps/cli/src/head-server.ts:1363-1368`, `apps/cli/src/head-server.ts:958-969`).
 
@@ -326,9 +326,9 @@ The first `Server->>Server`: the server decodes the body with excess properties 
 
 `Server->>Search`: `searchHead` runs a BM25 lexical arm and, given vectors, a vector arm, fused by RRF, with the request's scope as a predicate when it names one (`apps/cli/src/head-server.ts:1378-1385`, `packages/head/src/search.ts:211-234`).
 
-`Server-->>Client`: the answer carries the hits, the vector arm's report, the search time, and the head it searched (`apps/cli/src/head-server.ts:1406-1414`). `headSearch` returns the answer (`apps/cli/src/v2.ts:1411-1421`), and `servedStats` marks its head as the server's (`apps/cli/src/v2.ts:201-210`).
+`Server-->>Client`: the answer carries the hits, the vector arm's report, the search time, and the head it searched (`apps/cli/src/head-server.ts:1406-1414`). `headSearch` returns the answer (`apps/cli/src/v2.ts:1682-1692`), and `servedStats` marks its head as the server's (`apps/cli/src/v2.ts:201-210`).
 
-The `else` branch: `headSearch` loads the head at `HEAD` and runs the same two calls over the vector cache file (`apps/cli/src/v2.ts:1423-1436`). `loadVersion` tries the commit's own snapshot, then an ancestor's snapshot advanced by delta, then git (`apps/cli/src/head-cache.ts:164-211`).
+The `else` branch: `headSearch` loads the head at `HEAD` and runs the same two calls over the vector cache file (`apps/cli/src/v2.ts:1694-1707`). `loadVersion` tries the commit's own snapshot, then an ancestor's snapshot advanced by delta, then git (`apps/cli/src/head-cache.ts:164-211`).
 
 ## memhtml curate run, then curate merge
 
@@ -377,21 +377,21 @@ sequenceDiagram
 
 ### Curate call sites
 
-`CurateRun->>CurateRun`, refusals: the ref must sit under `refs/heads/curate/` and must not be the branch `HEAD` names, checked before a model is built or a session opens (`apps/cli/src/curate-run.ts:540-553`). See `docs/design.md` §23.
+`CurateRun->>CurateRun`, refusals: the ref must sit under `refs/heads/curate/` and must not be the branch `HEAD` names, checked before a model is built or a session opens (`apps/cli/src/curate-run.ts:567-580`). See `docs/design.md` §23.
 
-`CurateRun->>CurateRun`, setup: the run reads the policy once, renders the charter, builds the model from the `--model` spec, loads the head at `main`'s tip, and starts the session on the curate ref (`apps/cli/src/curate-run.ts:557-591`). It builds the briefing over the starting view and binds the tools to the head, the session overlay, and the write bar (`apps/cli/src/curate-run.ts:593-605`).
+`CurateRun->>CurateRun`, setup: the run reads the policy once, renders the charter, builds the model from the `--model` spec, loads the head at `main`'s tip, and starts the session on the curate ref (`apps/cli/src/curate-run.ts:582-618`). It builds the briefing over the starting view and binds the tools to the head, the session overlay, and the write bar (`apps/cli/src/curate-run.ts:620-638`).
 
-`CurateRun->>Curator` and the loop: `runCurator` (`apps/cli/src/curate-run.ts:607-617`, `packages/curator/src/loop.ts:102`) runs a `generateText` tool loop (`packages/curator/src/loop.ts:214`) with the tools `search`, `read`, `exec`, `propose`, `status`, and `finish` (`packages/curator/src/loop.ts:145-196`). The model is Bedrock through `@ai-sdk/amazon-bedrock`, an OpenAI-compatible proxy, or a scripted fake (`packages/curator/src/model.ts:13-23`). A run the model stopped fails as `ERR_MODEL_UNAVAILABLE` and leaves its ops in the session for `--resume` (`apps/cli/src/curate-run.ts:619-626`).
+`CurateRun->>Curator` and the loop: `runCurator` (`apps/cli/src/curate-run.ts:640-650`, `packages/curator/src/loop.ts:102`) runs a `generateText` tool loop (`packages/curator/src/loop.ts:214`) with the tools `search`, `read`, `exec`, `propose`, `status`, and `finish` (`packages/curator/src/loop.ts:145-196`). The model is Bedrock through `@ai-sdk/amazon-bedrock`, an OpenAI-compatible proxy, or a scripted fake (`packages/curator/src/model.ts:13-23`). A run the model stopped fails as `ERR_MODEL_UNAVAILABLE` and leaves its ops in the session for `--resume` (`apps/cli/src/curate-run.ts:652-659`).
 
-`CurateRun->>Commit`: `land` calls `commitSession` under the `curate` scope and retries `rebase-needed` up to 8 times with the base moved to the ref's tip (`apps/cli/src/curate-run.ts:655-661`, `apps/cli/src/curate-run.ts:462-512`, `apps/cli/src/curate-run.ts:100`). The run then writes the new commit's snapshot so `curate merge` loads both tips from snapshots (`apps/cli/src/curate-run.ts:662-663`).
+`CurateRun->>Commit`: `land` calls `commitSession` under the `curate` scope and retries `rebase-needed` up to 8 times with the base moved to the ref's tip (`apps/cli/src/curate-run.ts:688-694`, `apps/cli/src/curate-run.ts:470-539`, `apps/cli/src/curate-run.ts:100`). The run then writes the new commit's snapshot so `curate merge` loads both tips from snapshots (`apps/cli/src/curate-run.ts:695-696`).
 
-`Merge->>Merge`: `curateMerge` reads the policy, resolves both refs, and asks whether the curate ref descends from the target (`apps/cli/src/v2.ts:1624-1645`). When it doesn't, the curator's log is rebuilt from the trees, a fresh session starts on the target at its tip with those ops, and `validateOps` judges them, so a collision refuses before the gate runs (`apps/cli/src/v2.ts:1652-1677`).
+`Merge->>Merge`: `curateMerge` reads the policy, resolves both refs, and asks whether the curate ref descends from the target (`apps/cli/src/v2.ts:1895-1916`). When it doesn't, the curator's log is rebuilt from the trees, a fresh session starts on the target at its tip with those ops, and `validateOps` judges them, so a collision refuses before the gate runs (`apps/cli/src/v2.ts:1923-1951`).
 
-`Merge->>Gate`: the head gate loads the versions at both tips and scores the same probes at each with `gateHeads`, with no network call. A failing gate fails the merge with nothing moved. `--skip-gate` is a logged override (`apps/cli/src/v2.ts:1679-1688`, `apps/cli/src/head-gate.ts:93-109`).
+`Merge->>Gate`: the head gate loads the versions at both tips and scores the same probes at each with `gateHeads`, with no network call. A failing gate fails the merge with nothing moved. `--skip-gate` is a logged override (`apps/cli/src/v2.ts:1953-1962`, `apps/cli/src/head-gate.ts:93-109`).
 
-`Merge->>Land`: a fast-forward lands through `landOnRef` under the checkout lock, the same section a session commit lands with, and writes the snapshot for the new tip (`apps/cli/src/v2.ts:1721-1742`).
+`Merge->>Land`: a fast-forward lands through `landOnRef` under the checkout lock, the same section a session commit lands with, and writes the snapshot for the new tip (`apps/cli/src/v2.ts:1993-2016`).
 
-`Merge->>Commit`, replay: `landReplay` calls `commitSession` with the subject `(replayed onto <short sha>)` through a loop bounded at `MERGE_ATTEMPTS`, then moves the curate ref to the landed commit with a compare-and-swap (`apps/cli/src/v2.ts:1760-1799`, `apps/cli/src/v2.ts:1524`).
+`Merge->>Commit`, replay: `landReplay` calls `commitSession` with the subject `(replayed onto <short sha>)` through a loop bounded at `MERGE_ATTEMPTS`, then moves the curate ref to the landed commit with a compare-and-swap (`apps/cli/src/v2.ts:2034-2073`, `apps/cli/src/v2.ts:1795`).
 
 ## See also
 
