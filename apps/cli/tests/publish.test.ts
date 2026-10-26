@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process"
-import { access, mkdir, readFile, writeFile } from "node:fs/promises"
+import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { promisify } from "node:util"
 
@@ -200,6 +200,34 @@ describe("memhtml publish removes a listing whose directory holds no record", ()
     expect(report.paths).not.toContain("resources/ab/index.html")
     expect(await headPaths(cli)).toContain("resources/ab/index.html")
     expect(await exists(cli, "resources/ab/index.html")).toBe(true)
+  })
+
+  it("stages no removal when a write fails, so the next commit cannot carry one", async () => {
+    /**
+     * Every store write commits the whole shared git index (`git commit` with no pathspec), so a
+     * removal staged by a publish that then failed would land in the next, unrelated commit. The
+     * removals are staged only after every artifact is written. The failure is a real one, a listing
+     * made read-only, as in `doctor.test.ts`.
+     */
+    const cli = await store()
+    await write(cli, "resources/old/a-fact.html", "The old widget fact")
+    await write(cli, "resources/live/b.html", "The live widget fact")
+    await publish(cli)
+    await cli.json(["archive", "resources/old/a-fact.html", "--reason", "no longer current"])
+    await write(cli, "resources/live/c.html", "The second live widget fact")
+    const listing = join(cli.root, "resources/live/index.html")
+    await chmod(listing, 0o444)
+    try {
+      const failed = await cli.envelope(["publish"])
+      expect(failed.code).toBe("ERR_STORAGE")
+    } finally {
+      await chmod(listing, 0o644)
+    }
+
+    expect((await git(cli, "diff", "--cached", "--name-status")).trim()).toBe("")
+    await write(cli, "resources/live/d.html", "The third live widget fact")
+    expect(await deletedByHead(cli)).toEqual([])
+    expect(await headPaths(cli)).toContain("resources/old/index.html")
   })
 
   it("commits nothing on a second run once the stale listings are gone", async () => {

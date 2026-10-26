@@ -104,10 +104,10 @@ const trackedPaths = (git: GitShape) =>
 /**
  * `git rm` the stale listings, each spelled as a `:(literal)` pathspec. `git rm` reads a bare
  * argument as a pattern in which `*`, `?` and `[` match, so a stale `resources/a[b]/index.html`
- * would also remove `resources/ab/index.html`, the listing of a directory that still holds a
- * record. `-f` because the filename is the generator's: without it `git rm` refuses a file whose
- * working copy was edited, and a listing edited by hand is removed exactly as
- * {@link writeIfChanged} would overwrite it, rather than failing the whole publish.
+ * would also match `resources/ab/index.html`, a live listing this publish has just written and
+ * staged, and the commit would delete it. `-f` because the filename is the generator's: without it
+ * `git rm` refuses a file whose working copy was edited, and a listing edited by hand is removed
+ * exactly as {@link writeIfChanged} would overwrite it, rather than failing the whole publish.
  */
 const removeListings = (git: GitShape, paths: ReadonlyArray<string>) =>
   paths.length === 0
@@ -132,8 +132,10 @@ const subjectFor = (artifacts: number, removed: number): string => {
  *
  * A tracked listing the generator no longer produces is removed in the same commit
  * (`staleListings`), so a published tree carries no page listing records that have gone. The set is
- * read from the git index under the checkout lock and removed before any artifact is written, so a
- * removal git refuses leaves the tree as it was.
+ * read from the git index under the checkout lock, and the removals are staged last, after every
+ * artifact is written and staged. Every store write commits the whole shared index, so a removal
+ * staged by a publish whose write or `git add` then failed would ride along in the next, unrelated
+ * commit; staged last, a failure before the commit leaves no deletion behind.
  */
 export const publish = () =>
   Effect.gen(function* () {
@@ -143,18 +145,18 @@ export const publish = () =>
     yield* refuseEmptyIndex(git, rows)
     const artifacts = generateArtifacts(rows)
 
-    // Removed, written, staged, and committed under the checkout lock: the commit takes the whole
+    // Written, staged, removed, and committed under the checkout lock: the commit takes the whole
     // shared index, so it must not run while a session commit has its own file staged there.
     const written: Array<string> = []
     const { commit, removed } = yield* withCheckoutLock(
       git.root,
       Effect.gen(function* () {
         const removed = staleListings(yield* trackedPaths(git), artifacts)
-        yield* removeListings(git, removed)
         for (const artifact of artifacts) {
           if (yield* writeIfChanged(git.root, artifact)) written.push(artifact.path)
         }
         yield* git.add(artifacts.map((artifact) => artifact.path))
+        yield* removeListings(git, removed)
         const commit = yield* git.commit(
           commitSubject("publish", subjectFor(artifacts.length, removed.length))
         )
