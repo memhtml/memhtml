@@ -205,8 +205,9 @@ const markContradictions = (
       for (const other of head.byFrameKey(key)) {
         if (other === op.path) continue
         const record = head.get(other)
-        if (record === undefined || record.archived || archiving.has(other)) continue
+        if (record === undefined || record.archived) continue
         const against = movedTo.get(other) ?? other
+        if (archiving.has(other)) continue
         linked = addLink(linked, "contradicts", pathToHref(against))
         contradictions.push({ path: op.path, against })
       }
