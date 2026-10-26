@@ -167,7 +167,7 @@ Cost: S per instance. `DOCSYNC-1` already names the fix that closes the whole cl
 
 Write-time conflict detection was the campaign's largest measured win, and it reaches callers unevenly. The v1 prose door has it, so `memory_write_batch` and `memhtml apply --detect-conflicts` return a per-op `conflict` naming the colliding path, batch index, and claim. Three gaps remain on the v1 side, each documented and each with a different cause. An `article_html` op reports nothing, because the claim lives inside the caller's markup and the ops layer never parses it. Retrieval reports nothing, so a `memory_search` hit whose slot holds two live claims looks like one uncontested fact even though `frame_key` sits indexed on `files`. And a root created before migration 0009 carries NULL `frame_key` until a rebuild, so the assist finds fewer conflicts there. All three fail toward under-reporting, which is why they were deferred.
 
-The session door works differently. A session commit parses every put, markup included, and links a `contradicts` edge from the new record to each live record that shares its frame key, using frame keys the head computes from the tree. So the session door covers the markup case and the pre-0009 case, and reports the result as an edge in the commit. The writer doesn't see a per-op `conflict` before the commit lands. The cost of leaving the v1 gaps is that an agent's confidence in "no conflict reported" depends on which door it used and how old the root is, and nothing in the response says which situation it's in.
+The session door works differently. A session commit parses every put, markup included, and links a `contradicts` edge from the new record to each live record that shares its frame key and states another value, unless the put supersedes it or the same batch archives it, using frame keys the head computes from the tree. So the session door covers the markup case and the pre-0009 case, and reports the result as an edge in the commit. The writer doesn't see a per-op `conflict` before the commit lands. The cost of leaving the v1 gaps is that an agent's confidence in "no conflict reported" depends on which door it used and how old the root is, and nothing in the response says which situation it's in.
 
 Shows up in:
 
@@ -175,7 +175,7 @@ Shows up in:
 - `docs/backlog.md:55`
 - `docs/backlog.md:69`
 - `apps/cli/src/operations.ts:540-553`
-- `packages/session/src/commit.ts:180-210`
+- `packages/session/src/commit.ts:204-273`
 
 Cost: L for the `article_html` half on the v1 doors, because the assist has to move behind the store's own render, and a second parse would add a second place the gist rule can drift. M for the retrieval half, and S for making the pre-0009 degradation visible in the response.
 

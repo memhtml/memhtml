@@ -406,6 +406,7 @@ describe("a session commit killed mid-sequence", () => {
       sha: tip,
       paths: [SESSION_PATH],
       contradictions: [],
+      restatements: [],
       worktreeSynced: true,
       recovered: true
     })

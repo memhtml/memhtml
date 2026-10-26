@@ -41,6 +41,9 @@ import { writeStoreConfig } from "./strict-store.js"
  *   behind the tip is committed without the `rebase-needed` a local commit answers).
  * - `head-protocol.ts` `CommitResult`: swap `sha` and `paths` -> the same case (the printed
  *   envelopes differ in key order).
+ * - `head-protocol.ts` `CommitResult`: `restatements` without its decoding default -> "reads a
+ *   committed answer with no restatements ..." (the answer does not decode, and the CLI fails the
+ *   commit as one the server took and gave no usable answer for).
  * - `head-server.ts` `sessionToWrite`: drop the `other-ref` check -> "declines a session on another
  *   ref, and the CLI commits it here" (the server commits it).
  * - `head-server.ts` `app`: decode `/v1/commit` without `onExcessProperty: "error"` -> "refuses a
@@ -263,7 +266,7 @@ const SHARED = "areas/inbox/shared-slot.html"
  * record with the clock, so the twin repo gets a copy of these logs rather than puts of its own.
  */
 const conflictSessions = async (root: string): Promise<void> => {
-  for (const id of ["dj-a", "dj-b", "sp-a", "sp-b", "sp-c", "dh-a", "dh-b", "fk"]) {
+  for (const id of ["dj-a", "dj-b", "sp-a", "sp-b", "sp-c", "dh-a", "dh-b", "fk", "rs"]) {
     await start(root, id)
   }
   const one = { title: "Shared", type: "semantic", path: SHARED, body: "Shared slot one." }
@@ -282,6 +285,13 @@ const conflictSessions = async (root: string): Promise<void> => {
   await put(root, "fk", [
     { title: "Capital revised", type: "semantic", body: "The capital of India is Mumbai." }
   ])
+  await put(root, "rs", [
+    {
+      title: "Capital restated",
+      type: "semantic",
+      body: "The capital of India is New Delhi. This record restates the claim with a second sentence."
+    }
+  ])
 }
 
 /** The twin gets the same sessions: the logs and index files, over the same base commit. */
@@ -291,7 +301,8 @@ const copySessions = (from: string, to: string): Promise<void> =>
 /**
  * The parity script: the four conflict cases of the session suite (disjoint paths, the same path,
  * the same article under two titles, a frame-key contradiction), each a sequence of commits and
- * rebases, with `--drop-refused` on one refusal. Every commit and rebase payload in order.
+ * rebases, with `--drop-refused` on one refusal, then a restatement that lands beside the
+ * contradiction. Every commit and rebase payload in order.
  */
 const conflictScript = async (root: string, local: boolean): Promise<ReadonlyArray<Body>> => {
   const payloads: Array<Body> = []
@@ -339,6 +350,23 @@ const conflictScript = async (root: string, local: boolean): Promise<ReadonlyArr
     kind: "committed",
     contradictions: [
       { path: "areas/inbox/capital-revised.html", against: "areas/inbox/capital-of-india.html" }
+    ],
+    restatements: []
+  })
+  // A restatement of the first claim: linked to the second, which states another value, and
+  // reported against the first, which states the same one.
+  await rebase("rs")
+  expect(await commit("rs")).toMatchObject({
+    kind: "committed",
+    contradictions: [
+      { path: "areas/inbox/capital-restated.html", against: "areas/inbox/capital-revised.html" }
+    ],
+    restatements: [
+      {
+        path: "areas/inbox/capital-restated.html",
+        against: "areas/inbox/capital-of-india.html",
+        reason: "same-value"
+      }
     ]
   })
   return payloads
@@ -400,7 +428,7 @@ describe("session commit and rebase through the head server", () => {
     expect(bases).toContain("ancestor")
     expect(bases).toContain("tip")
     expect(await mainOf(served)).toBe(await mainOf(local))
-    for (const id of ["dj-b", "sp-b", "sp-c", "dh-b", "fk"]) {
+    for (const id of ["dj-b", "sp-b", "sp-c", "dh-b", "fk", "rs"]) {
       expect(await logOf(served.root, id)).toEqual(await logOf(local.root, id))
     }
     expect(server.held().sha).toBe(await mainOf(served))
@@ -754,6 +782,41 @@ describe("the CLI's fallback rules for a commit", () => {
     expect(data).toMatchObject({ kind: "committed", via: "local" })
     expect(data.server).toMatchObject({ used: false, reason: "refused" })
     expect(String((data.server as Body).detail)).toMatch(/^404: /)
+  })
+
+  it("reads a committed answer with no restatements, as an older server gives, as none", async () => {
+    const repo = await corpus()
+    await oneWrite(repo.root, "older-answer", "Older answer")
+    const tip = await mainOf(repo)
+    await fakeServer(repo.root, () => ({
+      status: 200,
+      body: {
+        served: true,
+        base: "tip",
+        outcome: {
+          id: "older-answer",
+          ref: "refs/heads/main",
+          baseSha: tip,
+          kind: "committed",
+          sha: tip,
+          paths: ["areas/inbox/older-answer.html"],
+          contradictions: [],
+          worktreeSynced: false,
+          recovered: false,
+          snapshot: null,
+          dropped: []
+        },
+        head: { sha: tip, ref: "refs/heads/main", records: 4, skipped: null }
+      }
+    }))
+    const result = await commitCli(repo.root, "older-answer")
+    expect(result.exitCode, JSON.stringify(result.body)).toBe(0)
+    expect(dataOf(result.body)).toMatchObject({
+      kind: "committed",
+      via: "server",
+      contradictions: [],
+      restatements: []
+    })
   })
 
   it("fails rather than commits again when the server took the commit and answered 500", async () => {

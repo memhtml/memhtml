@@ -203,7 +203,7 @@ The `killed` edge is a process that died after step 5 and before step 7. The che
 Step 0 of the next `commitSession` runs `settlePending` under the checkout lock (`packages/session/src/commit.ts:465-491`). It has three answers (`settlePending`, `packages/session/src/commit.ts:348-383`).
 
 - A `pending` that names no object, because `git gc` pruned it, never landed. `pending` is cleared, and the commit goes on from step 1.
-- A `pending` reachable from the ref landed. The log moves its base there with no ops, and the call answers `committed` with `recovered: true` and an empty `contradictions` list.
+- A `pending` reachable from the ref landed. The log moves its base there with no ops, and the call answers `committed` with `recovered: true` and empty `contradictions` and `restatements` lists.
 - A `pending` that isn't reachable never landed. When `HEAD` is the ref, `read-tree -m -u pending <tip>` undoes a checkout update that ran without its swap. That two-tree merge only changes paths where the shared index still holds `pending`'s version, so it's a no-op when the checkout never moved. `pending` is cleared, and the commit goes on from step 1 and builds the commit again.
 
 `session status` and `session prune` both report `pending` (`apps/cli/src/v2.ts:1295-1296`, `packages/session/src/prune.ts:209-221`). `session prune` keeps a log that carries `pending` and holds ops under `unlanded`. Only an empty commit leaves `pending` on a log with zero ops, and prune removes that log like any other zero-op log.

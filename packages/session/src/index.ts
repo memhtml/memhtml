@@ -13,7 +13,9 @@ export {
   commitSubject,
   type Landing,
   landOnRef,
-  type PlumbingFactory
+  type PlumbingFactory,
+  RESTATEMENT_REASONS,
+  type RestatementReason
 } from "./commit.js"
 export { GitFailure } from "./errors.js"
 export {
