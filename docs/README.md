@@ -1,51 +1,27 @@
-# memhtml-public · Documentation tree
+# Documentation
 
-The primary consumer of memhtml is a coding agent. The CLI answers with typed JSON envelopes and fixed exit codes, `memhtml manifest` describes the whole surface on a machine with no repo or database, and the MCP server exposes the same operations as tools.
+The pages under `docs/` come in three kinds, and each kind has one owner: a person writes the first, the code generates the second, and a tool regenerates the third at a commit it names.
 
-This repository stores no memory. It is the software that manages an external `memhtml root` directory, located by `$MEMHTML_ROOT`. memhtml manages that root with git, so the root's git tree is the system of record, and `.memhtml/index.db` inside it is a projection that can be deleted and rebuilt without loss.
+## Written by hand
 
-The `apps/docs` Astro package is excluded from this tree by request. Most pages end with a `See also` list of the other pages that cite the same source lines.
+These pages explain what the code does and why. They cite code by symbol, as `path::Symbol` or `path::Outer::inner`, never by line, and `mise run docs:citations` fails when a cited file no longer declares the symbol.
 
-## Architecture
+- [Design](design.md): every architectural decision, with the symbol that implements it.
+- [Format](format.md): the memory file format, its closed vocabulary, and what the index reads from each element.
+- [Tasks](tasks.md): the task memory type, its status and deadline metas, and the task graph.
+- [Code mode](code-mode.md): reading the store with an HTML parser instead of a chain of tool calls.
+- [Backlog](backlog.md): the ranked ledger of open work, each item with its evidence.
+- [Bugs](bugs/): dated bug reports, kept as written.
+- [RFCs](rfcs/): proposals, frozen once decided.
 
-These pages describe what the system is and how its parts connect.
+## Generated from the code
 
-- [System overview](architecture/system-overview.md): narrative, stack table, and the top-level component diagram.
-- [Module map](architecture/module-map.md): one section per workspace package with its key files.
-- [Data flow](architecture/data-flow.md): five paths step by step: a v1 write, ranked retrieval, an MCP tool call, a write through a session, and a search on the head.
-- [Design](design.md): every architectural decision with its evidence, from the file format to the head, sessions, the head server, curation, and the decision records in §24.
+Reference material is generated from the source of truth, so it cannot drift from it.
 
-## Reference
+- The CLI: [`AGENTS.md`](../AGENTS.md), which `mise run agents-doc` generates from the `COMMANDS` table in `apps/cli/src/commands.ts`, and `memhtml manifest`, which prints the same contract from the binary.
+- The MCP server: [`docs/reference/mcp-tools.md`](reference/mcp-tools.md), the tools and resource templates of `memhtml-mcp`.
+- The library: the [API pages](https://memhtml.github.io/api/) of the docs site, which TypeDoc generates from each package's TSDoc at build time.
 
-These pages list the calls an agent can make and the shape each one returns.
+## Analysis
 
-- [CLI](reference/cli.md): every subcommand of the `memhtml` binary, with flags, error codes, and environment variables. The set is the `COMMANDS` array, which also generates `AGENTS.md`, so read it from `apps/cli/src/commands.ts` rather than counting it here.
-- [RPC tools](reference/rpc-tools.md): the 15 MCP tools and 2 resources of `memhtml-mcp`.
-- [Public API](reference/public-api.md): the 32 most-imported library symbols, the top 30 plus every symbol tied at the cutoff, with verbatim declarations.
-
-## Behavior
-
-These pages trace what runs when a given event arrives.
-
-- [Processes](behavior/processes.md): nineteen main flows, from a CLI invocation through the session, head server, and curation flows, plus a minor-flow index.
-- [State machines](behavior/state-machines.md): memory status, task status, host-integration install state, the session log and its pending commit, the head server's lifecycle, and a `curate merge` landing.
-
-## Diagrams
-
-- [Components](diagrams/architecture/components.md): the MCP toolkit and the nine Effect services at the center of the app layer, with the edge each takes on another, as a class diagram. `MemhtmlToolkit` is a `Toolkit.make`; each service is a `Context.Service` tag.
-- [Dependency graph](diagrams/structural/dependency-graph.md): internal packages and external dependencies on one page.
-- [Sequences](diagrams/behavioral/sequences.md): call order for a v1 write, a search, a session commit, a search on the head, and a curation run landed by `curate merge`.
-
-## Insights
-
-These pages cover the assumptions the codebase makes, the ways it fails, and the parts that are expensive to change.
-
-- [Impact analysis](insights/impact-analysis.md): the sixteen surfaces whose change reaches multiple packages, and what each change touches.
-- [Debugging guide](insights/debugging-guide.md): failure-mode index, error surfaces, and a cheapest-first checks ladder.
-- [Contract map](insights/contract-map.md): what each module assumes about its neighbors, including the contracts SQL restates.
-- [Business logic](insights/business-logic.md): the validations, invariants, calculations, and policies memhtml enforces on a root.
-- [Tech debt](insights/tech-debt.md): a ranked register built from the repo's own ledgers, with cost of removal.
-
-## Omissions
-
-`analysis/risk-hotspots.md`, `analysis/ownership.md`, and `analysis/dead-code.md` are intentionally not generated. The git history carries one human author beside Dependabot, release-please, and the agent that writes under `memhtml-agent`, so per-file activity and ownership signals distinguish nothing an ordinary `git log` does not, and no dead-code analysis tool is configured in the repo. Re-derive the numbers from `git log` rather than reading them here; a count committed to prose is stale by the next commit.
+[`docs/codebase/`](codebase/README.md) is the analysis tree: architecture, behavior, diagrams, insights, analysis and history. A tool generates it against one commit and stamps each page with that commit, so its line citations are true for the commit they describe. Regenerate it rather than editing it by hand.
