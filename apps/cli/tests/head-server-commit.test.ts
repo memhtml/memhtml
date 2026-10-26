@@ -83,7 +83,10 @@ import { writeStoreConfig } from "./strict-store.js"
  *   label); the chain stopped at the vacate's own source -> the two "aims ..." cases there (the
  *   edge names a path nothing wrote); `tangled` answering false -> "leaves an edge to the end of a
  *   chain through a path two dropped moves aim at as written" (the note lands citing the second
- *   record moved there).
+ *   record moved there); a repeated source and destination counted again -> "aims a successor and
+ *   a label back at a record the round dropped moved twice", and a path two dropped ops leave
+ *   counted as naming no record whatever aims at it -> "... moved and archived" (the successor
+ *   lands naming a path nothing wrote, and the label is dropped).
  * - `v2.ts` `commitOverHead` (2026-10-26): a dropped pair keyed by its own path -> "does not list a
  *   pair the round took at a dropped move's destination that comes back where the holder stays";
  *   the key without its rel, without its href, or with kind and path alone -> "lists a dropped
@@ -1477,6 +1480,52 @@ describe("a --drop-refused round that drops an archive or a move", () => {
         expect.objectContaining({ srcPath: p, rel: "relates_to", dstPath: further })
       ])
     }, 120_000)
+
+    // Mutation: count a path two dropped ops leave as naming no record whatever else aims at it,
+    // or count the same move written twice as two, and the successor lands naming a path nothing
+    // wrote while the label goes to the next round.
+    for (const variant of ["moved and archived", "moved twice"] as const) {
+      it(`aims a successor and a label back at a record the round dropped ${variant}`, async () => {
+        const repo = await corpus()
+        const placed = "resources/acme-gadget/harbor.html"
+        const target = variant === "moved and archived" ? slot : placed
+        const harborHtml = await htmlAt(repo, harbor)
+        const second =
+          variant === "moved and archived"
+            ? { kind: "archive", path: harbor, to: slot, html: harborHtml }
+            : { kind: "move", path: harbor, to: placed, html: harborHtml }
+        await writeLog(repo.root, 3, [
+          {
+            kind: "put",
+            path: succ,
+            html: note(
+              "Harbor, revised",
+              "Harbor pilots now board at the inner buoy.",
+              "supersedes",
+              `/${target}`
+            )
+          },
+          { kind: "move", path: harbor, to: placed, html: harborHtml },
+          { kind: "label", path: placed, entity: "system:ice" },
+          second
+        ])
+        const dropped = await dropRefused(repo)
+        expect(kindsOf(dropped)).toEqual([`move ${harbor}`, `${second.kind} ${harbor}`])
+        const paths = await treeOf(repo)
+        expect(paths).toContain(harbor)
+        expect(paths).not.toContain(placed)
+        expect(paths).not.toContain(slot)
+        const links = await linksAt(repo, succ)
+        expect(links).toContain(edge("supersedes", harbor))
+        expect(links).not.toContain(edge("supersedes", target))
+        expect(await htmlAt(repo, harbor)).toContain(
+          `<meta name="memhtml-entity" content="system:ice">`
+        )
+        await run_(repo.git.run(["reset", "-q", "--hard", "main"]))
+        expect((await cli(repo.root, ["index", "update"])).exitCode).toBe(0)
+        expect(dataOf((await cli(repo.root, ["doctor"])).body).dangling).toEqual([])
+      }, 120_000)
+    }
 
     // Mutation: key a dropped op in the drop loop by kind and path alone, or leave out its rel or
     // its href, and `dropped` loses one of the note's own edits to the pair the completion adds.

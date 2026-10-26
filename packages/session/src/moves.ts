@@ -182,8 +182,11 @@ export interface VacateFollower {
  * live record, which the curator archives later as it does any superseded record, rather than a
  * file that was never written. A held destination keeps the edges aimed at it, which name the
  * record that holds it; a record that is not live (an archive of a record the batch put, dropped
- * with the put) leaves them as they are, and so does a chain through a path two dropped ops aim at
- * or two leave, which names no one record.
+ * with the put) leaves them as they are. So does a vacate whose destination two distinct dropped ops
+ * aim at, and a chain through such a path or through one two dropped ops leave while a dropped op
+ * also aims at it or the log puts there: neither names one record. A path only the version's
+ * record leaves twice, as a move written twice or a move and an archive of one record do, still
+ * names that record; one record moved out and back and on is left as written.
  *
  * `removed` lists the ops taken, `retargeted` each edge aimed back, and `returned` each op made at
  * the record's path, all with the vacate they followed; `homes` maps each dropped move's
@@ -210,21 +213,32 @@ export const afterDroppedVacates = (
     )
   )
   // Where each dropped vacate's destination came from, so a chain of them is followed back to the
-  // path the record still has. A path two dropped ops aim at, or two leave, names no one record:
-  // which one reached it depends on an order the refused log never settled, so nothing is
-  // rewritten through it and the edges to it stay as written.
+  // path the record still has. Some paths name no one record, and nothing is rewritten through
+  // them, so the edges to them stay as written: one two distinct dropped ops aim at, which the log
+  // meant for two records, and one two of them leave while a dropped op also aims at it or the log
+  // puts there, where a second record arrived after the first left. A path only the version's
+  // record leaves twice (a move written twice, or a move and an archive of one record) still names
+  // that record; one record moved out and back and on is left as written too.
   const cameFrom = new Map<string, string>()
   const aimedAt = new Map<string, number>()
   const leftFrom = new Map<string, number>()
+  const counted = new Set<string>()
   for (const op of dropped) {
     if (op.kind !== "archive" && op.kind !== "move") continue
     const from = normalizePath(op.path)
     const to = normalizePath(op.to)
     cameFrom.set(to, from)
+    if (counted.has(`${from}\n${to}`)) continue
+    counted.add(`${from}\n${to}`)
     aimedAt.set(to, (aimedAt.get(to) ?? 0) + 1)
     leftFrom.set(from, (leftFrom.get(from) ?? 0) + 1)
   }
-  const tangled = (path: string) => (aimedAt.get(path) ?? 0) > 1 || (leftFrom.get(path) ?? 0) > 1
+  const putAt = new Set(
+    [...keep, ...dropped].flatMap((op) => (op.kind === "put" ? [normalizePath(op.path)] : []))
+  )
+  const tangled = (path: string) =>
+    (aimedAt.get(path) ?? 0) > 1 ||
+    ((leftFrom.get(path) ?? 0) > 1 && ((aimedAt.get(path) ?? 0) > 0 || putAt.has(path)))
   const liveAt = (path: string): string | undefined => {
     const seen = new Set<string>()
     for (let at: string | undefined = path; at !== undefined; at = cameFrom.get(at)) {

@@ -78,7 +78,13 @@ import {
  *   stopped after ten minutes); the `record.archived` check dropped -> "aims nothing at an archived
  *   record a dropped move named as its source"; `removed` or `retargeted` reporting the op's
  *   current path rather than the log's -> "reports a kept op it moved and then took or aimed back
- *   at the path the log held it at". The rest of it is pinned through `session
+ *   at the path the log held it at"; a repeated source and destination counted again -> "still
+ *   names the record when only the version's record leaves its path twice" (the move written
+ *   twice); a path two dropped ops leave counted as naming no record whatever aims at it -> the
+ *   same case (the move and the archive); the `aimedAt` term dropped from that rule -> "names no
+ *   record through a path two dropped ops aim at or two leave" and "leaves one record moved out and
+ *   back and on as written"; the `putAt` term dropped -> "names no record through a path two dropped
+ *   moves leave when the log puts a new record there". The rest of it is pinned through `session
  *   commit --drop-refused` in `apps/cli/tests/head-server-commit.test.ts`.
  */
 
@@ -933,6 +939,83 @@ describe("afterDroppedVacates settles the ops a drop round keeps", () => {
     expect(afterDroppedVacates(head, [citesFurther, labelFurther], leftTwice)).toEqual({
       ...none,
       keep: [citesFurther, labelFurther]
+    })
+  })
+
+  it("still names the record when only the version's record leaves its path twice", async () => {
+    const head = await headOf()
+    const placed = "resources/acme-gadget/b.html"
+    const labelPlaced: OverlayOp = { kind: "label", path: placed, entity: "system:gadget" }
+    const citesPlaced = link(OTHER, "relates_to", `/${placed}`)
+    const atRecord = [
+      link(OTHER, "relates_to", `/${RETIRED}`),
+      { kind: "label", path: RETIRED, entity: "system:gadget" }
+    ]
+    // The same move written twice.
+    const twice = afterDroppedVacates(
+      head,
+      [citesPlaced, labelPlaced],
+      [move(RETIRED, placed, RETIRED_HTML), move(RETIRED, placed, RETIRED_HTML)]
+    )
+    expect(twice.keep).toEqual(atRecord)
+    expect(twice.homes).toEqual(new Map([[placed, RETIRED]]))
+    // A move and an archive of the same record.
+    const both = afterDroppedVacates(
+      head,
+      [successor, citesPlaced, labelPlaced],
+      [move(RETIRED, placed, RETIRED_HTML), retire(RETIRED, RETIRED_HTML)]
+    )
+    expect(both.keep).toEqual([
+      { ...successor, html: successor.html.replace(`/${SLOT}`, `/${RETIRED}`) },
+      ...atRecord
+    ])
+  })
+
+  it("leaves one record moved out and back and on as written", async () => {
+    const head = await headOf()
+    const out = "resources/acme-gadget/x.html"
+    const further = "resources/acme-gadget/y.html"
+    const kept: Array<OverlayOp> = [
+      link(OTHER, "relates_to", `/${further}`),
+      { kind: "label", path: further, entity: "system:gadget" }
+    ]
+    const dropped = [
+      move(RETIRED, out, RETIRED_HTML),
+      move(out, RETIRED, RETIRED_HTML),
+      move(RETIRED, further, RETIRED_HTML)
+    ]
+    expect(afterDroppedVacates(head, kept, dropped)).toEqual({
+      keep: kept,
+      removed: [],
+      retargeted: [],
+      returned: [],
+      homes: new Map()
+    })
+  })
+
+  it("names no record through a path two dropped moves leave when the log puts a new record there", async () => {
+    const head = await headOf()
+    const placed = "resources/acme-gadget/b.html"
+    const further = "resources/acme-gadget/y.html"
+    // The record moved away, a new one written at its path, and that one moved on.
+    const kept: Array<OverlayOp> = [
+      {
+        kind: "put",
+        path: RETIRED,
+        html: memory("Widget batch size, again", "The acme widget ships in batches of thirty.", {
+          entities: ["project:acme-widget"]
+        })
+      },
+      link(OTHER, "relates_to", `/${further}`),
+      { kind: "label", path: further, entity: "system:gadget" }
+    ]
+    const dropped = [move(RETIRED, placed, RETIRED_HTML), move(RETIRED, further, RETIRED_HTML)]
+    expect(afterDroppedVacates(head, kept, dropped)).toEqual({
+      keep: kept,
+      removed: [],
+      retargeted: [],
+      returned: [],
+      homes: new Map()
     })
   })
 
