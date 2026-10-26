@@ -35,7 +35,7 @@ import ts from "typescript"
  *   out-of-process client that spawns the native compiler and holds project snapshots. Reading six
  *   standalone files at build time does not want a compiler server, and `unstable` is the vendor's own
  *   label for how settled that surface is.
- * - **`astro check` refuses it anyway.** `@astrojs/check@0.9.11` declares
+ * - **`astro check` refuses it anyway.** `@astrojs/check@0.9.12` declares
  *   `peerDependencies: { typescript: "^5.0.0 || ^6.0.0" }`, and it is this package's `typecheck` task.
  *
  * `.github/dependabot.yml` therefore ignores `typescript` majors, and names both conditions that have
