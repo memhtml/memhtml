@@ -424,7 +424,14 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   {
     name: "correct",
     summary: "Supersede a memory: write the new file and archive the target in ONE commit.",
-    args: [{ name: "target", description: "The memory being corrected.", required: true }],
+    args: [
+      {
+        name: "target",
+        description:
+          "The memory being corrected. A path already under archive/ is refused (ERR_INVALID_MEMORY) and nothing moves.",
+        required: true
+      }
+    ],
     flags: [
       { name: "title", type: "string", description: "The new memory's title.", required: true },
       {
@@ -517,7 +524,14 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   {
     name: "archive",
     summary: "Soft-evict: `git mv` into archive/<YYYY>/ with the archive stamps. Never a delete.",
-    args: [{ name: "path", description: "The memory to archive.", required: true }],
+    args: [
+      {
+        name: "path",
+        description:
+          "The memory to archive. A path already under archive/ is refused (ERR_INVALID_MEMORY) and nothing moves.",
+        required: true
+      }
+    ],
     flags: [{ name: "reason", type: "string", description: "Why it was evicted.", required: true }],
     responseTypes: ["memory.archived"]
   },
@@ -692,7 +706,11 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
     summary: "Move a task's status. `done` stamps AND archives it, in one commit.",
     args: [
       { name: "path", description: "The task file.", required: true },
-      { name: "status", description: `One of: ${TASK_STATUSES.join(", ")}.`, required: true }
+      {
+        name: "status",
+        description: `One of: ${TASK_STATUSES.join(", ")}. \`done\` on a task already under archive/ is refused (ERR_INVALID_MEMORY) and nothing is written.`,
+        required: true
+      }
     ],
     flags: [
       {

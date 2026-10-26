@@ -10,12 +10,14 @@ import {
   WriteConflict
 } from "@memhtml/contracts/errors"
 import {
+  ARCHIVE_BUCKET,
   archivePathFor,
   isValidMemoryPath,
   memoryPathFor,
   memoryPathViolation,
   normalizePath,
-  type PlacementInput
+  type PlacementInput,
+  paraBucketOf
 } from "@memhtml/contracts/paths"
 import { filenameFor, slugify, withCollisionOrdinal } from "@memhtml/contracts/slug"
 import type { MemoryDoc, NewMemoryInput } from "@memhtml/html"
@@ -580,6 +582,13 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
    * Move a file to its archive path with the archive stamps applied, staged but not committed.
    * The caller commits, which is what lets a correction put the new file and the archived one
    * in one commit.
+   *
+   * A source already in the archive bucket is refused with `InvalidMemory` before anything moves.
+   * `archivePathFor` mirrors whatever path it is given, so archiving one would land under
+   * `archive/<YYYY>/archive/`, and `originalPathFor` would map that back to an archive path rather
+   * than to a live one. The test is the bucket rather than `isArchivePath` because the index reads
+   * every path under `archive/` as archived, including one with no year partition. Archive, correct
+   * and supersede all move their source through here, so the one check covers all three.
    */
   const stageArchive = (
     path: string,
@@ -588,6 +597,11 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
   ): Effect.Effect<string, StoreError> =>
     Effect.gen(function* () {
       const normalized = normalizePath(path)
+      if (paraBucketOf(normalized) === ARCHIVE_BUCKET) {
+        return yield* Effect.fail(
+          InvalidMemory.make({ reason: `already archived at ${normalized}` })
+        )
+      }
       const html = yield* readRaw(normalized)
       const target = archivePathFor(normalized, yearOf(at))
 

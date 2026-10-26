@@ -1,6 +1,6 @@
 import { isEdgeRel, MEMORY_RELS, relClassFor, TASK_RELS } from "@memhtml/contracts/edges"
 import { InvalidMemory, type StorageFailure } from "@memhtml/contracts/errors"
-import { normalizePath } from "@memhtml/contracts/paths"
+import { ARCHIVE_BUCKET, normalizePath, paraBucketOf } from "@memhtml/contracts/paths"
 import {
   isTaskStatus,
   isWritableMemoryType,
@@ -2035,6 +2035,15 @@ export const setTaskStatus = (params: TaskStatusParams) =>
         commitSha: commit.sha,
         unchanged: false
       } satisfies TaskStatusResult
+    }
+
+    /**
+     * A task already in the archive bucket is refused here, before the stamp is written. The store
+     * refuses to archive a path under `archive/` (`stageArchive`), and that refusal would come after
+     * the write below, leaving `done` on disk and uncommitted.
+     */
+    if (paraBucketOf(path) === ARCHIVE_BUCKET) {
+      return yield* Effect.fail(InvalidMemory.make({ reason: `already archived at ${path}` }))
     }
 
     /**

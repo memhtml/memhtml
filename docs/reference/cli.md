@@ -444,7 +444,7 @@ Supersedes a memory (`correctMemory` at `apps/cli/src/operations.ts:1062-1090`).
 
 Arguments:
 
-- `<target>` (required): "The memory being corrected."
+- `<target>` (required): "The memory being corrected. A path already under archive/ is refused (ERR_INVALID_MEMORY) and nothing moves."
 
 Flags:
 
@@ -472,6 +472,7 @@ Errors:
 
 - `ERR_SESSION_BOUND` (exit 2) when `MEMHTML_SESSION` is set and the store's `v1Doors` is `closed-in-session` (the default) or `closed`, and `ERR_V1_DOOR_CLOSED` (exit 2) when `v1Doors` is `closed` and no session is set (`sessionBoundRefusal` at `apps/cli/src/run.ts:1003-1016`). Nothing is opened. See [Run sessions and the v1 doors](#run-sessions-and-the-v1-doors).
 - `ERR_STORE_CONFIG` (exit 1) when the store's `memhtml.config.json` exists and can't be read or doesn't decode (`loadStorePolicy` at `apps/cli/src/store-config.ts:64-93`, `apps/cli/src/run.ts:1715-1723`).
+- `ERR_INVALID_MEMORY` (exit 1) when `<target>` is already under `archive/`, before anything moves (`stageArchive` at `packages/store/src/store.ts:600`).
 - `ERR_PATH_NOT_FOUND` (exit 1) when no file is at `<target>`.
 - `ERR_INVALID_MEMORY` (exit 1) when the target doesn't parse, or when the new article fails the render gate or the parse that reads its valid-from (`renderChecked` and `validFromOf` at `packages/store/src/store.ts:1062-1070`).
 - `ERR_GIT` (exit 1) when `git mv` finds the archive path taken, which happens when a file at the same path was archived earlier the same year. The journal restores the tree.
@@ -581,7 +582,7 @@ Soft-evicts a memory (`archiveMemory` at `apps/cli/src/operations.ts:1112-1120`)
 
 Arguments:
 
-- `<path>` (required): "The memory to archive."
+- `<path>` (required): "The memory to archive. A path already under archive/ is refused (ERR_INVALID_MEMORY) and nothing moves."
 
 Flags:
 
@@ -591,10 +592,11 @@ Response: `memory.archived`.
 
 A caller reads `path`, `archivePath`, and `commitSha` (`ArchiveResult` at `packages/store/src/store.ts:170-174`).
 
-`--reason` appears only in the commit subject, `memhtml(archive): <path> — <reason>` (`packages/store/src/store.ts:1166`). The `<path> — <reason>` part is cut to 72 characters, so a long path can leave no trace of the reason (`commitSubject` at `packages/store/src/plumbing.ts:393-398`). It isn't stamped into the file. The file isn't parsed, so an archived path archives again into a nested `archive/<YYYY>/archive/<YYYY>/`.
+`--reason` appears only in the commit subject, `memhtml(archive): <path> — <reason>` (`packages/store/src/store.ts:1166`). The `<path> — <reason>` part is cut to 72 characters, so a long path can leave no trace of the reason (`commitSubject` at `packages/store/src/plumbing.ts:393-398`). It isn't stamped into the file. The file isn't parsed, but a path already under `archive/` is refused before anything moves, because archiving it again would nest it under `archive/<YYYY>/archive/` (`stageArchive` at `packages/store/src/store.ts:600`).
 
 Errors:
 
+- `ERR_INVALID_MEMORY` (exit 1) when the path is already under `archive/`. Nothing moves.
 - `ERR_PATH_NOT_FOUND` (exit 1) when no file is at the path.
 - `ERR_GIT` (exit 1) when the archive path is taken by an earlier eviction of the same path in the same year. The journal restores the tree.
 - `ERR_STORAGE` (exit 1) with operation `checkout.locked` when another writer holds the checkout lock through the whole 15-second wait. Nothing is written.
@@ -736,7 +738,7 @@ Moves a task's status (`setTaskStatus` at `apps/cli/src/operations.ts:1976-2059`
 Arguments:
 
 - `<path>` (required): "The task file."
-- `<status>` (required): "One of: todo, doing, blocked, done."
+- `<status>` (required): "One of: todo, doing, blocked, done. `done` on a task already under archive/ is refused (ERR_INVALID_MEMORY) and nothing is written."
 
 Flags:
 
@@ -748,7 +750,7 @@ A caller reads `path`, `taskStatus`, `archived`, `archivePath`, `commitSha`, and
 
 Errors:
 
-- `ERR_INVALID_MEMORY` (exit 1) for a status outside `TASK_STATUSES`, a file that isn't a task, or a file that doesn't parse (`decodeTaskStatus` at `apps/cli/src/operations.ts:150-157`, `apps/cli/src/operations.ts:1986-1992`).
+- `ERR_INVALID_MEMORY` (exit 1) for a status outside `TASK_STATUSES`, a file that isn't a task, a file that doesn't parse, or `done` on a path already under `archive/`, which is refused before the stamp is written (`decodeTaskStatus` at `apps/cli/src/operations.ts:150-157`, `apps/cli/src/operations.ts:1986-1992`, `apps/cli/src/operations.ts:2045`).
 - `ERR_PATH_NOT_FOUND` (exit 1) when no file is at the path (`readRaw` at `packages/store/src/store.ts:483-488`).
 - `ERR_STORAGE` (exit 1) as `task.write:<path>`, and `ERR_GIT` (exit 1) from `add`, `commit`, or the archive move.
 - `ERR_STORAGE` (exit 1) as `checkout.locked` when another writer of the checkout holds `.memhtml/checkout.lock` for the whole 15 s wait (`withCheckoutLock` at `packages/store/src/checkout-lock.ts:39-44`).
@@ -1020,7 +1022,7 @@ Failure: the files are written, staged, and committed inside the checkout lock, 
 memhtml doctor [--fix]
 ```
 
-Builds a health report from the index and the files (`doctor` at `apps/cli/src/doctor.ts:567-692`). With `--fix` it rewrites or drops dangling hrefs, deletes orphan access rows, and commits the touched files inside the checkout lock (`repair` at `apps/cli/src/doctor.ts:462-558`).
+Builds a health report from the index and the files (`doctor` at `apps/cli/src/doctor.ts:580-713`). With `--fix` it rewrites or drops dangling hrefs, deletes orphan access rows, and commits the touched files inside the checkout lock (`repair` at `apps/cli/src/doctor.ts:475-571`).
 
 Flags:
 
@@ -1028,20 +1030,20 @@ Flags:
 
 Response: `doctor.report`.
 
-A caller reads `healthy` first. The findings are `dangling`, `orphanAccessRows`, `inboxDepth`, `inboxCrowded`, `inboxTaskDepth`, `inboxTasksCrowded`, `overdueTasks`, `staleBlockers`, `untypedEntities`, `untypedEntityTotal`, `warnings`, `unparseable`, and `dirty`. The index fields are `indexFresh`, `indexHeadSha`, `headSha`, `embedModelMatches`, `storedEmbedModel`, `configuredEmbedModel`, `vectorCoverage`, `vectorCoverageFloor`, `vectorCoverageLow`, `chunks`, `embeddings`, and `vectorCoverageRemedy` (`DoctorReport` at `apps/cli/src/doctor.ts:154-213`). With `--fix` the report adds `repaired: {rewritten, dropped, failedWrites, prunedAccessRows, commitSha}` (`RepairReport` at `apps/cli/src/doctor.ts:216-231`).
+A caller reads `healthy` first. The findings are `dangling`, `orphanAccessRows`, `inboxDepth`, `inboxCrowded`, `inboxTaskDepth`, `inboxTasksCrowded`, `overdueTasks`, `staleBlockers`, `untypedEntities`, `untypedEntityTotal`, `warnings`, `unparseable`, `nestedArchivePaths`, and `dirty`. The index fields are `indexFresh`, `indexHeadSha`, `headSha`, `embedModelMatches`, `storedEmbedModel`, `configuredEmbedModel`, `vectorCoverage`, `vectorCoverageFloor`, `vectorCoverageLow`, `chunks`, `embeddings`, and `vectorCoverageRemedy` (`DoctorReport` at `apps/cli/src/doctor.ts:165-226`). With `--fix` the report adds `repaired: {rewritten, dropped, failedWrites, prunedAccessRows, commitSha}` (`RepairReport` at `apps/cli/src/doctor.ts:229-244`).
 
-`healthy` (`apps/cli/src/doctor.ts:638-664`) leaves out `overdueTasks`, `staleBlockers`, `untypedEntities`, and `dirty`. `vectorCoverageLow` is true only when a vector exists or an embedder is bound, and coverage is under the floor (`apps/cli/src/doctor.ts:628-629`). `unparseable` also lists indexed paths whose file is gone (`collectWarnings` at `apps/cli/src/doctor.ts:410-432`).
+`healthy` (`apps/cli/src/doctor.ts:653-684`) leaves out `overdueTasks`, `staleBlockers`, `untypedEntities`, and `dirty`. `vectorCoverageLow` is true only when a vector exists or an embedder is bound, and coverage is under the floor (`apps/cli/src/doctor.ts:643-644`). `unparseable` also lists indexed paths whose file is gone (`collectWarnings` at `apps/cli/src/doctor.ts:423-445`). `nestedArchivePaths` lists the indexed paths under `archive/<YYYY>/archive/`, which are records archived a second time, a move `stageArchive` refuses to make (`apps/cli/src/doctor.ts:601`, `packages/store/src/store.ts:600`). It counts against `healthy` and `--fix` leaves it alone.
 
 Doctor reads the index and the memory files the index lists. It doesn't read `memhtml.config.json` or any session's state. `dirty` is every path `git status` reports that git doesn't ignore, so an uncommitted `memhtml.config.json` appears there (`dirtyPaths` at `packages/store/src/store.ts:1360-1367`). A session's files under `.memhtml/sessions/` don't, because the store's `.gitignore` ignores them, and a store scaffolded before 0.16 gets the same pattern in `.git/info/exclude` when a session starts (`GITIGNORE` at `packages/store/src/layout.ts:84-89`, `ensureExcludedQuietly` at `packages/session/src/session.ts:256`).
 
 Errors:
 
-- `ERR_GIT` (exit 1) from `--fix`'s `add` or `commit` (`apps/cli/src/doctor.ts:544-553`).
-- `ERR_STORAGE` (exit 1) from `--fix` as `checkout.locked` when another writer holds `.memhtml/checkout.lock` past the 15 s wait (`apps/cli/src/doctor.ts:544-553`).
+- `ERR_GIT` (exit 1) from `--fix`'s `add` or `commit` (`apps/cli/src/doctor.ts:557-566`).
+- `ERR_STORAGE` (exit 1) from `--fix` as `checkout.locked` when another writer holds `.memhtml/checkout.lock` past the 15 s wait (`apps/cli/src/doctor.ts:557-566`).
 
 Every check falls back to an empty finding, so a database failure reads as nothing found. The command exits 0 whether or not the store is healthy.
 
-Failure: `--fix` writes the files and deletes the orphan rows one autocommitted statement at a time before it takes the checkout lock, and then stages and commits inside it (`apps/cli/src/doctor.ts:522-555`). A write that failed lands in `failedWrites` and is never staged, so it stays a finding (`apps/cli/src/doctor.ts:500-516`). If the lock wait runs out, the files stay rewritten and unstaged. If the commit fails, they stay rewritten and staged. Either way the orphan rows are already gone, and the error envelope drops the counts. A successful fix doesn't reindex, so the next `doctor` lists the repaired link until `index update` runs. The commit takes anything else already staged.
+Failure: `--fix` writes the files and deletes the orphan rows one autocommitted statement at a time before it takes the checkout lock, and then stages and commits inside it (`apps/cli/src/doctor.ts:535-568`). A write that failed lands in `failedWrites` and is never staged, so it stays a finding (`apps/cli/src/doctor.ts:513-529`). If the lock wait runs out, the files stay rewritten and unstaged. If the commit fails, they stay rewritten and staged. Either way the orphan rows are already gone, and the error envelope drops the counts. A successful fix doesn't reindex, so the next `doctor` lists the repaired link until `index update` runs. The commit takes anything else already staged.
 
 ## config
 

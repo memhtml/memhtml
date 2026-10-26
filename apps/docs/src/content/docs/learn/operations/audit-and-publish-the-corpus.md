@@ -4,7 +4,7 @@ description: Every memhtml doctor finding and its fix, what --fix will and will 
 ---
 
 ```bash
-memhtml doctor          # thirteen findings; ten of them decide healthy
+memhtml doctor          # fourteen findings; eleven of them decide healthy
 memhtml doctor --fix    # repairs the two that need no judgement call
 memhtml publish         # regenerate index.html listings and sitemap.xml, and commit
 ```
@@ -30,6 +30,7 @@ A healthy store answers with every finding list empty:
     "untypedEntityTotal": 0,
     "warnings": [],
     "unparseable": [],
+    "nestedArchivePaths": [],
     "indexFresh": true,
     "indexHeadSha": "4e232759bfad745b0445ecd83cc9883c30a0c426",
     "headSha": "4e232759bfad745b0445ecd83cc9883c30a0c426",
@@ -62,6 +63,7 @@ Every list is present and possibly empty, so a parser never has to branch on a m
 | `untypedEntities`          | A `memhtml-entity` meta written as a bare name, so it indexes under the `unknown` type.                                                                                                                                                                                                                                                                                    | Name a type in the producer. `unknown:checkout-api` is not reachable by `--entity service:checkout-api`.                                                                    |
 | `warnings`                 | An element outside the closed vocabulary. The file still indexes.                                                                                                                                                                                                                                                                                                          | Author's intent, and doctor will not guess at it.                                                                                                                           |
 | `unparseable`              | A file the parser refuses. It is absent from the index.                                                                                                                                                                                                                                                                                                                    | Read the violations with `memhtml read <path>`, fix the file, then `memhtml index rebuild`.                                                                                 |
+| `nestedArchivePaths`       | A path under `archive/<YYYY>/archive/`, which is a record archived a second time. `memhtml archive` and `memhtml correct` refuse an archived path, so the tree was written before that refusal or moved by hand.                                                                                                                                                           | `git mv` it back to `archive/<YYYY>/<original path>` and re-point every link that names it, in one commit, then `memhtml index update`.                                     |
 | `indexFresh: false`        | The index describes an older commit.                                                                                                                                                                                                                                                                                                                                       | `memhtml index update --embed`.                                                                                                                                             |
 | `embedModelMatches: false` | The stored vectors came from a different embedding model than the configured one.                                                                                                                                                                                                                                                                                          | Delete the database and rebuild: see [rebuild the index](/learn/operations/rebuild-the-index/).                                                                             |
 | `vectorCoverageLow: true`  | Under `vectorCoverageFloor` (default 0.95, `MEMHTML_VECTOR_COVERAGE_FLOOR`) of the chunks carry a vector in the configured space while the plane is in use: some vector exists, or an embedder is configured. Search drops the vector arm and reports `degraded: true` with `vectorCoverage`. A store with zero vectors and no embedder is lexical-only and stays healthy. | `vectorCoverageRemedy` names it: `memhtml index embed` to backfill, or `memhtml index rebuild --embed`. Set `MEMHTML_EMBED=off` if the store is meant to stay lexical-only. |

@@ -358,6 +358,49 @@ describe("the task lifecycle, end to end", () => {
   })
 })
 
+describe("`done` on a task that is already under archive/", () => {
+  let cli: Cli
+
+  beforeAll(async () => {
+    cli = await makeCli()
+  })
+
+  afterAll(async () => {
+    await cli.cleanup()
+  })
+
+  it("is refused before the stamp is written, leaving the file and the tree as they were", async () => {
+    const task = await cli.json<TaskWritten>([
+      "task",
+      "add",
+      "--title",
+      "Replace the widget queue",
+      "--workspace",
+      "acme-widget"
+    ])
+    // `memhtml archive` evicts a task without finishing it, so it reaches the archive still `todo`.
+    const evicted = await cli.json<{ readonly archivePath: string }>([
+      "archive",
+      task.path,
+      "--reason",
+      "evicted"
+    ])
+    const before = await readFile(join(cli.root, evicted.archivePath), "utf8")
+
+    const result = await cli.run(["task", "status", evicted.archivePath, "done"])
+
+    expect(result.exitCode).toBe(EXIT_RUNTIME)
+    const body = JSON.parse(result.stdout) as Record<string, unknown>
+    expect(body.code).toBe("ERR_INVALID_MEMORY")
+    expect(body.error).toContain(`already archived at ${evicted.archivePath}`)
+    // `done` stamps the file before it archives it, so a refusal raised only by the archive move would
+    // leave `memhtml-task-status: done` on disk, uncommitted.
+    expect(await readFile(join(cli.root, evicted.archivePath), "utf8")).toBe(before)
+    const status = await cli.json<{ readonly dirty: boolean }>(["status"])
+    expect(status.dirty).toBe(false)
+  })
+})
+
 /**
  * `task list --detected`: issue #44's author separation, as the flag that makes it usable.
  *
