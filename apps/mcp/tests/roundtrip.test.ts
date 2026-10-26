@@ -11,8 +11,9 @@ import { ToolHandlers } from "../src/handlers.js"
 import { MemhtmlToolkit } from "../src/tools.js"
 
 /**
- * A round trip through the REAL toolkit layer: `kit.toLayer(handlers)` over the CLI's own `AppLive`,
- * against a real temp git repo and real migrations.
+ * A round trip through the REAL toolkit layer: `kit.toLayer(handlers)` over the CLI's own
+ * `layerAppWith`, the production `layerCore` with a deterministic embedder, against a real temp git
+ * repo and real migrations.
  *
  * This exercises the whole path an MCP client's `tools/call` takes minus the transport — parameter
  * DECODE against the published schema, the handler, the shared use case, and the success ENCODE. The

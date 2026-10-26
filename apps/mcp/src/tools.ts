@@ -206,10 +206,11 @@ const PATH_OVERRIDE_CONTRACT =
  * `memory_write_batch` and `memory_write_batch` has to explain itself, and two hand-written versions of
  * one workflow drift the first time the semantics move. Written once, appended twice.
  *
- * And it lives in a DESCRIPTION because this server has nowhere else to put it. MCP has a server-level
- * `instructions` field for exactly this kind of cross-tool guidance, and effect 4.0.0-rc.109 never
- * emits it. See the comment in `server.ts` next to `layerStdio`. Tool descriptions are the only
- * channel, so a workflow rule that is not in one is a rule no agent reads.
+ * And it lives in a DESCRIPTION because this server sets nothing else an agent reads. MCP has a
+ * server-level `instructions` field for exactly this kind of cross-tool guidance, and effect 4.0.5's
+ * `layerStdio` takes one, but this server passes none. See the comment in `server.ts` next to
+ * `layerStdio`. Tool descriptions are the only channel today, so a workflow rule that is not in one is
+ * a rule no agent reads.
  *
  * Every clause is something the caller decides or has to predict, and nothing else: the threshold that
  * makes batching worth it, the ordering guarantee it can index results by, the atomicity default it
