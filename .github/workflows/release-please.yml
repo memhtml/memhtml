@@ -73,9 +73,14 @@ jobs:
 
       # The TAG, not the branch: `main` has already moved on by the time this runs, and
       # the bytes that get published have to be the bytes that were released.
+      #
+      # Full history, not the default single commit: `pnpm check` below runs `docs:citations`,
+      # which reads each `docs/codebase/` page at the older commit it is stamped with, and a
+      # shallow clone holds no commit but the tag's.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/tags/${{ github.event_name == 'workflow_dispatch' && github.ref_name || needs.release-please.outputs.tag_name }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Verify the release revision

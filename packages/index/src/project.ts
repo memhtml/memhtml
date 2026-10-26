@@ -40,10 +40,10 @@ export const wordCountOf = (bodyText: string): number =>
 /**
  * The single FTS column, holding title, gist, and body joined by newlines.
  *
- * Denormalized because a multi-column FTS index on this driver returns rowid order rather than
- * relevance order and scopes MATCH to the named column alone (probed 2026-08-02). Newline-joined
- * rather than space-joined so a term at the end of the title cannot fuse with one at the start of
- * the gist into a phrase neither states.
+ * Denormalized so one MATCH finds a term wherever it lives, and because a multi-column FTS5 table
+ * would make `bm25()` weight the columns against each other, a ranking decision RRF already owns
+ * (`FTS_COLUMN` in `schema-const.ts`). Newline-joined rather than space-joined so a term at the
+ * end of the title cannot fuse with one at the start of the gist into a phrase neither states.
  */
 export const ftsTextFor = (doc: MemoryDoc): string =>
   [doc.title, doc.article.gist, doc.article.bodyText].filter((part) => part !== "").join("\n")
@@ -86,9 +86,11 @@ export const disclosureTextFor = (doc: MemoryDoc): string =>
 const flag = (value: boolean | undefined): number => (value === true ? 1 : 0)
 
 /**
- * The `files` columns in bind order. One list drives the insert, the placeholder count, and the
- * upsert's assignment clause, so a new column cannot be added to one and forgotten in another.
- * A mismatch there binds every subsequent value to the wrong column and every CHECK still passes.
+ * The `files` columns in bind order. This list drives the insert's column list and the upsert's
+ * assignment clause. The placeholder count comes from the value array in `projectFile`, so a new
+ * column needs its value there too, at the same position. A count mismatch fails the statement, and
+ * `project.test.ts` checks both counts against this list. A value at the wrong position binds every
+ * subsequent value to the wrong column and every CHECK still passes.
  */
 export const FILE_COLUMNS = [
   "path",

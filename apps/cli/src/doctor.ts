@@ -38,7 +38,8 @@ import {
  *    reached), so a LEFT JOIN is the only thing that finds these.
  * 2. **Orphan state rows**: a `state.access` row whose path left the tree. There are no
  *    cross-database foreign keys, so the store mirrors a move explicitly and an interrupted mirror
- *    leaves a row describing nothing.
+ *    leaves a row describing nothing. A session commit moves and archives paths with no mirror at
+ *    all, so it leaves one for each path it moves that had an access row.
  * 3. **Inbox depth**: design §2.1 rule 6 routes an unplaceable memory to `areas/inbox/` and says
  *    doctor reports the depth as a health signal. A deep inbox is a placement rule that stopped
  *    matching what agents write, which nothing else surfaces.

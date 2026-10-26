@@ -46,13 +46,13 @@ Review a curator branch with `git log` and `git diff` against `main` instead, as
 
 ## The supervisor holds nothing
 
-`memhtml serve mcp` has no database of its own. It spawns `memhtml-mcp` with inherited stdio and waits (`apps/cli/src/serve.ts:72`), so the supervisor holds no handle that could conflict with the child. Interrupting it kills the child, so Ctrl-C never leaves an orphaned server holding the database open (`apps/cli/src/serve.ts:97`).
+`memhtml serve mcp` has no database of its own. It spawns `memhtml-mcp` with inherited stdio and waits (`apps/cli/src/serve.ts::serveMcp`), so the supervisor holds no handle that could conflict with the child. Interrupting it kills the child, so Ctrl-C never leaves an orphaned server holding the database open (`apps/cli/src/serve.ts::serveMcp`).
 
 `MEMHTML_MCP_BIN` names the server explicitly. Absent, the supervisor uses the sibling-path default: `apps/cli/dist/serve.js` finds `apps/mcp/dist/bin.js` two directories over, because the two apps ship as one build. Set it for a split deployment that keeps them apart.
 
 ## The exception that never touches your store
 
-`memhtml eval discriminate` never builds the application layer at all (`apps/cli/src/run.ts:848`). It is the discrimination gate, which checks that every probe query ranks its target fact above deliberately wrong versions of that fact. It measures the ranking stack against its own generated fixture corpus, in a temp directory, with an in-memory database, and it never opens your `index.db`.
+`memhtml eval discriminate` never builds the application layer at all (`apps/cli/src/run.ts::run`). It is the discrimination gate, which checks that every probe query ranks its target fact above deliberately wrong versions of that fact. It measures the ranking stack against its own generated fixture corpus, in a temp directory, with an in-memory database, and it never opens your `index.db`.
 
 Checking the gate is exactly what an operator wants to do while the server is up, and a gate that needed the store quiet would be a gate nobody ran at the moment it mattered.
 

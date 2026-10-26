@@ -30,8 +30,8 @@ describe("the state sidecar", () => {
   ]
 
   it("rounds to four decimals and normalizes negative zero", () => {
-    // Four decimals is the domain's fixed-point grid, so a value on the grid is exact and a fifth
-    // digit is float noise that would change the file's bytes without changing its meaning.
+    // Four decimals is the export's own rounding. Here the digits it drops are float noise; in a real
+    // score they can be EWMA arithmetic, which the sidecar drops the same way.
     expect(round4(0.30000000000000004)).toBe(0.3)
     expect(round4(-0)).toBe(0)
     expect(Object.is(round4(-0), 0)).toBe(true)

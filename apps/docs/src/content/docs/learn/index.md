@@ -37,7 +37,7 @@ The operations pages are task-shaped how-tos, one per section of the runbook. Th
 
 ## Before you start
 
-Every command writes exactly one JSON envelope to stdout and nothing else, and sends its logs to stderr. Exit 0 is success, 2 is a usage error you fix by changing the call, and 1 is a runtime failure you fix by changing the repository or the environment (`apps/cli/src/envelope.ts:87`). So every command on this site is safe to pipe into `jq` and safe to run from cron, and the examples show the envelope rather than describing it.
+Every command writes exactly one JSON envelope to stdout and nothing else, and sends its logs to stderr. Exit 0 is success, 2 is a usage error you fix by changing the call, and 1 is a runtime failure you fix by changing the repository or the environment (`apps/cli/src/envelope.ts::EXIT_OK`, `apps/cli/src/envelope.ts::EXIT_USAGE`, `apps/cli/src/envelope.ts::EXIT_RUNTIME`). So every command on this site is safe to pipe into `jq` and safe to run from cron, and the examples show the envelope rather than describing it.
 
 The git tree is the system of record, and `.memhtml/index.db` is a projection of it: delete the index and you lose time rather than memories. That property is why the operations pages read the way they do. Most recovery is a rebuild, and most of what looks like corruption is a stale watermark. [Store layout and path algebra](/internals/store-layout-and-path-algebra/) develops it.
 

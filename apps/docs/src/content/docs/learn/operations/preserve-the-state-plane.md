@@ -8,7 +8,7 @@ memhtml state export      # write .memhtml/state/access.jsonl and commit it
 memhtml state import      # replay the sidecar into state.db
 ```
 
-`state.db` is gitignored, and unlike the index it cannot be rebuilt from git. It holds three things the tree never records: how often each memory was opened, how often it was reinforced, and the outcome EWMA, a running average of the positive and negative signals a memory has collected. The committed sidecar `.memhtml/state/access.jsonl` is what survives (`apps/cli/src/state.ts:54`).
+`state.db` is gitignored, and unlike the index it cannot be rebuilt from git. It holds three things the tree never records: how often each memory was opened, how often it was reinforced, and the outcome EWMA, a running average of the positive and negative signals a memory has collected. The committed sidecar `.memhtml/state/access.jsonl` is what survives (`apps/cli/src/state.ts::stateExport`).
 
 ## Export
 
@@ -46,7 +46,7 @@ Nothing runs `state export` for you, so put it on the cron beside `memhtml publi
 }
 ```
 
-The import upserts with `max()` on the counters that only ever climb, rather than truncating the table (`apps/cli/src/state.ts:131`). Importing onto a live plane therefore keeps any counter the sidecar predates. An import is non-destructive every time, which is what makes it safe on a machine that has been reading for a week.
+The import upserts with `max()` on the counters that only ever climb, rather than truncating the table (`apps/cli/src/state.ts::stateImport`). Importing onto a live plane therefore keeps any counter the sidecar predates. An import is non-destructive every time, which is what makes it safe on a machine that has been reading for a week.
 
 `rows` is what the sidecar held and `restored` is what was written into `state.access`. The two differ when the live plane already held higher counters. `skipped` counts sidecar lines that did not parse, which is never fatal, because a partial file restores what it holds.
 
