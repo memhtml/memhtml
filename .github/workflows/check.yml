@@ -23,8 +23,8 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      # Full history, not the default single commit: `docs:citations` checks that the commit each
-      # `docs/codebase/` page is stamped with exists, and a shallow clone holds no other commit.
+      # Full history, not the default single commit: `docs:citations` reads each `docs/codebase/`
+      # page at the older commit it is stamped with, and a shallow clone holds no other commit.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
