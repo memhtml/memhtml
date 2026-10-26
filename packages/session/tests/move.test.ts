@@ -1,4 +1,4 @@
-import { archivePathFor, type OverlayOp } from "@memhtml/contracts"
+import { archivePathFor, archiveSlotFor, type OverlayOp } from "@memhtml/contracts"
 import { addLink, contentHash } from "@memhtml/html"
 import { Effect } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
@@ -86,6 +86,9 @@ import {
  *   back and on as written"; the `putAt` term dropped -> "names no record through a path two dropped
  *   moves leave when the log puts a new record there". The rest of it is pinned through `session
  *   commit --drop-refused` in `apps/cli/tests/head-server-commit.test.ts`.
+ * - withRepoints, generation slots (2026-10-26): the repoint `link` aimed at the bare year of the
+ *   archive's `to` -> "repoints to the generation slot an archive takes when an older record holds
+ *   the year's" (the successor's edge names the older record in the held slot).
  */
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect)
@@ -400,6 +403,38 @@ describe("withRepoints completes an archive", () => {
       archived
     ])
     expect(validateOps(head, completed)).toEqual([])
+  })
+
+  it("repoints to the generation slot an archive takes when an older record holds the year's", async () => {
+    // An older archiving of the path holds `archive/2031/`, so the archive takes `archive/2031.2/`
+    // and the successor's edge is repointed there. A link to the held slot would name the older
+    // record; aimed there, the archive is refused naming the free slot, so that link never lands.
+    const older = memory("Widget batch size", "The acme widget shipped in batches of six.", {
+      entities: ["project:acme-widget"],
+      at: "2030-03-01T12:00:00Z"
+    })
+    const head = mapHead(SHA, [
+      await recordFrom(SUCCESSOR, SUCCESSOR_HTML),
+      await recordFrom(RETIRED, RETIRED_HTML),
+      await recordFrom(SLOT, older)
+    ])
+    const free = archiveSlotFor(RETIRED, 2031, (slot) => head.get(slot) !== undefined)
+    expect(free).toBe(archivePathFor(RETIRED, 2031, 2))
+    const archived: OverlayOp = { kind: "archive", path: RETIRED, to: free, html: RETIRED_HTML }
+    const completed = withRepoints(head, [archived])
+    expect(completed).toEqual([
+      unlink(SUCCESSOR, "supersedes", `/${RETIRED}`),
+      link(SUCCESSOR, "supersedes", `/${free}`),
+      archived
+    ])
+    expect(validateOps(head, completed)).toEqual([])
+    expect(validateOps(head, withRepoints(head, [retire(RETIRED, RETIRED_HTML)]))).toEqual([
+      {
+        kind: "format",
+        path: RETIRED,
+        reasons: [`archive destination ${SLOT} already holds a record; the free slot is ${free}`]
+      }
+    ])
   })
 
   it("leaves a holder the batch archives, an archived holder, and an edge the batch cuts alone, and edits a holder the batch moves at its old path", async () => {
