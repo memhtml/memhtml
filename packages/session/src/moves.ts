@@ -1,4 +1,5 @@
 import { type HeadView, normalizePath, type OverlayOp, pathToHref } from "@memhtml/contracts"
+import { addLink, readLinks, removeLink } from "@memhtml/html"
 
 import { BATCH_CAP, type CommitScope, isReservedPath, type Violation } from "./validate.js"
 
@@ -48,9 +49,9 @@ export const withRepoints = (
  *
  * `overflow` names, as a `format` violation on its source, each archive or move whose pairs would
  * take a log within `cap` over it, taking the pairs in log order while they fit; when it is not
- * empty the commit should write nothing and refuse with it, so `--drop-refused` can drop those ops
- * and land the rest. A log already over `cap` gains nothing and names nothing: its own `batch-cap`
- * refusal stands.
+ * empty the commit should write nothing and refuse with it, so `--drop-refused` can drop those ops,
+ * with what {@link afterDroppedVacates} takes after them, and land the rest. A log already over
+ * `cap` gains nothing and names nothing: its own `batch-cap` refusal stands.
  */
 export const missingRepoints = (
   view: HeadView,
@@ -149,4 +150,117 @@ const repointsByVacate = (
     if (pairs.length > 0) groups.push({ index, pairs })
   })
   return groups
+}
+
+/** One op {@link afterDroppedVacates} took or rewrote, with the archive or move it followed. */
+export interface VacateFollower {
+  readonly kind: OverlayOp["kind"]
+  /** The op's path as the log held it. */
+  readonly path: string
+  /** The edge's rel, or the entity a `label` or `unlabel` names. */
+  readonly detail: string
+  readonly vacate: OverlayOp
+}
+
+/**
+ * What a log keeps once `session commit --drop-refused` has taken `dropped` out of it, for each
+ * `archive` or `move` among them whose destination neither `view` nor a kept op holds and whose
+ * source is still live in `view`. Each kept head op at a dropped move's destination is made at its
+ * source instead, where the record still is: a repoint the commit appended after the move, for a
+ * holder the move took, then repoints the holder where it stays. The vacate's own repoint pairs go
+ * with it: each `link` to its destination and the `unlink` of the same holder and rel from its
+ * source, so the holder keeps its edge to the record where it is and no other op on the holder is
+ * refused for it. Every other edge a kept `put` or `link` aims at its destination is aimed back at
+ * its source: a successor's `supersedes` edge to the slot of a record whose archive was dropped
+ * then names the live record, which the curator archives later as it does any superseded record,
+ * rather than a file that was never written.
+ *
+ * `removed` lists the ops taken, `retargeted` each edge aimed back, and `returned` each op made at
+ * the source, all with the vacate they followed.
+ */
+export const afterDroppedVacates = (
+  view: HeadView,
+  keep: ReadonlyArray<OverlayOp>,
+  dropped: ReadonlyArray<OverlayOp>
+): {
+  readonly keep: ReadonlyArray<OverlayOp>
+  readonly removed: ReadonlyArray<VacateFollower>
+  readonly retargeted: ReadonlyArray<VacateFollower>
+  readonly returned: ReadonlyArray<VacateFollower>
+} => {
+  const held = new Set(
+    keep.flatMap((op) =>
+      op.kind === "put"
+        ? [normalizePath(op.path)]
+        : op.kind === "archive" || op.kind === "move"
+          ? [normalizePath(op.to)]
+          : []
+    )
+  )
+  let ops: Array<OverlayOp> = [...keep]
+  const removed: Array<VacateFollower> = []
+  const retargeted: Array<VacateFollower> = []
+  const returned: Array<VacateFollower> = []
+  for (const vacate of dropped) {
+    if (vacate.kind !== "archive" && vacate.kind !== "move") continue
+    const from = normalizePath(vacate.path)
+    const to = normalizePath(vacate.to)
+    const source = view.get(from)
+    if (view.get(to) !== undefined || held.has(to) || source === undefined || source.archived) {
+      continue
+    }
+    if (vacate.kind === "move") {
+      ops = ops.map((op) => {
+        if (op.kind === "put" || op.kind === "archive" || op.kind === "move") return op
+        if (normalizePath(op.path) !== to) return op
+        const detail = op.kind === "link" || op.kind === "unlink" ? op.rel : op.entity
+        returned.push({ kind: op.kind, path: op.path, detail, vacate })
+        return { ...op, path: source.path }
+      })
+    }
+    const fromHref = pathToHref(from)
+    const toHref = pathToHref(to)
+    const taken = new Set<OverlayOp>()
+    for (const op of ops) {
+      if (op.kind !== "link" || op.href !== toHref) continue
+      const unlink = ops.find(
+        (other) =>
+          other.kind === "unlink" &&
+          !taken.has(other) &&
+          normalizePath(other.path) === normalizePath(op.path) &&
+          other.rel === op.rel &&
+          other.href === fromHref
+      )
+      if (unlink === undefined) continue
+      taken.add(unlink)
+      taken.add(op)
+    }
+    const next: Array<OverlayOp> = []
+    for (const op of ops) {
+      if (taken.has(op) && (op.kind === "link" || op.kind === "unlink")) {
+        removed.push({ kind: op.kind, path: op.path, detail: op.rel, vacate })
+        continue
+      }
+      if (op.kind === "link" && op.href === toHref) {
+        next.push({ ...op, href: fromHref })
+        retargeted.push({ kind: op.kind, path: op.path, detail: op.rel, vacate })
+        continue
+      }
+      if (op.kind === "put") {
+        const aimed = readLinks(op.html).filter((link) => link.href === toHref)
+        if (aimed.length > 0) {
+          let html = op.html
+          for (const link of aimed) {
+            html = addLink(removeLink(html, link.rel, toHref), link.rel, fromHref)
+            retargeted.push({ kind: op.kind, path: op.path, detail: link.rel, vacate })
+          }
+          next.push({ ...op, html })
+          continue
+        }
+      }
+      next.push(op)
+    }
+    ops = next
+  }
+  return { keep: ops, removed, retargeted, returned }
 }

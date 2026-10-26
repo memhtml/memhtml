@@ -4,7 +4,7 @@ import { Effect } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
 import { commitSession } from "../src/commit.js"
-import { missingRepoints, withRepoints } from "../src/moves.js"
+import { afterDroppedVacates, missingRepoints, withRepoints } from "../src/moves.js"
 import { appendOps, startSession } from "../src/session.js"
 import { UNANCHORED_REASON, validateOps } from "../src/validate.js"
 import {
@@ -66,6 +66,11 @@ import {
  *   the kind and order -> "repoints a live holder's edge to a path the batch puts and then
  *   archives, and not one it puts at after the archive" (the archive comes back alone); only a
  *   move's source skipped -> the same case (the archive before the claim edit gains a pair).
+ * - afterDroppedVacates (2026-10-26): the `held.has(to)` check dropped, or the check that the source
+ *   is live -> "leaves the kept ops alone when the destination is held or the source is not live"
+ *   (the pairs are taken and the edges aimed at the slot); the ops at a dropped move's destination
+ *   left there -> "makes the ops kept at a dropped move's destination at its source". The rest of it is pinned through `session
+ *   commit --drop-refused` in `apps/cli/tests/head-server-commit.test.ts`.
  */
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect)
@@ -658,6 +663,120 @@ describe("missingRepoints completes a written log by appending to it", () => {
     })
     // A log already over the cap is refused as it stands: nothing added, nothing named.
     expect(missingRepoints(head, log, "session", 0)).toEqual({ ops: [], overflow: [] })
+  })
+})
+
+describe("afterDroppedVacates settles the ops a drop round keeps", () => {
+  const NOTE = "resources/acme-widget/c.html"
+  const OTHER = "resources/acme-widget/e.html"
+  const NOTE_HTML = addLink(
+    memory("Widget packing note", "Widget batches are packed by hand.", {
+      entities: ["project:acme-widget"]
+    }),
+    "relates_to",
+    `/${RETIRED}`
+  )
+  const OTHER_HTML = memory("Widget crate note", "Widget crates hold four batches.", {
+    entities: ["project:acme-widget"]
+  })
+  const headOf = async () =>
+    mapHead(SHA, [
+      await recordFrom(RETIRED, RETIRED_HTML),
+      await recordFrom(NOTE, NOTE_HTML),
+      await recordFrom(OTHER, OTHER_HTML)
+    ])
+  // A put superseding the record at its slot, the note's repoint pair, and a link to the slot.
+  const successor: OverlayOp = {
+    kind: "put",
+    path: SUCCESSOR,
+    html: addLink(
+      memory("Widget batch size, revised", "The acme widget ships in batches of twenty.", {
+        entities: ["project:acme-widget"]
+      }),
+      "supersedes",
+      `/${SLOT}`
+    )
+  }
+  const pair = [unlink(NOTE, "relates_to", `/${RETIRED}`), link(NOTE, "relates_to", `/${SLOT}`)]
+  const cites = link(OTHER, "part_of", `/${SLOT}`)
+
+  it("takes a dropped archive's pairs out and aims the kept edges to its slot at the record", async () => {
+    const head = await headOf()
+    const archived = retire(RETIRED, RETIRED_HTML)
+    const settled = afterDroppedVacates(head, [successor, ...pair, cites], [archived])
+    const rewritten = {
+      ...successor,
+      html: addLink(
+        memory("Widget batch size, revised", "The acme widget ships in batches of twenty.", {
+          entities: ["project:acme-widget"]
+        }),
+        "supersedes",
+        `/${RETIRED}`
+      )
+    }
+    expect(settled).toEqual({
+      keep: [rewritten, link(OTHER, "part_of", `/${RETIRED}`)],
+      removed: [
+        { kind: "unlink", path: NOTE, detail: "relates_to", vacate: archived },
+        { kind: "link", path: NOTE, detail: "relates_to", vacate: archived }
+      ],
+      retargeted: [
+        { kind: "put", path: SUCCESSOR, detail: "supersedes", vacate: archived },
+        { kind: "link", path: OTHER, detail: "part_of", vacate: archived }
+      ],
+      returned: []
+    })
+    expect(validateOps(head, settled.keep)).toEqual([])
+  })
+
+  it("leaves the kept ops alone when the destination is held or the source is not live", async () => {
+    const head = await headOf()
+    const kept = [successor, ...pair, cites]
+    const none = { keep: kept, removed: [], retargeted: [], returned: [] }
+    // A kept op writes the slot, so the edges to it resolve.
+    const held: OverlayOp = { kind: "put", path: SLOT, html: RETIRED_HTML }
+    expect(afterDroppedVacates(head, [...kept, held], [retire(RETIRED, RETIRED_HTML)])).toEqual({
+      ...none,
+      keep: [...kept, held]
+    })
+    // The record is not in the view, so there is nowhere to aim the edges back to.
+    const elsewhere = mapHead(SHA, [await recordFrom(NOTE, NOTE_HTML)])
+    expect(afterDroppedVacates(elsewhere, kept, [retire(RETIRED, RETIRED_HTML)])).toEqual(none)
+    // Only an archive or a move vacates a path.
+    expect(afterDroppedVacates(head, kept, [link(OTHER, "part_of", `/${SLOT}`)])).toEqual(none)
+  })
+
+  it("makes the ops kept at a dropped move's destination at its source", async () => {
+    const head = await headOf()
+    const placed = "resources/acme-gadget/c.html"
+    const moved = move(NOTE, placed, NOTE_HTML)
+    // The note's repoint for the archive, appended after the move at the path it takes the note
+    // to, and a label there.
+    const kept = [
+      retire(RETIRED, RETIRED_HTML),
+      unlink(placed, "relates_to", `/${RETIRED}`),
+      link(placed, "relates_to", `/${SLOT}`),
+      { kind: "label", path: placed, entity: "system:packing" } as const
+    ]
+    const settled = afterDroppedVacates(head, kept, [moved])
+    expect(settled).toEqual({
+      keep: [
+        kept[0],
+        unlink(NOTE, "relates_to", `/${RETIRED}`),
+        link(NOTE, "relates_to", `/${SLOT}`),
+        { kind: "label", path: NOTE, entity: "system:packing" }
+      ],
+      removed: [],
+      retargeted: [],
+      returned: [
+        { kind: "unlink", path: placed, detail: "relates_to", vacate: moved },
+        { kind: "link", path: placed, detail: "relates_to", vacate: moved },
+        { kind: "label", path: placed, detail: "system:packing", vacate: moved }
+      ]
+    })
+    expect(validateOps(head, settled.keep)).toEqual([])
+    // So the archive's repoint stands where the note stays, and nothing is added for it.
+    expect(missingRepoints(head, settled.keep)).toEqual({ ops: [], overflow: [] })
   })
 })
 

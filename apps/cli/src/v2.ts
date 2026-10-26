@@ -1,7 +1,7 @@
 import { access, appendFile } from "node:fs/promises"
 import { join } from "node:path"
 
-import type { HeadView, OverlayOp, WriteBarPolicy } from "@memhtml/contracts"
+import { type HeadView, type OverlayOp, pathToHref, type WriteBarPolicy } from "@memhtml/contracts"
 import {
   DirtyTree,
   InvalidMemory,
@@ -21,6 +21,7 @@ import {
 } from "@memhtml/head"
 import { renderTemplate } from "@memhtml/html"
 import {
+  afterDroppedVacates,
   appendOps,
   type CommitOutcome,
   type CommitScope,
@@ -40,6 +41,7 @@ import {
   sessionStateFile,
   startSession,
   touchedPaths,
+  type VacateFollower,
   type Violation,
   validateOps,
   withRepoints
@@ -1009,25 +1011,43 @@ export const commitOverHead = (input: {
     // Each round drops what the refusal names and commits again. An op that only failed because
     // an op it depended on was dropped (a link from a dropped put) is named by the next round, so
     // the loop ends at a clean log, an empty one, or a refusal no op carries (the batch cap). A
-    // drop on a holder's path takes the holder's repoint with its other ops, so the kept ops are
-    // completed again from `base` and the pairs that come back are not reported as dropped; a
-    // round that would leave the log as it was ends the loop.
+    // dropped archive or move takes its own repoint pairs with it, and the edges kept ops aim at
+    // where it was going are aimed back at the record where it still is, as are the ops kept at a
+    // dropped move's destination (`afterDroppedVacates`), so no holder loses its other ops for a
+    // link to a path nothing writes and no op is left on one. A drop on a holder's path takes the
+    // holder's repoint with its other ops, so the kept ops are completed again from `base` and the
+    // pairs that come back are not reported as dropped; a round that would leave the log as it was
+    // ends the loop.
     while (input.dropRefused === true && outcome.kind === "refused") {
       const round = opsToDrop(session.ops, outcome.violations)
       if (round.drop.length === 0) break
-      const again = missingRepoints(input.base, round.keep, scope)
-      const next = [...round.keep, ...again.ops]
+      const settled = afterDroppedVacates(input.base, round.keep, round.ops)
+      const again = missingRepoints(input.base, settled.keep, scope)
+      const next = [...settled.keep, ...again.ops]
       if (JSON.stringify(next) === JSON.stringify(session.ops)) break
       const back = new Map<string, number>()
       for (const op of again.ops)
         back.set(JSON.stringify(op), (back.get(JSON.stringify(op)) ?? 0) + 1)
-      const gone = round.drop.filter((_, at) => {
-        const key = JSON.stringify(round.ops[at])
+      const reasonsOf = (vacate: OverlayOp): ReadonlyArray<string> =>
+        round.drop[round.ops.indexOf(vacate)]?.reasons ?? []
+      const gone: Array<DroppedOp> = []
+      round.drop.forEach((entry, at) => {
+        const op = round.ops[at]
+        const key = JSON.stringify(op)
         const count = back.get(key) ?? 0
-        if (count === 0) return true
-        back.set(key, count - 1)
-        return false
+        if (count > 0) {
+          back.set(key, count - 1)
+          return
+        }
+        gone.push(
+          op === undefined || (op.kind !== "archive" && op.kind !== "move")
+            ? entry
+            : { ...entry, reasons: [...entry.reasons, ...followed(op, settled)] }
+        )
       })
+      for (const follower of settled.removed) {
+        gone.push({ kind: follower.kind, path: follower.path, reasons: reasonsOf(follower.vacate) })
+      }
       dropped.push(...gone)
       session = yield* replaceOps(session, next)
       yield* recordDropped(session.root, session.id, gone)
@@ -1253,6 +1273,35 @@ const opsToDrop = (
     }
   }
   return { drop, ops: dropped, keep }
+}
+
+/**
+ * The reasons a dropped archive or move gains for the kept ops {@link afterDroppedVacates} rewrote
+ * for it: the ops at a move's destination now made at its source, and the edges aimed back at its
+ * source. Its own pairs are listed in `dropped` under its reasons.
+ */
+const followed = (
+  vacate: Extract<OverlayOp, { readonly kind: "archive" | "move" }>,
+  settled: {
+    readonly retargeted: ReadonlyArray<VacateFollower>
+    readonly returned: ReadonlyArray<VacateFollower>
+  }
+): ReadonlyArray<string> => {
+  const mine = (list: ReadonlyArray<VacateFollower>) => list.filter((one) => one.vacate === vacate)
+  const returned = mine(settled.returned).map((one) => `${one.kind} ${one.detail}`)
+  const aimed = mine(settled.retargeted).map((one) => `${one.path} ${one.detail}`)
+  return [
+    ...(returned.length === 0
+      ? []
+      : [
+          `the ops kept at ${vacate.to} are made at ${vacate.path}, where the record still is: ${returned.join(", ")}`
+        ]),
+    ...(aimed.length === 0
+      ? []
+      : [
+          `the edges kept ops aimed at ${pathToHref(vacate.to)} now name ${pathToHref(vacate.path)}, where the record still is: ${aimed.join(", ")}`
+        ])
+  ]
 }
 
 /**
