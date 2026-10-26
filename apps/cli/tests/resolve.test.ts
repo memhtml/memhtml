@@ -228,6 +228,67 @@ describe("memhtml resolve", () => {
     expect(answer.title).toBe("The old build box ran on a spinning disk")
   })
 
+  /** Seed archive rows of one origin straight into the index, as the hop-bound test seeds a chain. */
+  const seedArchives = (
+    origin: string,
+    rows: ReadonlyArray<{ readonly path: string; readonly archivedAt: string | null }>
+  ): Promise<void> =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const db = yield* DatabaseService
+        for (const [at, row] of rows.entries()) {
+          yield* db.run(
+            `INSERT INTO files (path, blob_sha, content_hash, memory_type, title, body_text, para,
+                                archived, origin_path, archived_at, created_at, updated_at, indexed_at)
+             VALUES (?, ?, ?, 'semantic', ?, 'b', 'archive', 1, ?, ?, ?, ?, ?)`,
+            [
+              row.path,
+              `sha-${origin}-${String(at)}`,
+              `hash-${origin}-${String(at)}`,
+              `Archiving ${String(at)} of ${origin}`,
+              origin,
+              row.archivedAt,
+              "2031-03-01T00:00:00Z",
+              "2031-03-01T00:00:00Z",
+              "2031-03-01T00:00:00Z"
+            ]
+          )
+        }
+      }).pipe(Effect.provide(cli.layer), Effect.scoped, Effect.orDie)
+    )
+
+  it("takes the later generation when two archivings of a path share a stamp, or both lack one", async () => {
+    /**
+     * Stamps are whole seconds, so a path archived, written again and archived again within one
+     * second leaves two rows with one stamp, and the second archiving took the year's next
+     * generation. String order would pick the bare year, the older copy: `.` sorts before `/`.
+     */
+    const sameSecond = "areas/inbox/same-second.html"
+    await seedArchives(sameSecond, [
+      { path: `archive/2031/${sameSecond}`, archivedAt: "2031-03-01T09:30:00Z" },
+      { path: `archive/2031.2/${sameSecond}`, archivedAt: "2031-03-01T09:30:00Z" }
+    ])
+    const unstamped = "areas/inbox/unstamped.html"
+    await seedArchives(unstamped, [
+      { path: `archive/2031/${unstamped}`, archivedAt: null },
+      { path: `archive/2031.2/${unstamped}`, archivedAt: null }
+    ])
+
+    const answer = await resolve(cli, sameSecond)
+    expect(answer.path).toBe(`archive/2031.2/${sameSecond}`)
+    expect(answer.stopReason).toBe("archived")
+    expect((await resolve(cli, unstamped)).path).toBe(`archive/2031.2/${unstamped}`)
+  })
+
+  it("reads a slot's generation as a number, so the tenth archiving of a year outranks the ninth", async () => {
+    const path = "areas/inbox/tenth-archiving.html"
+    await seedArchives(path, [
+      { path: `archive/2031.9/${path}`, archivedAt: "2031-03-01T09:30:00Z" },
+      { path: `archive/2031.10/${path}`, archivedAt: "2031-03-01T09:30:00Z" }
+    ])
+    expect((await resolve(cli, path)).path).toBe(`archive/2031.10/${path}`)
+  })
+
   it("says `unindexed` for a path the corpus never held, without inventing a hop", async () => {
     const answer = await resolve(cli, "areas/oncall/never-written.html")
     expect(answer.path).toBe("areas/oncall/never-written.html")
