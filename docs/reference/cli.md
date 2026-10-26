@@ -444,7 +444,7 @@ Supersedes a memory (`correctMemory` at `apps/cli/src/operations.ts:1062-1090`).
 
 Arguments:
 
-- `<target>` (required): "The memory being corrected. A path already under archive/ is refused (ERR_INVALID_MEMORY) and nothing moves."
+- `<target>` (required): "The memory being corrected. A path under archive/, or one that is not a usable memory path, is refused (ERR_INVALID_MEMORY) and nothing moves."
 
 Flags:
 
@@ -472,7 +472,7 @@ Errors:
 
 - `ERR_SESSION_BOUND` (exit 2) when `MEMHTML_SESSION` is set and the store's `v1Doors` is `closed-in-session` (the default) or `closed`, and `ERR_V1_DOOR_CLOSED` (exit 2) when `v1Doors` is `closed` and no session is set (`sessionBoundRefusal` at `apps/cli/src/run.ts:1003-1016`). Nothing is opened. See [Run sessions and the v1 doors](#run-sessions-and-the-v1-doors).
 - `ERR_STORE_CONFIG` (exit 1) when the store's `memhtml.config.json` exists and can't be read or doesn't decode (`loadStorePolicy` at `apps/cli/src/store-config.ts:64-93`, `apps/cli/src/run.ts:1715-1723`).
-- `ERR_INVALID_MEMORY` (exit 1) when `<target>` is already under `archive/`, before anything moves (`stageArchive` at `packages/store/src/store.ts:600`).
+- `ERR_INVALID_MEMORY` (exit 1) when `<target>` is under `archive/` or isn't a usable memory path, such as a `./` or `../` spelling of an archived file, decided before the store reads the target or opens its journal (`activeRecordPathViolation` at `packages/contracts/src/paths.ts:253`, `packages/store/src/store.ts:1081`).
 - `ERR_PATH_NOT_FOUND` (exit 1) when no file is at `<target>`.
 - `ERR_INVALID_MEMORY` (exit 1) when the target doesn't parse, or when the new article fails the render gate or the parse that reads its valid-from (`renderChecked` and `validFromOf` at `packages/store/src/store.ts:1062-1070`).
 - `ERR_GIT` (exit 1) when `git mv` finds the archive path taken, which happens when a file at the same path was archived earlier the same year. The journal restores the tree.
@@ -582,7 +582,7 @@ Soft-evicts a memory (`archiveMemory` at `apps/cli/src/operations.ts:1112-1120`)
 
 Arguments:
 
-- `<path>` (required): "The memory to archive. A path already under archive/ is refused (ERR_INVALID_MEMORY) and nothing moves."
+- `<path>` (required): "The memory to archive. A path under archive/, or one that is not a usable memory path, is refused (ERR_INVALID_MEMORY) and nothing moves."
 
 Flags:
 
@@ -592,11 +592,11 @@ Response: `memory.archived`.
 
 A caller reads `path`, `archivePath`, and `commitSha` (`ArchiveResult` at `packages/store/src/store.ts:170-174`).
 
-`--reason` appears only in the commit subject, `memhtml(archive): <path> — <reason>` (`packages/store/src/store.ts:1166`). The `<path> — <reason>` part is cut to 72 characters, so a long path can leave no trace of the reason (`commitSubject` at `packages/store/src/plumbing.ts:393-398`). It isn't stamped into the file. The file isn't parsed, but a path already under `archive/` is refused before anything moves, because archiving it again would nest it under `archive/<YYYY>/archive/` (`stageArchive` at `packages/store/src/store.ts:600`).
+`--reason` appears only in the commit subject, `memhtml(archive): <path> — <reason>` (`packages/store/src/store.ts:1166`). The `<path> — <reason>` part is cut to 72 characters, so a long path can leave no trace of the reason (`commitSubject` at `packages/store/src/plumbing.ts:393-398`). It isn't stamped into the file. The file isn't parsed, but a path under `archive/`, or one that isn't a usable memory path, is refused before the store reads it, because archiving it again would nest it under `archive/<YYYY>/archive/` (`archiveSourceRefusal` at `packages/store/src/store.ts:563`, called at `packages/store/src/store.ts:1176`).
 
 Errors:
 
-- `ERR_INVALID_MEMORY` (exit 1) when the path is already under `archive/`. Nothing moves.
+- `ERR_INVALID_MEMORY` (exit 1) when the path is under `archive/` or isn't a usable memory path. No journal opens, so nothing moves and a change the caller staged on the path stays staged.
 - `ERR_PATH_NOT_FOUND` (exit 1) when no file is at the path.
 - `ERR_GIT` (exit 1) when the archive path is taken by an earlier eviction of the same path in the same year. The journal restores the tree.
 - `ERR_STORAGE` (exit 1) with operation `checkout.locked` when another writer holds the checkout lock through the whole 15-second wait. Nothing is written.
@@ -733,12 +733,12 @@ Failure: as `write`. The store write runs inside `exclusive`, so a `checkout.loc
 memhtml task status <path> <status> [--reason <reason>]
 ```
 
-Moves a task's status (`setTaskStatus` at `apps/cli/src/operations.ts:1976-2059`). It decodes the status, parses the file, refuses a non-task, and returns early when the status is unchanged. Otherwise it stamps the head metas `memhtml-task-status` and `memhtml-updated`. For `todo`, `doing`, and `blocked` it writes the file, stages it, and commits inside `store.exclusive`, which holds the per-process permit and the checkout lock, and then reindexes (`apps/cli/src/operations.ts:2020-2030`, `exclusive` at `packages/store/src/store.ts:1420-1423`). For `done` it writes the stamped file and then archives the task through `archiveMemory`, which takes the lock for the move and the commit, with the reason `--reason` or `task done`, and then reindexes (`apps/cli/src/operations.ts:2048-2050`). No `v1Doors` mode closes it, because it edits an existing record and creates none (`apps/cli/src/doors.ts:9-13`).
+Moves a task's status (`setTaskStatus` at `apps/cli/src/operations.ts:1976-2079`). It decodes the status, parses the file, refuses a non-task, returns early when the status is unchanged, and refuses a task under `archive/`. Otherwise it stamps the head metas `memhtml-task-status` and `memhtml-updated`. For `todo`, `doing`, and `blocked` it writes the file, stages it, and commits inside `store.exclusive`, which holds the per-process permit and the checkout lock, and then reindexes (`apps/cli/src/operations.ts:2040-2050`, `exclusive` at `packages/store/src/store.ts:1420-1423`). For `done` it writes the stamped file and then archives the task through `archiveMemory`, which takes the lock for the move and the commit, with the reason `--reason` or `task done`, and then reindexes (`apps/cli/src/operations.ts:2068-2070`). No `v1Doors` mode closes it, because it edits an existing record and creates none (`apps/cli/src/doors.ts:9-13`).
 
 Arguments:
 
 - `<path>` (required): "The task file."
-- `<status>` (required): "One of: todo, doing, blocked, done. `done` on a task already under archive/ is refused (ERR_INVALID_MEMORY) and nothing is written."
+- `<status>` (required): "One of: todo, doing, blocked, done. A task under archive/, or a path that is not a usable memory path, is refused (ERR_INVALID_MEMORY) unless the task already has that status, and nothing is written."
 
 Flags:
 
@@ -750,13 +750,13 @@ A caller reads `path`, `taskStatus`, `archived`, `archivePath`, `commitSha`, and
 
 Errors:
 
-- `ERR_INVALID_MEMORY` (exit 1) for a status outside `TASK_STATUSES`, a file that isn't a task, a file that doesn't parse, or `done` on a path already under `archive/`, which is refused before the stamp is written (`decodeTaskStatus` at `apps/cli/src/operations.ts:150-157`, `apps/cli/src/operations.ts:1986-1992`, `apps/cli/src/operations.ts:2045`).
+- `ERR_INVALID_MEMORY` (exit 1) for a status outside `TASK_STATUSES`, a file that isn't a task, a file that doesn't parse, or a change of status on a task under `archive/` or at a path that isn't a usable memory path, which is refused after the no-op check and before the stamp is written. That reason names the reopening move, `git mv` back to the live path (`decodeTaskStatus` at `apps/cli/src/operations.ts:150-157`, `apps/cli/src/operations.ts:1986-1992`, `apps/cli/src/operations.ts:2016`).
 - `ERR_PATH_NOT_FOUND` (exit 1) when no file is at the path (`readRaw` at `packages/store/src/store.ts:483-488`).
 - `ERR_STORAGE` (exit 1) as `task.write:<path>`, and `ERR_GIT` (exit 1) from `add`, `commit`, or the archive move.
 - `ERR_STORAGE` (exit 1) as `checkout.locked` when another writer of the checkout holds `.memhtml/checkout.lock` for the whole 15 s wait (`withCheckoutLock` at `packages/store/src/checkout-lock.ts:39-44`).
 - The three `reindex` codes after the commit.
 
-Failure: for `todo`, `doing`, and `blocked`, a `checkout.locked` failure comes before the write and leaves the file as it was. The stamp write isn't journaled, so a failed stage or commit leaves the file modified and possibly staged (`apps/cli/src/operations.ts:2014-2029`). The next v1 write's commit then includes a staged stamp, because `commit` commits the whole index (`commit` at `packages/store/src/git.ts:403-422`). For `done`, the stamp is written before `archiveMemory` takes the lock, and the archive journal records the already-stamped bytes. A failed archive, `checkout.locked` included, leaves the stamped file in place and unstaged. When the failure comes after the move, the `state.access` row already moved to the archive path isn't restored (`stageArchive` at `packages/store/src/store.ts:584-613`). A retry after a landed commit reports `unchanged: true` for a non-`done` status and `ERR_PATH_NOT_FOUND` for `done`.
+Failure: for `todo`, `doing`, and `blocked`, a `checkout.locked` failure comes before the write and leaves the file as it was. The stamp write isn't journaled, so a failed stage or commit leaves the file modified and possibly staged (`apps/cli/src/operations.ts:2034-2049`). The next v1 write's commit then includes a staged stamp, because `commit` commits the whole index (`commit` at `packages/store/src/git.ts:403-422`). For `done`, the stamp is written before `archiveMemory` takes the lock, and the archive journal records the already-stamped bytes. A failed archive, `checkout.locked` included, leaves the stamped file in place and unstaged. When the failure comes after the move, the `state.access` row already moved to the archive path isn't restored (`stageArchive` at `packages/store/src/store.ts:584-613`). A retry after a landed commit reports `unchanged: true` for a non-`done` status and `ERR_PATH_NOT_FOUND` for `done`.
 
 ## task list
 
@@ -1032,7 +1032,7 @@ Response: `doctor.report`.
 
 A caller reads `healthy` first. The findings are `dangling`, `orphanAccessRows`, `inboxDepth`, `inboxCrowded`, `inboxTaskDepth`, `inboxTasksCrowded`, `overdueTasks`, `staleBlockers`, `untypedEntities`, `untypedEntityTotal`, `warnings`, `unparseable`, `nestedArchivePaths`, and `dirty`. The index fields are `indexFresh`, `indexHeadSha`, `headSha`, `embedModelMatches`, `storedEmbedModel`, `configuredEmbedModel`, `vectorCoverage`, `vectorCoverageFloor`, `vectorCoverageLow`, `chunks`, `embeddings`, and `vectorCoverageRemedy` (`DoctorReport` at `apps/cli/src/doctor.ts:165-226`). With `--fix` the report adds `repaired: {rewritten, dropped, failedWrites, prunedAccessRows, commitSha}` (`RepairReport` at `apps/cli/src/doctor.ts:229-244`).
 
-`healthy` (`apps/cli/src/doctor.ts:653-684`) leaves out `overdueTasks`, `staleBlockers`, `untypedEntities`, and `dirty`. `vectorCoverageLow` is true only when a vector exists or an embedder is bound, and coverage is under the floor (`apps/cli/src/doctor.ts:643-644`). `unparseable` also lists indexed paths whose file is gone (`collectWarnings` at `apps/cli/src/doctor.ts:423-445`). `nestedArchivePaths` lists the indexed paths under `archive/<YYYY>/archive/`, which are records archived a second time, a move `stageArchive` refuses to make (`apps/cli/src/doctor.ts:601`, `packages/store/src/store.ts:600`). It counts against `healthy` and `--fix` leaves it alone.
+`healthy` (`apps/cli/src/doctor.ts:653-684`) leaves out `overdueTasks`, `staleBlockers`, `untypedEntities`, and `dirty`. `vectorCoverageLow` is true only when a vector exists or an embedder is bound, and coverage is under the floor (`apps/cli/src/doctor.ts:643-644`). `unparseable` also lists indexed paths whose file is gone (`collectWarnings` at `apps/cli/src/doctor.ts:423-445`). `nestedArchivePaths` lists the indexed paths under `archive/<YYYY>/archive/`, which are records archived a second time, a move the store refuses to make (`apps/cli/src/doctor.ts:601`, `archiveSourceRefusal` at `packages/store/src/store.ts:563`). It counts against `healthy` and `--fix` leaves it alone.
 
 Doctor reads the index and the memory files the index lists. It doesn't read `memhtml.config.json` or any session's state. `dirty` is every path `git status` reports that git doesn't ignore, so an uncommitted `memhtml.config.json` appears there (`dirtyPaths` at `packages/store/src/store.ts:1360-1367`). A session's files under `.memhtml/sessions/` don't, because the store's `.gitignore` ignores them, and a store scaffolded before 0.16 gets the same pattern in `.git/info/exclude` when a session starts (`GITIGNORE` at `packages/store/src/layout.ts:84-89`, `ensureExcludedQuietly` at `packages/session/src/session.ts:256`).
 

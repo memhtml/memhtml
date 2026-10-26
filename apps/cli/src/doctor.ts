@@ -75,10 +75,10 @@ import {
  *    embedder bound is the incident's shape one step earlier (a `rebuild --no-embed` nobody
  *    backfilled), and it is low.
  * 11. **Nested archive paths**: a file under `archive/<YYYY>/archive/`, which is a record archived a
- *    second time. `stageArchive` in `@memhtml/store` refuses any path under `archive/` as its source,
- *    so no store operation makes one, but a tree written before that refusal, or moved by hand, can
- *    hold one. `originalPathFor` strips a single `archive/<YYYY>/` prefix, so such a file maps back to
- *    an archive path rather than to a live one.
+ *    second time. `@memhtml/store` refuses a path under `archive/` as an archive source, and so does a
+ *    session's `archive` op, so no write makes one, but a tree written before that refusal, or moved by
+ *    hand, can hold one. `originalPathFor` strips a single `archive/<YYYY>/` prefix, so such a file maps
+ *    back to an archive path rather than to a live one.
  *
  * **`--fix` repairs exactly two of the eleven, and the repair logic is `./repair.ts`, not re-ported per
  * call site.** `archivedFormOf` decides whether a dangling target moved to the archive or is genuinely

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 
 import {
   ARCS_DIR,
+  activeRecordPathViolation,
   archivePathFor,
   archiveYearOf,
   INBOX_DIR,
@@ -200,6 +201,49 @@ const placement = fc.record<PlacementInput>({
   ),
   workspace: fc.oneof(fc.constant(""), segment),
   tags: fc.array(fc.oneof(fc.constant(""), fc.constant("People"), segment), { maxLength: 3 })
+})
+
+describe("activeRecordPathViolation", () => {
+  it("accepts a usable memory path outside the archive bucket", () => {
+    expect(activeRecordPathViolation("areas/inbox/a-fact.html")).toBeUndefined()
+    expect(activeRecordPathViolation("/resources/acme-widget/b.html")).toBeUndefined()
+  })
+
+  it("names an archive path as already archived, with or without a year partition", () => {
+    expect(activeRecordPathViolation("archive/2031/areas/inbox/a-fact.html")).toBe(
+      "already archived at archive/2031/areas/inbox/a-fact.html"
+    )
+    // The `<link href>` form normalizes first, so the reason names the git-tree path.
+    expect(activeRecordPathViolation("/archive/2031/areas/inbox/a-fact.html")).toBe(
+      "already archived at archive/2031/areas/inbox/a-fact.html"
+    )
+    expect(activeRecordPathViolation("archive/notes/a-fact.html")).toBe(
+      "already archived at archive/notes/a-fact.html"
+    )
+  })
+
+  it("refuses a `.` or `..` spelling, which the bucket test alone would read as outside archive/", () => {
+    // Both name an archived file once the filesystem resolves them, and `archivePathFor` would copy
+    // the spelling into the destination.
+    for (const path of [
+      "./archive/2031/areas/inbox/a-fact.html",
+      "areas/../archive/2031/areas/inbox/a-fact.html"
+    ]) {
+      const reason = activeRecordPathViolation(path)
+      expect(reason).toBe(
+        `path \`${path}\` is not a usable memory path: ${memoryPathViolation(path)}`
+      )
+    }
+  })
+
+  it("refuses every archive path the archive mapping produces", () => {
+    fc.assert(
+      fc.property(memoryPath, year, (path, y) => {
+        expect(activeRecordPathViolation(archivePathFor(path, y))).toMatch(/^already archived at /)
+      }),
+      { numRuns: 500 }
+    )
+  })
 })
 
 describe("placementFor", () => {

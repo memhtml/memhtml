@@ -1,6 +1,6 @@
 import { isEdgeRel, MEMORY_RELS, relClassFor, TASK_RELS } from "@memhtml/contracts/edges"
 import { InvalidMemory, type StorageFailure } from "@memhtml/contracts/errors"
-import { ARCHIVE_BUCKET, normalizePath, paraBucketOf } from "@memhtml/contracts/paths"
+import { activeRecordPathViolation, normalizePath, originalPathFor } from "@memhtml/contracts/paths"
 import {
   isTaskStatus,
   isWritableMemoryType,
@@ -2006,6 +2006,26 @@ export const setTaskStatus = (params: TaskStatusParams) =>
       } satisfies TaskStatusResult
     }
 
+    /**
+     * A status change edits an active task, so a path under `archive/`, or one that is not a usable
+     * memory path, is refused here, before the stamp is written (`activeRecordPathViolation`). `done`
+     * would archive it again, which the store refuses only after the write below has reached disk.
+     * Any other status would restamp an archived file in place, out of `task list`, where no later
+     * `done` could finish it. The reason names the move that reopens an archived task.
+     */
+    const refusal = activeRecordPathViolation(path)
+    if (refusal !== undefined) {
+      const live = originalPathFor(path)
+      return yield* Effect.fail(
+        InvalidMemory.make({
+          reason:
+            live === undefined
+              ? refusal
+              : `${refusal}. An archived task keeps its status: to reopen it, \`git mv\` it back to ${live}, commit, and run \`memhtml index update\``
+        })
+      )
+    }
+
     const stamped = setMeta(
       setMeta(existing.html, "memhtml-task-status", status),
       "memhtml-updated",
@@ -2035,15 +2055,6 @@ export const setTaskStatus = (params: TaskStatusParams) =>
         commitSha: commit.sha,
         unchanged: false
       } satisfies TaskStatusResult
-    }
-
-    /**
-     * A task already in the archive bucket is refused here, before the stamp is written. The store
-     * refuses to archive a path under `archive/` (`stageArchive`), and that refusal would come after
-     * the write below, leaving `done` on disk and uncommitted.
-     */
-    if (paraBucketOf(path) === ARCHIVE_BUCKET) {
-      return yield* Effect.fail(InvalidMemory.make({ reason: `already archived at ${path}` }))
     }
 
     /**

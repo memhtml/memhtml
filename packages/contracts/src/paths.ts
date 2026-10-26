@@ -236,3 +236,27 @@ export const archiveYearOf = (path: string): number | undefined => {
   const match = /^archive\/(\d{4,})\//.exec(normalizePath(path))
   return match?.[1] === undefined ? undefined : Number(match[1])
 }
+
+/**
+ * Why a path cannot name an active record, or `undefined` when it can: the source an archive move
+ * takes, and the task a status change edits.
+ *
+ * Two clauses, in order. A path that is not a usable memory path is refused with
+ * {@link memoryPathViolation}'s own reason, because `normalizePath` keeps `.` and `..` segments: the
+ * filesystem resolves `./archive/2031/x.html` and `areas/../archive/2031/x.html` to an archived
+ * file, while the bucket read below sees `.` and `areas`, and {@link archivePathFor} would copy the
+ * spelling into the destination. A path in the archive bucket is already archived, year partition or
+ * not, because the index reads every path under `archive/` as archived. Archiving one again would
+ * nest it under `archive/<YYYY>/archive/`, where {@link originalPathFor} maps it back to an archive
+ * path rather than to a live one.
+ */
+export const activeRecordPathViolation = (path: string): string | undefined => {
+  const normalized = normalizePath(path)
+  const violation = memoryPathViolation(normalized)
+  if (violation !== undefined) {
+    return `path \`${normalized}\` is not a usable memory path: ${violation}`
+  }
+  return paraBucketOf(normalized) === ARCHIVE_BUCKET
+    ? `already archived at ${normalized}`
+    : undefined
+}

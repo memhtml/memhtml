@@ -193,7 +193,7 @@ describe("doctor counts untyped entity references", () => {
 /**
  * A record archived inside the archive, at `archive/<YYYY>/archive/<YYYY>/<path>`.
  *
- * No door makes one, because `stageArchive` refuses a source that is already under `archive/`. A tree
+ * No door makes one, because the store refuses a source that is already under `archive/`. A tree
  * written before that refusal, or moved by hand, can still hold one, and `originalPathFor` strips a
  * single prefix, so the file reads as the archive of an archive path rather than of a live one.
  * Doctor names each one.
@@ -245,22 +245,31 @@ describe("doctor reports a record archived inside the archive", () => {
 
   it("cannot be handed one by archive or correct, which refuse an archived source", async () => {
     const head = await headSha()
-    for (const argv of [
-      ["archive", kept, "--reason", "evicted again"],
-      [
-        "correct",
-        kept,
-        "--title",
-        "The widget pool size, corrected",
-        "--claim",
-        "The widget pool holds sixteen."
-      ]
-    ]) {
-      const result = await cli.run(argv)
-      expect(result.exitCode).toBe(EXIT_RUNTIME)
-      const body = JSON.parse(result.stdout) as Record<string, unknown>
-      expect(body.code).toBe("ERR_INVALID_MEMORY")
-      expect(body.error).toContain(`already archived at ${kept}`)
+    // The `.` and `..` spellings resolve to the same file on disk, so they are refused too, as paths
+    // that are not usable memory paths.
+    const spellings: ReadonlyArray<readonly [string, string]> = [
+      [kept, `already archived at ${kept}`],
+      [`./${kept}`, `path \`./${kept}\` is not a usable memory path`],
+      [`areas/../${kept}`, `path \`areas/../${kept}\` is not a usable memory path`]
+    ]
+    for (const [path, reason] of spellings) {
+      for (const argv of [
+        ["archive", path, "--reason", "evicted again"],
+        [
+          "correct",
+          path,
+          "--title",
+          "The widget pool size, corrected",
+          "--claim",
+          "The widget pool holds sixteen."
+        ]
+      ]) {
+        const result = await cli.run(argv)
+        expect(result.exitCode).toBe(EXIT_RUNTIME)
+        const body = JSON.parse(result.stdout) as Record<string, unknown>
+        expect(body.code).toBe("ERR_INVALID_MEMORY")
+        expect(body.error).toContain(reason)
+      }
     }
     expect(await headSha()).toBe(head)
     const status = await cli.json<{ readonly dirty: boolean }>(["status"])

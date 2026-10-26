@@ -428,7 +428,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
       {
         name: "target",
         description:
-          "The memory being corrected. A path already under archive/ is refused (ERR_INVALID_MEMORY) and nothing moves.",
+          "The memory being corrected. A path under archive/, or one that is not a usable memory path, is refused (ERR_INVALID_MEMORY) and nothing moves.",
         required: true
       }
     ],
@@ -528,7 +528,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
       {
         name: "path",
         description:
-          "The memory to archive. A path already under archive/ is refused (ERR_INVALID_MEMORY) and nothing moves.",
+          "The memory to archive. A path under archive/, or one that is not a usable memory path, is refused (ERR_INVALID_MEMORY) and nothing moves.",
         required: true
       }
     ],
@@ -708,7 +708,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
       { name: "path", description: "The task file.", required: true },
       {
         name: "status",
-        description: `One of: ${TASK_STATUSES.join(", ")}. \`done\` on a task already under archive/ is refused (ERR_INVALID_MEMORY) and nothing is written.`,
+        description: `One of: ${TASK_STATUSES.join(", ")}. A task under archive/, or a path that is not a usable memory path, is refused (ERR_INVALID_MEMORY) unless the task already has that status, and nothing is written.`,
         required: true
       }
     ],
