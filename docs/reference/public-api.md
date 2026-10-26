@@ -154,9 +154,9 @@ One entry in a session's overlay log. There are seven kinds. A `put` writes a ne
 export const makeGit = (root: string): GitShape => ({
 ```
 
-Builds the `GitShape` service over the `git` binary. It runs every call as `git -C <root>` through `execFile` (`packages/store/src/git.ts:222-257`). Each spawn sets `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`, and `LC_ALL=C`, and removes the repository-selecting variables such as `GIT_DIR`, so a call made from inside a git hook still targets `root` (`packages/store/src/git.ts:174-207`). The user's own git config is still read, which is why every parsed call states its output format with explicit flags. `layerGit` wraps it as a layer (`packages/store/src/git.ts:493`). The CLI's v2 code calls it directly when it needs git for a root it already holds, as `loadVersion` does to load a head version (`apps/cli/src/head-cache.ts:177-183`). Tests use it to drive the real binary against a temporary repository.
+Builds the `GitShape` service over the `git` binary. It runs every call as `git -C <root>` through `execFile` (`packages/store/src/git.ts:262-298`). Each spawn sets `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`, and `LC_ALL=C`, sets `GIT_LITERAL_PATHSPECS`, `GIT_NOGLOB_PATHSPECS`, `GIT_GLOB_PATHSPECS`, and `GIT_ICASE_PATHSPECS` to `0` so a pathspec matches as git's default does whatever the calling shell exports, and removes the repository-selecting variables such as `GIT_DIR`, so a call made from inside a git hook still targets `root` (`packages/store/src/git.ts:184-221`). The user's own git config is still read, which is why every parsed call states its output format with explicit flags. `layerGit` wraps it as a layer (`packages/store/src/git.ts:560`). The CLI's v2 code calls it directly when it needs git for a root it already holds, as `loadVersion` does to load a head version (`apps/cli/src/head-cache.ts:177-183`). Tests use it to drive the real binary against a temporary repository.
 
-`packages/store/src/git.ts:292-467`, 16 importer files
+`packages/store/src/git.ts:356-534`, 16 importer files
 
 ### parseMemory
 
@@ -400,16 +400,7 @@ The path of one session's log, `.memhtml/sessions/<id>.json` under the root (`pa
 
 ```ts
 export const slugify = (title: string): string => {
-  const folded = title
-    .normalize("NFKD")
-    .replace(/\p{Mn}+/gu, "")
-    .toLowerCase()
-
-  const kebab = folded
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+/, "")
-    .replace(/-+$/, "")
-
+  const kebab = kebabOf(title)
   if (kebab === "") return SLUG_FALLBACK
 
   return kebab.length <= SLUG_MAX_LENGTH
@@ -418,9 +409,23 @@ export const slugify = (title: string): string => {
 }
 ```
 
-Kebab-cases a title into `[a-z0-9-]`. It applies NFKD, strips combining marks so diacritics fold to base letters, and lowercases. Then it replaces each run of other characters with one hyphen and trims hyphens from both ends. A title that reduces to nothing returns `SLUG_FALLBACK`, which is `untitled`. A result longer than `SLUG_MAX_LENGTH` (80) is cut there, and any exposed trailing hyphen is trimmed (`packages/contracts/src/slug.ts:7-15`). A slug fed back in comes out unchanged.
+Kebab-cases a title into `[a-z0-9-]`. `kebabOf` applies NFKD, strips combining marks so diacritics fold to base letters, and lowercases. Then it replaces each run of other characters with one hyphen and trims hyphens from both ends (`packages/contracts/src/slug.ts:36-44`). A title that reduces to nothing returns `SLUG_FALLBACK`, which is `untitled`. A result longer than `SLUG_MAX_LENGTH` (80) is cut there, and any exposed trailing hyphen is trimmed (`packages/contracts/src/slug.ts:7-22`). A slug fed back in comes out unchanged. This is the slug of every name that is recomputed each time it's used, such as a workspace's `projects/<slug>/` folder and a tag's `resources/<slug>/`, so its cut never changes and a long workspace or tag stays one folder. A new record's filename stem is `slugifyStem`'s.
 
-`packages/contracts/src/slug.ts:28-44`, 7 importer files
+`packages/contracts/src/slug.ts:62-69`, 5 importer files
+
+### slugifyStem
+
+```ts
+export const slugifyStem = (title: string): string => {
+  const kebab = kebabOf(title)
+  if (kebab === "") return SLUG_FALLBACK
+  return cutAtWord(kebab, SLUG_MAX_LENGTH) || SLUG_FALLBACK
+}
+```
+
+The filename stem a new record takes from its title, which `memoryPathFor` and both collision loops use (`packages/contracts/src/paths.ts:200`, `packages/store/src/store.ts:460`, `apps/cli/src/v2.ts:341`). It kebab-cases as `slugify` does, and a result longer than 80 is cut at its last hyphen at or before 80 when that leaves at least `SLUG_MIN_WORD_CUT` (60) characters, so it ends on a whole word, and at 80 otherwise (`cutAtWord` at `packages/contracts/src/slug.ts:24-34`). It equals `slugify` for every title whose slug fits the budget. `withCollisionOrdinal` cuts its stem by the same rule to make room for a `-N` suffix. A stem is computed only when a record is minted, and the path is the record's id from then on, so the rule decides new filenames and never moves an existing file.
+
+`packages/contracts/src/slug.ts:82-86`, 2 importer files
 
 ### DirtyTree
 

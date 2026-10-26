@@ -349,7 +349,7 @@ This is the one interface between every SQL-writing module and the driver. 17 no
 - `packages/index/src/indexer.ts:11` takes it as an indexer dependency.
 - `packages/index/src/traces-persist.ts`, `packages/index/src/index-state.ts`, and `packages/index/src/reinforce.ts` all reference it, and `packages/index/src/sidecar.ts:44` and `packages/index/src/vector-coverage.ts:100` take it as their first argument.
 - `packages/eval/src/harness.ts` references it.
-- `apps/cli/src/api-layer.ts` wires it, and `apps/cli/src/operations.ts`, `apps/cli/src/views.ts`, `apps/cli/src/doctor.ts`, `apps/cli/src/hook.ts:5`, `apps/cli/src/artifacts.ts:32`, and `apps/cli/src/repair.ts:86`, `:98` consume it.
+- `apps/cli/src/api-layer.ts` wires it, and `apps/cli/src/operations.ts`, `apps/cli/src/views.ts`, `apps/cli/src/doctor.ts`, `apps/cli/src/hook.ts:5`, `apps/cli/src/artifacts.ts:34`, and `apps/cli/src/repair.ts:86`, `:98` consume it.
 - `packages/index/src/index.ts:10-18` publishes `DatabaseService`, `DatabaseShape`, `SqlValue`, `Write`, `attachState`, `makeDatabase`, `runStateMigrations` as the package's SQL surface.
 
 **Shape:**
@@ -1007,7 +1007,7 @@ Where memhtml puts things inside the external root, and which of those things su
 - `apps/cli/src/config.ts:107-117` documents `MEMHTML_ROOT` for `memhtml manifest` and the generated agent doc.
 - `packages/index/src/schema-const.ts:7-20` names the migrations directories and the `state` schema the ATTACH uses.
 - `tests-integration/tests/rebuild.test.ts:211-218` deletes both databases from `.memhtml/` and rebuilds, asserting the whole claim.
-- The v2 packages declare their own copies of the v2 paths instead of importing the store's: `SESSIONS_DIR` (`packages/session/src/session.ts:58`), `HEAD_SOCKET` (`packages/session/src/exclude.ts:28`), `SNAPSHOTS_DIR` (`packages/snapshot/src/snapshot.ts:177`), and `VECTORS_DIR` (`packages/snapshot/src/vectors.ts:68`). Nothing outside the store's own barrel (`packages/store/src/index.ts:33-47`) imports the store's v2 constants.
+- The v2 packages declare their own copies of the v2 paths instead of importing the store's: `SESSIONS_DIR` (`packages/session/src/session.ts:58`), `HEAD_SOCKET` (`packages/session/src/exclude.ts:28`), `SNAPSHOTS_DIR` (`packages/snapshot/src/snapshot.ts:177`), and `VECTORS_DIR` (`packages/snapshot/src/vectors.ts:68`). Nothing outside the store's own barrel (`packages/store/src/index.ts:35-50`) imports the store's v2 constants.
 
 **Shape:**
 
@@ -1288,7 +1288,7 @@ The LLM-proxy vocabulary is declared once. `packages/llm/src/proxy-config.ts:31,
 
 A session is a base commit, a ref, and a log of overlay ops, and its commit lands those ops on the ref as one git commit. `@memhtml/session` does this with its own git plumbing and never imports `@memhtml/store`. The two packages meet at two points only, the repository's shared index and the checkout lock that guards it, and the lock's contract lives in `@memhtml/contracts` so neither side has to import the other.
 
-**Producer:** `packages/session/src/session.ts:38-53` for the session and its log, `packages/session/src/commit.ts:399-426` for the commit order, `packages/session/src/plumbing.ts:7-50` for the git plumbing, and `packages/contracts/src/checkout-lock.ts:5-97` for the lock both writers take
+**Producer:** `packages/session/src/session.ts:38-53` for the session and its log, `packages/session/src/commit.ts:399-426` for the commit order, `packages/session/src/plumbing.ts:7-59` for the git plumbing, and `packages/contracts/src/checkout-lock.ts:5-97` for the lock both writers take
 
 **Consumer(s):**
 
@@ -1348,7 +1348,7 @@ export const CheckoutLockHeld = Context.Reference<ReadonlySet<string>>(
 **Assumptions consumers make:**
 
 - The session assumes it must spawn git itself. `packages/session/src/plumbing.ts:7-14` states that a session writes through its own index file, and the store's `Git` service scrubs `GIT_INDEX_FILE` from every child, so the store's client can't stage into a session's index. A commit stages through a temporary index it removes on every outcome (`packages/session/src/commit.ts:514-528`).
-- Both sides assume the same set of repo-selecting variables is removed from every child, because a hook exports an absolute `GIT_DIR` that a child would follow (`packages/store/src/git.ts:180-190`). The session's copy at `packages/session/src/plumbing.ts:41-50` says it's "The same list as" the store's at `packages/store/src/git.ts:191-200`. The store's list is pinned by tests to the copy in `apps/cli/src/mount.ts`, and no test compares the session's copy with either.
+- Both sides assume the same set of repo-selecting variables is removed from every child, because a hook exports an absolute `GIT_DIR` that a child would follow (`packages/store/src/git.ts:194-204`). The session's copy at `packages/session/src/plumbing.ts:50-59` says it's "The same list as" the store's at `packages/store/src/git.ts:205-214`. The store's list is pinned by tests to the copy in `apps/cli/src/mount.ts`, and no test compares the session's copy with either.
 - Both writers assume the other holds the checkout lock around the window where the shared index and the ref disagree. `packages/contracts/src/checkout-lock.ts:9-20` gives the race it prevents. A v1 commit takes the whole shared index, so without the lock it sweeps a session's just-staged file into its own commit, the session's swap loses, and the rollback stages that file's deletion. The two must agree on the lock's path, its timing, and the reentrancy key (`packages/contracts/src/checkout-lock.ts:22-28`).
 - A writer that already holds the lock assumes a nested acquisition runs without waiting on itself (`packages/contracts/src/checkout-lock.ts:88-97`). The held set is a `Context.Reference` per fiber, so it scopes to the holder's own effect and the fibers it forks.
 - `landOnRef` assumes the checkout moves before the ref (`packages/session/src/commit.ts:267-283`). The ref must still name the expected commit, a dirty session path is `worktree-dirty`, `read-tree -m -u` moves the shared index and working tree, and `update-ref` is the compare-and-swap. A lost swap rolls the checkout back and answers `rebase-needed`. `packages/session/src/commit.ts:422-424` states the reason for the order. The reverse would leave `HEAD` ahead of the index on a failure, and git would then report the session's own files as staged deletions.
@@ -1638,7 +1638,7 @@ The model doesn't propose `OverlayOp` directly. `ProposedOp` (`packages/curator/
 - The loop assumes a rejected proposal is a tool result and never the end of the run (`packages/curator/src/loop.ts:31-37`). `propose` returns the violations, and the model reads them and tries again.
 - The binder judges every new op on top of what the overlay already holds, under the `curate` scope and the store's write bar (`apps/cli/src/curate-run.ts:369-391`). Any violation on a path the new ops touch, or the batch cap, refuses them. `apps/cli/src/curate-run.ts:372-375` states why there's no non-blocking kind here. A curator's ref has no rebase that cures a `duplicate` or a `claim-edit`, so one appended op with either would leave the session uncommittable.
 - `exec` runs the script as JavaScript (`apps/cli/src/curate-run.ts:412-414`) and appends its harvest only when the script exited 0 and nothing blocks (`apps/cli/src/curate-run.ts:419-420`). Its result's `violations` field carries everything the validator reported over the whole would-be batch, while `propose` returns only the blocking subset (`apps/cli/src/curate-run.ts:434`, `:447`).
-- A proposed or harvested `move` names only its source and destination. The binder adds the `unlink` and `link` pairs that repoint every edge to the old path (`withRepoints`, `apps/cli/src/curate-run.ts:415-417`, `:441-444`), because the validator refuses a batch that leaves an edge pointing at a path a move vacated (`packages/contracts/src/record.ts:68-80`).
+- A proposed or harvested `move` or `archive` names only its source and destination. The binder adds the `unlink` and `link` pairs that repoint every edge to the old path (`withRepoints`, `apps/cli/src/curate-run.ts:415-417`, `:441-444`), because the validator refuses a batch that leaves an edge pointing at a path a move or an archive vacated (`packages/contracts/src/record.ts:68-80`).
 - `search` ranks the overlaid view with `searchHead` and no vectors (`apps/cli/src/curate-run.ts:394-405`), so the curator searches with the lexical arm alone and recency breaks ties.
 - `status` reports the session's base, ref, and op counts by kind (`packages/curator/src/tools.ts:68-81`), and the loop adds the steps and tokens it has spent.
 

@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto"
 
-import { placementFor } from "@memhtml/contracts/paths"
+import { DETECTION_DIGEST_CHARS, DETECTION_PREFIX, placementFor } from "@memhtml/contracts/paths"
 import { SLUG_FALLBACK, SLUG_MAX_LENGTH, slugify } from "@memhtml/contracts/slug"
 
 /**
- * The path algebra of a machine-detected task: how `task list --detected` recognizes one from its path
- * alone, with no `author` column and no commit message to read.
+ * The path algebra of a machine-detected task: the key a detector derives from a finding and the
+ * path that key names. Recognizing one from its path alone (`detectionKeyOf`,
+ * `isDetectedTaskPath`) is in `@memhtml/contracts/paths`, because `task list --detected` and the
+ * curator's briefing both read it.
  *
  * A detected task is an ordinary task and files where one files. `placementFor` routes a workspaceless
  * task to `areas/inbox/tasks`, and `memhtml doctor` reports inbox depth, so a noisy detector shows up
@@ -14,16 +16,12 @@ import { SLUG_FALLBACK, SLUG_MAX_LENGTH, slugify } from "@memhtml/contracts/slug
  */
 export const DETECTED_TASK_DIR = placementFor({ memoryType: "task" })
 
-/** The filename prefix that makes a detected task recognizable from its path alone. */
-export const DETECTION_PREFIX = "det-"
-
-/**
- * Hex characters of the digest carried in a path.
- *
- * Twelve, which is git's own abbreviated-sha width. It leaves 48 bits against a queue whose size a cap
- * holds in the tens, and it costs 17 characters of the 80-character slug budget rather than 68.
- */
-export const DETECTION_DIGEST_CHARS = 12
+export {
+  DETECTION_DIGEST_CHARS,
+  DETECTION_PREFIX,
+  detectionKeyOf,
+  isDetectedTaskPath
+} from "@memhtml/contracts/paths"
 
 /**
  * The slug budget left for a title once the prefix and digest are spent.
@@ -64,15 +62,3 @@ export const detectedTaskPath = (key: string, title: string): string => {
   const stem = slugify(title).slice(0, STEM_SLUG_CHARS).replace(/-+$/, "")
   return `${DETECTED_TASK_DIR}/${key}-${stem === "" ? SLUG_FALLBACK : stem}.html`
 }
-
-/** The key a detected task's path carries, or `undefined` when the path is not one. */
-export const detectionKeyOf = (path: string): string | undefined => {
-  const filename = path.slice(path.lastIndexOf("/") + 1)
-  const match = new RegExp(
-    `^(${DETECTION_PREFIX}[0-9a-f]{${String(DETECTION_DIGEST_CHARS)}})-`
-  ).exec(filename)
-  return match?.[1]
-}
-
-/** True when a path is a detected task's. */
-export const isDetectedTaskPath = (path: string): boolean => detectionKeyOf(path) !== undefined

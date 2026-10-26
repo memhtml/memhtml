@@ -84,7 +84,9 @@ export const RESPONSE_TYPES = [
   "config.report",
   // `session prune`: the session state removed (or, under `--dry-run`, that would be) and the logs
   // kept because they still hold ops.
-  "session.pruned"
+  "session.pruned",
+  // `memhtml path`: the path one write would land at over the version at HEAD, and its ordinal.
+  "memory.path"
 ] as const
 
 export type ResponseType = (typeof RESPONSE_TYPES)[number]

@@ -93,9 +93,9 @@ export interface CuratorTools {
  * bytes through `read` and derives `to` as `archive/<YYYY>/<path>`, because the contract's
  * `OverlayOp.archive` carries the article's bytes to name which article is meant, and a model
  * restating a whole file is how a byte drifts. A `move` names its source and its destination and
- * the loop reads the bytes the same way; the binder adds the `unlink` and `link` pairs that repoint
- * the edges to the old path (`withRepoints`). `put`, `link`, `unlink`, `label`, and `unlabel` are
- * the contract's own shape.
+ * the loop reads the bytes the same way. For both, the binder adds the `unlink` and `link` pairs
+ * that repoint the edges to the old path (`withRepoints`). `put`, `link`, `unlink`, `label`, and
+ * `unlabel` are the contract's own shape.
  */
 export const ProposedOp = z.discriminatedUnion("kind", [
   z.object({
@@ -105,7 +105,12 @@ export const ProposedOp = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("archive"),
-    path: z.string().min(1).describe("The active record to archive."),
+    path: z
+      .string()
+      .min(1)
+      .describe(
+        "The active record to archive. Edges to its path are repointed to the archive for you."
+      ),
     to: z
       .string()
       .min(1)

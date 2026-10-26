@@ -4,8 +4,9 @@ import { createServer, type Server } from "node:net"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 
+import { archivePathFor } from "@memhtml/contracts/paths"
 import { withOverlay } from "@memhtml/head"
-import { renderTemplate } from "@memhtml/html"
+import { addLink, renderTemplate } from "@memhtml/html"
 import { sessionStateFile } from "@memhtml/session"
 import { type FixtureRepo, makeFixtureRepo } from "@memhtml/store/testing"
 import { Effect, Exit, Scope } from "effect"
@@ -50,6 +51,9 @@ import { fakeEmbedder } from "./harness.js"
  *   label sees the base's head, not the labeled one) and "seeds an overlaid path from the view".
  * - `exec-pool.ts` `post`: drop the deadline `setTimeout` -> "terminates a worker that passes its
  *   deadline, and starts another" (the job never answers; the case times out).
+ * - `v2.ts` `execOverHead` (2026-10-26): the harvest appended without `withRepoints` -> "completes
+ *   an archived file's inbound edges in the harvest, here and through the server" (the archive
+ *   alone, the note's edge left on the vacated path).
  */
 
 const run_ = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect)
@@ -243,6 +247,59 @@ describe("session exec through the head server", () => {
     )
     expect(dataOf(reads.body).stdout).toBe("1\n")
     expect(server.stats().exec.jobs).toBe(scripts.length + 1)
+  })
+
+  it("completes an archived file's inbound edges in the harvest, here and through the server", async () => {
+    const { repo } = await corpus()
+    const retired = memory("orchard").path
+    const slot = archivePathFor(retired, 2031)
+    const holder = "resources/acme-widget/orchard-note.html"
+    await commit(
+      repo,
+      [
+        {
+          path: holder,
+          html: addLink(
+            renderTemplate({
+              title: "Orchard note",
+              claim: "The orchard note supersedes the orchard record.",
+              memoryType: "semantic",
+              at: AT,
+              entities: ["project:acme-widget"]
+            }),
+            "supersedes",
+            `/${retired}`
+          )
+        }
+      ],
+      "a holder"
+    )
+    await serve(repo.root)
+    for (const id of ["srv", "loc"]) {
+      expect((await cli(repo.root, ["session", "start", "--id", id])).exitCode).toBe(0)
+    }
+    // The script archives the record and leaves the record that cites it untouched.
+    const script = `mkdir -p /mnt/memhtml/${dirname(slot)}\nmv /mnt/memhtml/${retired} /mnt/memhtml/${slot}`
+    const served = dataOf((await exec(repo.root, "srv", script)).body)
+    const local = dataOf((await exec(repo.root, "loc", script, { local: true })).body)
+    expect(comparable(served)).toEqual(comparable(local))
+    expect(local.blocking).toEqual([])
+    expect(local.harvested).toEqual([
+      { kind: "unlink", path: holder },
+      { kind: "link", path: holder },
+      { kind: "archive", path: retired, to: slot }
+    ])
+    expect(local.appended).toBe(3)
+    expect(await logOf(repo.root, "loc")).toEqual([
+      { kind: "unlink", path: holder, rel: "supersedes", href: `/${retired}` },
+      { kind: "link", path: holder, rel: "supersedes", href: `/${slot}` },
+      expect.objectContaining({ kind: "archive", path: retired, to: slot })
+    ])
+    const landed = await cli(repo.root, ["session", "commit", "--id", "loc", "--message", "retire"])
+    expect(landed.exitCode, JSON.stringify(landed.body)).toBe(0)
+    const cites = await run_(repo.git.run(["show", `main:${holder}`]))
+    expect(cites).toContain(`<link rel="memhtml-supersedes" href="/${slot}">`)
+    expect(cites).not.toContain(`href="/${retired}"`)
   })
 
   it("serves a session whose base is an ancestor of the tip, built from the tip", async () => {
