@@ -130,7 +130,7 @@ The answer through the head has the index answer's fields and types, so the hand
 - `vector_coverage` is the share of the served version's active records whose content hash has a vector in the head server's cache, 0 to 1 (`apps/cli/src/head-vectors.ts:125-135`). It's `0` when the server holds no cache or has no embedder bound (`apps/cli/src/head-retrieval.ts:157-158`). The index path reports the share of indexed chunks that carry a vector.
 - `snippet` is always the article's opening chunk, cut to the snippet size (`apps/cli/src/head-scope.ts:77`). The index path takes the chunk that best matches the query when the vector arm fired.
 
-`memory_recall` on the head asks for 30 candidates, the index path's pool size, in fused order. It folds them with the index's own `foldDisclosure`, arcs under their 9,000-character envelope and the rest under `budget_chars` (`apps/cli/src/head-retrieval.ts:167-214`). Each quote is the record's disclosure text, which the head derives the way the index does (`apps/cli/src/head-protocol.ts:551-569`). `degraded` and `vector_coverage` mean what they mean on a head search.
+`memory_recall` on the head asks for 30 candidates, the index path's pool size, in fused order. It folds them with the index's own `foldDisclosure`, arcs under their 9,000-character envelope and the rest under `budget_chars` (`apps/cli/src/head-retrieval.ts:167-214`). Each quote is the record's disclosure text, which the head derives the way the index does (`apps/cli/src/head-protocol.ts:545-563`). `degraded` and `vector_coverage` mean what they mean on a head search.
 
 Neither path bumps salience.
 

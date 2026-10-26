@@ -242,7 +242,7 @@ Entry point: `apps/cli/src/v2.ts:853` (`sessionExec`)
 
 `session exec` runs a script over the session's view in the just-bash sandbox and harvests what it wrote into ops (see `docs/design.md` §21).
 
-1. `run` reads the script before any repo opens, from `--script`, else `--file`, else stdin. A blank script is `ERR_MISSING_ARGUMENT`. A request body past `EXEC_BODY_MAX_BYTES` (1 MiB) is `ERR_INVALID_FLAG`, measured on the body a server would get, so a script's fate doesn't depend on a server running. Both are exit 2 (`apps/cli/src/run.ts:2082-2125`, `EXEC_BODY_MAX_BYTES`, `apps/cli/src/head-protocol.ts:298`). `--lang` is `bash` unless it says `js`.
+1. `run` reads the script before any repo opens, from `--script`, else `--file`, else stdin. A blank script is `ERR_MISSING_ARGUMENT`. A request body past `EXEC_BODY_MAX_BYTES` (1 MiB) is `ERR_INVALID_FLAG`, measured on the body a server would get, so a script's fate doesn't depend on a server running. Both are exit 2 (`apps/cli/src/run.ts:2082-2125`, `EXEC_BODY_MAX_BYTES`, `apps/cli/src/head-protocol.ts:292`). `--lang` is `bash` unless it says `js`.
 2. An implicit id starts the session first through `ensureSession`, before the server is asked, because the server reads the log and starts nothing (`apps/cli/src/v2.ts:870-873`).
 3. Unless `--no-server` is set, `askHeadFor` sends the exec to `/v1/exec`. It waits for the answer for two queue waits, the run's own deadline, and `ANSWER_TIMEOUT_MS` (`execAnswerTimeoutMs`, `apps/cli/src/v2.ts:835-836`, `apps/cli/src/v2.ts:875-882`).
 4. A served answer is the payload, with `server.used` true. A decline (`base-unservable` or `busy`), `no-server`, or another status runs the exec locally. A `lost` answer, where the server took the script and gave nothing usable back, fails with `ERR_STORAGE` naming `session status`, because the server may have appended the harvest (`apps/cli/src/v2.ts:883-914`).
@@ -262,7 +262,7 @@ Entry point: `apps/cli/src/v2.ts:853` (`sessionExec`)
 - `apps/cli/src/session-exec.ts:645` (`inProcessRunner`)
 - `apps/cli/src/exec-pool.ts:137` (`makeExecPool`)
 - `apps/cli/src/exec.ts:249` (`withBridgeRetry`)
-- `apps/cli/src/head-protocol.ts:321` (`EXEC_QUEUE_WAIT_MS`)
+- `apps/cli/src/head-protocol.ts:315` (`EXEC_QUEUE_WAIT_MS`)
 
 ## Session commit
 
@@ -272,10 +272,10 @@ Entry point: `apps/cli/src/v2.ts:1099` (`sessionCommit`)
 
 1. `run` reads `MEMHTML_COMMIT_DEADLINE_MS` for `session commit` and `session rebase` before any repo opens. The value is whole milliseconds, `0` is no bound, and a malformed value is exit 2 naming the variable (`apps/cli/src/run.ts:2204-2209`, `msFromEnv`, `apps/cli/src/run.ts:2144-2160`). `--message` is required.
 2. `sessionCommit` reads the store policy first. A malformed `memhtml.config.json` refuses with `ERR_STORE_CONFIG` before the server is asked, so it fails the same way on either path (`apps/cli/src/v2.ts:1114-1116`, `loadStorePolicy`, `apps/cli/src/store-config.ts:64-93`).
-3. Unless `--no-server` is set, `askHeadFor` posts `{ id, message, dropRefused? }` to `/v1/commit` and waits `MEMHTML_COMMIT_DEADLINE_MS` for the answer, `COMMIT_DEADLINE_DEFAULT_MS` (60 s) when it's unset (`apps/cli/src/v2.ts:1117-1126`, `commitAnswerTimeoutMs`, `apps/cli/src/v2.ts:1021-1024`, `apps/cli/src/head-protocol.ts:379`).
+3. Unless `--no-server` is set, `askHeadFor` posts `{ id, message, dropRefused? }` to `/v1/commit` and waits `MEMHTML_COMMIT_DEADLINE_MS` for the answer, `COMMIT_DEADLINE_DEFAULT_MS` (60 s) when it's unset (`apps/cli/src/v2.ts:1117-1126`, `commitAnswerTimeoutMs`, `apps/cli/src/v2.ts:1021-1024`, `apps/cli/src/head-protocol.ts:373`).
 4. A served answer returns with `via: "server"`. A decline (`other-ref`, `session-unreadable`, `base-unservable`, or `busy`), `no-server`, and a 4xx all commit locally. `no-server` covers every failure before the connection completed, because no byte of the request reached a server (`apps/cli/src/v2.ts:1127-1140`, `askHeadFor`, `apps/cli/src/head-client.ts:148-219`).
 5. A 5xx after the server took the request, or no usable answer within the deadline, fails with `ERR_STORAGE` naming `session status`. The CLI doesn't retry locally because the ref may already have moved, and zero ops in `session status` means the commit landed (`unanswered`, `apps/cli/src/v2.ts:1047-1077`).
-6. On the server, `serveCommit` runs one commit or rebase at a time. `holdingPermit` waits at most `COMMIT_QUEUE_WAIT_MS` (20 s) for the permit and declines `busy` past it, and a commit that started runs to its end whatever interrupts its request (`apps/cli/src/head-server.ts:1264-1290`, `holdingPermit`, `apps/cli/src/head-server.ts:385-396`, `apps/cli/src/head-protocol.ts:390`).
+6. On the server, `serveCommit` runs one commit or rebase at a time. `holdingPermit` waits at most `COMMIT_QUEUE_WAIT_MS` (20 s) for the permit and declines `busy` past it, and a commit that started runs to its end whatever interrupts its request (`apps/cli/src/head-server.ts:1264-1290`, `holdingPermit`, `apps/cli/src/head-server.ts:385-396`, `apps/cli/src/head-protocol.ts:384`).
 7. The server reads the policy per request. `sessionToWrite` declines a log that doesn't read as `session-unreadable` and a session on another ref as `other-ref` (`apps/cli/src/head-server.ts:1244-1261`). `commitBase` judges against the held tip, an ancestor built from it, or for a base off the ref's history a loaded version, and a failure to build one is `base-unservable` (`apps/cli/src/head-server.ts:1145-1171`).
 8. On the local path, the CLI reads the log and loads the head at the session's base (`apps/cli/src/v2.ts:1141-1150`).
 9. Both paths run `commitOverHead`. It appends the repoints the log's archives and moves lack against the version (`missingRepoints`), or refuses naming the archive or move whose repoints would take a log within the cap over it, and calls `commitSession` under the scope `sessionScopeOf` picks and with the store's write bar (`apps/cli/src/v2.ts:1102-1141`).
@@ -298,7 +298,7 @@ Entry point: `apps/cli/src/v2.ts:1099` (`sessionCommit`)
 
 ### Related
 
-- `apps/cli/src/head-protocol.ts:350` (`CommitRequest`)
+- `apps/cli/src/head-protocol.ts:344` (`CommitRequest`)
 - `apps/cli/src/head-protocol.ts:812` (`CommitDeclined`)
 - `packages/session/src/session.ts:365` (`replaceOps`)
 - `packages/session/src/session.ts:378` (`saveSessionLocked`)
@@ -379,7 +379,7 @@ Entry point: `apps/mcp/src/handlers.ts:588` (`memory_search`)
 
 - `apps/cli/src/head-protocol.ts:150` (`MCP_HEAD_VAR`)
 - `apps/cli/src/head-scope.ts:106` (`admitFor`)
-- `apps/cli/src/head-protocol.ts:598` (`SearchAnswer`)
+- `apps/cli/src/head-protocol.ts:592` (`SearchAnswer`)
 
 ## Curate run
 

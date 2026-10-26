@@ -246,9 +246,9 @@ sequenceDiagram
 
 `V2->>V2`, policy: `sessionCommit` reads `memhtml.config.json` before it asks the server, so a malformed file fails with `ERR_STORE_CONFIG` on either path (`apps/cli/src/v2.ts:1114-1116`).
 
-`V2->>Client` and `Client->>Server`: `askHeadFor` posts `{ id, message, dropRefused }` to the commit route and waits up to `MEMHTML_COMMIT_DEADLINE_MS`, 60000 by default (`apps/cli/src/v2.ts:1117-1126`, `apps/cli/src/head-protocol.ts:379-382`). The client dials the store's socket, and a failure before the connection completes means no server (`apps/cli/src/head-client.ts:21-25`, `apps/cli/src/head-client.ts:147-219`).
+`V2->>Client` and `Client->>Server`: `askHeadFor` posts `{ id, message, dropRefused }` to the commit route and waits up to `MEMHTML_COMMIT_DEADLINE_MS`, 60000 by default (`apps/cli/src/v2.ts:1117-1126`, `apps/cli/src/head-protocol.ts:373-376`). The client dials the store's socket, and a failure before the connection completes means no server (`apps/cli/src/head-client.ts:21-25`, `apps/cli/src/head-client.ts:147-219`).
 
-The first `Server->>Server`: the server runs one commit or rebase at a time and declines `busy` after a 20 s wait (`apps/cli/src/head-server.ts:1232-1241`, `apps/cli/src/head-protocol.ts:390`). `serveCommit` reads the policy per request, declines a session on another ref or one whose log doesn't read, and builds the version at the session's base from what it holds (`apps/cli/src/head-server.ts:1263-1276`, `apps/cli/src/head-server.ts:1243-1261`, `apps/cli/src/head-server.ts:1145-1171`).
+The first `Server->>Server`: the server runs one commit or rebase at a time and declines `busy` after a 20 s wait (`apps/cli/src/head-server.ts:1232-1241`, `apps/cli/src/head-protocol.ts:384`). `serveCommit` reads the policy per request, declines a session on another ref or one whose log doesn't read, and builds the version at the session's base from what it holds (`apps/cli/src/head-server.ts:1263-1276`, `apps/cli/src/head-server.ts:1243-1261`, `apps/cli/src/head-server.ts:1145-1171`).
 
 `Server->>Commit`: the server runs `commitOverHead` with an `afterCommit` hook (`apps/cli/src/head-server.ts:1277-1284`). `commitOverHead` calls `commitSession`, repeats it with the refused ops dropped under `--drop-refused`, and writes the new commit's snapshot on `committed` (`apps/cli/src/v2.ts:944-996`).
 

@@ -186,8 +186,8 @@ The session commands resolve the root themselves and never build `layerApp`, bec
 `session commit` lands the log as one commit.
 
 1. `sessionCommit` reads the policy before it asks the server, so a malformed `memhtml.config.json` fails with `ERR_STORE_CONFIG` on either path `apps/cli/src/v2.ts:1114-1116`.
-2. It posts `{ id, message, dropRefused }` to `/v1/commit` and waits for the answer up to `MEMHTML_COMMIT_DEADLINE_MS`, 60000 by default `apps/cli/src/v2.ts:1117-1126`, `apps/cli/src/head-protocol.ts:379-382`.
-3. The server runs one commit or rebase at a time and declines `busy` after a 20 s wait `apps/cli/src/head-server.ts:1232-1241`, `apps/cli/src/head-protocol.ts:390`. It reads the policy per request, declines a session on another ref or one whose log doesn't read, builds the version at the session's base, and runs `commitOverHead` `apps/cli/src/head-server.ts:1243-1290`.
+2. It posts `{ id, message, dropRefused }` to `/v1/commit` and waits for the answer up to `MEMHTML_COMMIT_DEADLINE_MS`, 60000 by default `apps/cli/src/v2.ts:1117-1126`, `apps/cli/src/head-protocol.ts:373-376`.
+3. The server runs one commit or rebase at a time and declines `busy` after a 20 s wait `apps/cli/src/head-server.ts:1232-1241`, `apps/cli/src/head-protocol.ts:384`. It reads the policy per request, declines a session on another ref or one whose log doesn't read, builds the version at the session's base, and runs `commitOverHead` `apps/cli/src/head-server.ts:1243-1290`.
 4. A served answer comes back with `via: "server"` `apps/cli/src/v2.ts:1127-1135`.
 5. A decline, a 4xx, or no server sends the commit to the local path. A 5xx or a lost answer fails with `ERR_STORAGE` and isn't retried locally, because the ref may already have moved `apps/cli/src/v2.ts:1039-1077`, `apps/cli/src/v2.ts:1136-1139`.
 6. Locally, the CLI resumes the session, loads the head at its base, and runs the same `commitOverHead` `apps/cli/src/v2.ts:1141-1150`.
