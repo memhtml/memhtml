@@ -132,6 +132,38 @@ describe("the stale listings publish removes", () => {
     expect(staleListings(tracked, generated)).toEqual([])
   })
 
+  it("keeps a listing whose directory holds a tracked record the rows do not list", () => {
+    /**
+     * The rows can be behind the tree: a pull the index has not caught up with, an interrupted
+     * rebuild, or a record that no longer parses. A tracked record keeps its directory's listing and
+     * every ancestor's, whatever the rows say.
+     */
+    const tracked = [
+      ...generatedPaths,
+      "resources/new-area/index.html",
+      "resources/new-area/b.html",
+      "projects/index.html",
+      "projects/acme-widget/index.html",
+      "projects/acme-widget/tasks/index.html",
+      "projects/acme-widget/tasks/c.html"
+    ]
+    expect(staleListings(tracked, generated)).toEqual([])
+  })
+
+  it("counts only a path the indexer would read as a record", () => {
+    // A placeholder, a note, and another listing are tracked files, and none of them is a record.
+    const tracked = [
+      "resources/old/index.html",
+      "resources/old/.gitkeep",
+      "resources/old/notes.txt",
+      "resources/old/deep/index.html"
+    ]
+    expect(staleListings(tracked, generated)).toEqual([
+      "resources/old/deep/index.html",
+      "resources/old/index.html"
+    ])
+  })
+
   it("names each path once, in path order", () => {
     // `git ls-files` repeats an unmerged path once per stage.
     const tracked = ["resources/b/index.html", "resources/a/index.html", "resources/b/index.html"]

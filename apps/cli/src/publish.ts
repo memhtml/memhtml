@@ -45,8 +45,8 @@ export interface PublishReport {
   readonly written: number
   readonly paths: ReadonlyArray<string>
   /**
-   * Tracked listings under a bucket that the generator no longer produces, because their directory
-   * holds no record at any depth. Removed with `git rm` in the same commit. Path-ordered.
+   * Tracked listings under a bucket that the generator no longer produces and whose directory holds
+   * no tracked record at any depth. Removed with `git rm` in the same commit. Path-ordered.
    */
   readonly removed: ReadonlyArray<string>
   /** The commit, or `null` when nothing changed. */
