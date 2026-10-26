@@ -423,7 +423,7 @@ export const slugifyStem = (title: string): string => {
 }
 ```
 
-The filename stem a new record takes from its title, which `memoryPathFor` and both collision loops use (`packages/contracts/src/paths.ts:200`, `packages/store/src/store.ts:460`, `apps/cli/src/v2.ts:338`). It kebab-cases as `slugify` does, and a result longer than 80 is cut at its last hyphen at or before 80 when that leaves at least `SLUG_MIN_WORD_CUT` (60) characters, so it ends on a whole word, and at 80 otherwise (`cutAtWord` at `packages/contracts/src/slug.ts:24-34`). It equals `slugify` for every title whose slug fits the budget. `withCollisionOrdinal` cuts its stem by the same rule to make room for a `-N` suffix. A stem is computed only when a record is minted, and the path is the record's id from then on, so the rule decides new filenames and never moves an existing file.
+The filename stem a new record takes from its title, which `memoryPathFor` and both collision loops use (`packages/contracts/src/paths.ts:200`, `packages/store/src/store.ts:460`, `apps/cli/src/v2.ts:341`). It kebab-cases as `slugify` does, and a result longer than 80 is cut at its last hyphen at or before 80 when that leaves at least `SLUG_MIN_WORD_CUT` (60) characters, so it ends on a whole word, and at 80 otherwise (`cutAtWord` at `packages/contracts/src/slug.ts:24-34`). It equals `slugify` for every title whose slug fits the budget. `withCollisionOrdinal` cuts its stem by the same rule to make room for a `-N` suffix. A stem is computed only when a record is minted, and the path is the record's id from then on, so the rule decides new filenames and never moves an existing file.
 
 `packages/contracts/src/slug.ts:82-86`, 2 importer files
 

@@ -41,7 +41,9 @@ const strictCharter = async (): Promise<string> =>
  * Mutation (2026-10-18): `{{refusedTypesRule}}` deleted from `charter.md` -> "requires every put to
  * name its subject ..." (the strict store's charter no longer names the two types); the
  * `{{placementQuota}}` replace dropped from `renderCharter` -> "fills every placeholder from the
- * store's policy" (the placeholder reaches the model).
+ * store's policy" (the placeholder reaches the model). Mutation (2026-10-26): rule 2 put back to
+ * "giving one a missing entity (rule 4) is the one edit they take" -> "lets a people record or a
+ * task take a label and an edge repair as its only edits".
  */
 describe("the charter", () => {
   it("loads through the effect and matches the file on disk", async () => {
@@ -68,6 +70,15 @@ describe("the charter", () => {
       "Budget discipline"
     ]
     for (const [at, subject] of subjects.entries()) expect(rules[at], subject).toContain(subject)
+  })
+
+  it("lets a people record or a task take a label and an edge repair as its only edits", async () => {
+    const text = await Effect.runPromise(CURATOR_CHARTER)
+    const rules = text.split(/^\d+\. /m).slice(1)
+    const protectedRule = rules[1] ?? ""
+    expect(protectedRule).toContain("giving one a missing entity (rule 4)")
+    expect(protectedRule).toContain("repairing a dangling edge it carries (rule 8)")
+    expect(protectedRule).toContain("are the only edits they take")
   })
 
   it("makes memory bodies data rather than instructions", async () => {

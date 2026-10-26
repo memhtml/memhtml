@@ -1,7 +1,7 @@
 import { access, appendFile } from "node:fs/promises"
 import { join } from "node:path"
 
-import type { HeadView, OverlayOp, WriteBarPolicy } from "@memhtml/contracts"
+import { type HeadView, type OverlayOp, pathToHref, type WriteBarPolicy } from "@memhtml/contracts"
 import {
   DirtyTree,
   InvalidMemory,
@@ -27,6 +27,7 @@ import {
 } from "@memhtml/head"
 import { renderTemplate } from "@memhtml/html"
 import {
+  afterDroppedVacates,
   appendOps,
   type CommitOutcome,
   type CommitScope,
@@ -35,6 +36,7 @@ import {
   LOG_MOVED,
   landOnRef,
   makePlumbing,
+  missingRepoints,
   pruneSessions,
   rebaseSession,
   replaceOps,
@@ -45,6 +47,7 @@ import {
   sessionStateFile,
   startSession,
   touchedPaths,
+  type VacateFollower,
   type Violation,
   validateOps,
   withRepoints
@@ -388,7 +391,7 @@ const describeViolation = (violation: Violation): string => {
     case "duplicate":
       return `${violation.path}: duplicate of ${violation.existing}, which already holds this article; search before writing and skip it, or link to ${violation.existing}`
     case "claim-edit":
-      return `${violation.path}: an active record already holds this path with a different article; a record's claim is never edited in place, so write the new fact under its own title (and link it with memhtml-supersedes when it replaces the old one)`
+      return `${violation.path}: an active record already holds this path with a different article; a record's claim is never edited in place, so write the new fact under its own title (and link it with memhtml-supersedes when it replaces the old one: to the old path, or to /archive/<YYYY>/<the old path> when the same batch archives it)`
     case "write-bar":
       return `${violation.path}: below the write bar: ${violation.reasons.join("; ")}`
   }
@@ -845,7 +848,8 @@ const appendRefusal = (operation: string): string | null =>
 
 /**
  * The half of `session exec` that follows the head: overlay the session's ops on `base`, run the
- * script over that view, harvest, judge the log plus the harvest against `base`, and append the
+ * script over that view, harvest, complete the harvest's archives and moves with the edge repoints
+ * they need ({@link withRepoints}), judge the log plus the harvest against `base`, and append the
  * harvest when it is clean. The CLI calls it with the version it loaded and the head server with the
  * version it holds (`head-server.ts`, `/v1/exec`), so the two answer with one function and cannot
  * drift; `runtime` is the only difference, and it changes where the script runs, never what the run
@@ -886,8 +890,12 @@ export const execOverHead = (input: {
       scope,
       ...input.runtime
     })
-    const harvested = new Set(report.ops.flatMap(touchedPaths))
-    const violations = validateOps(input.base, [...session.ops, ...report.ops], {
+    // A file the script archived or moved has left its path, so every edge a live record still
+    // carries to that path is repointed to where the record went, as the curator's `exec` completes
+    // its own harvest; an edge the script repointed itself stays as it wrote it.
+    const ops = withRepoints(view, report.ops, scope)
+    const harvested = new Set(ops.flatMap(touchedPaths))
+    const violations = validateOps(input.base, [...session.ops, ...ops], {
       scope,
       writeBar: input.writeBar
     })
@@ -901,8 +909,8 @@ export const execOverHead = (input: {
     const blocked = blocking.map(describeViolation)
     let next: Session = session
     let appended = 0
-    if (clean && report.ops.length > 0) {
-      const outcome = yield* appendOps(session, report.ops).pipe(
+    if (clean && ops.length > 0) {
+      const outcome = yield* appendOps(session, ops).pipe(
         Effect.map((written) => ({ written, refusal: null })),
         Effect.catchTag("StorageFailure", (failure) => {
           const refusal = appendRefusal(failure.operation)
@@ -913,7 +921,7 @@ export const execOverHead = (input: {
       )
       if (outcome.written !== null) {
         next = outcome.written
-        appended = report.ops.length
+        appended = ops.length
       } else {
         blocked.push(outcome.refusal)
       }
@@ -935,8 +943,12 @@ export const execOverHead = (input: {
       durationMs: report.durationMs,
       timeoutMs: report.timeoutMs,
       timedOut: report.timedOut,
-      /** Ops the harvester produced from the tree the script left. */
-      ops: report.ops.length,
+      /**
+       * Ops the harvest carries: what the harvester made of the tree the script left, plus an
+       * `unlink` and a `link` for each edge a live record carries to a path an archive or a move
+       * vacated ({@link withRepoints}).
+       */
+      ops: ops.length,
       /**
        * How many of those were appended to the log: all of them on exit 0 with no blocking
        * violation and a log nobody else changed meanwhile, none otherwise.
@@ -944,7 +956,7 @@ export const execOverHead = (input: {
       appended,
       /** The log's length after this call. */
       opsTotal: next.ops.length,
-      harvested: report.ops.map(opSummary),
+      harvested: ops.map(opSummary),
       rejected: report.rejected,
       /** Every violation over the session's ops plus the harvest, judged against the base. */
       violations,
@@ -1070,9 +1082,9 @@ export const sessionExec = (input: {
   })
 
 /**
- * The half of `session commit` that follows the head: the commit algorithm against `base`, the
- * version at the session's base, with `--drop-refused`'s rounds, and the new commit's snapshot. The
- * CLI calls it with the version it loaded and the head server with the version it holds
+ * The half of `session commit` that follows the head: the repoints the log's archives and moves
+ * lack against `base` appended ({@link missingRepoints}), the commit algorithm against `base`, the
+ * version at the session's base, with `--drop-refused`'s rounds, and the new commit's snapshot. The CLI calls it with the version it loaded and the head server with the version it holds
  * (`head-server.ts`, `/v1/commit`), so the two answer with one function and cannot drift.
  * `afterCommit` is the only difference: it writes the snapshot of a `committed` outcome, which the CLI
  * builds from `base` by delta ({@link snapshotAfterCommit}, the default) and the server builds from
@@ -1100,34 +1112,90 @@ export const commitOverHead = (input: {
   Effect.gen(function* () {
     let session = input.session
     const scope = sessionScopeOf(session.ref)
-    const dropped: Array<DroppedOp> = []
-    let outcome: CommitOutcome =
-      session.ops.length === 0 && session.pending === undefined
-        ? { kind: "refused", violations: [] }
-        : yield* commitSession({
-            session,
-            head: input.base,
-            message: input.message,
-            scope,
-            writeBar: input.writeBar
-          })
-    // Each round drops what the refusal names and commits again. An op that only failed because
-    // an op it depended on was dropped (a link from a dropped put) is named by the next round, so
-    // the loop ends at a clean log, an empty one, or a refusal no op carries (the batch cap).
-    while (input.dropRefused === true && outcome.kind === "refused") {
-      const round = opsToDrop(session.ops, outcome.violations)
-      if (round.drop.length === 0) break
-      dropped.push(...round.drop)
-      session = yield* replaceOps(session, round.keep)
-      yield* recordDropped(session.root, session.id, round.drop)
-      if (session.ops.length === 0) break
-      outcome = yield* commitSession({
-        session,
+    const commit = (current: Session) =>
+      commitSession({
+        session: current,
         head: input.base,
         message: input.message,
         scope,
         writeBar: input.writeBar
       })
+    // An archive or a move was completed with its repoints against the base it was appended over.
+    // A rebase since (the caller's, or the server's own rounds) can bring a record that gained an
+    // edge to the vacated path, and a log written before the completion existed carries none, so
+    // what the log lacks against the version it lands on is appended first. Judged before it is
+    // written: pairs that would take a log within the cap over it are not written, and the archive
+    // or move they belong to is refused by name, so `--drop-refused` can take it out and land the
+    // rest. A log carrying `pending` is left to the commit, which settles it first.
+    let outcome: CommitOutcome | null = null
+    if (session.ops.length === 0 && session.pending === undefined) {
+      outcome = { kind: "refused", violations: [] }
+    } else if (session.pending === undefined) {
+      const completion = missingRepoints(input.base, session.ops, scope)
+      if (completion.overflow.length > 0) {
+        outcome = { kind: "refused", violations: completion.overflow }
+      } else if (completion.ops.length > 0) {
+        session = yield* appendOps(session, completion.ops)
+      }
+    }
+    if (outcome === null) outcome = yield* commit(session)
+    const dropped: Array<DroppedOp> = []
+    // Each round drops what the refusal names and commits again. An op that only failed because
+    // an op it depended on was dropped (a link from a dropped put) is named by the next round, so
+    // the loop ends at a clean log, an empty one, or a refusal no op carries (the batch cap). A
+    // dropped archive or move always takes its own repoint pairs with it, so no holder loses its
+    // other ops to them; when nothing holds its destination and the record is still live, the ops
+    // kept at a dropped move's destination are made at the record's path and the edges kept ops
+    // aim at the destination are aimed back at it (`afterDroppedVacates`). A drop on a holder's
+    // path takes the holder's repoint with its other ops, so the kept ops are completed again from
+    // `base` and the pairs that come back are not reported as dropped; a round that would leave the
+    // log as it was ends the loop.
+    while (input.dropRefused === true && outcome.kind === "refused") {
+      const round = opsToDrop(session.ops, outcome.violations)
+      if (round.drop.length === 0) break
+      const settled = afterDroppedVacates(input.base, round.keep, round.ops)
+      const again = missingRepoints(input.base, settled.keep, scope)
+      const next = [...settled.keep, ...again.ops]
+      if (JSON.stringify(next) === JSON.stringify(session.ops)) break
+      // A repoint the completion makes again is not reported, including one the round dropped at a
+      // dropped move's destination that comes back at the path the record still has.
+      const pairKey = (op: OverlayOp | undefined, at: (path: string) => string) =>
+        op?.kind === "link" || op?.kind === "unlink"
+          ? `${op.kind}\n${at(normalizePath(op.path))}\n${op.rel}\n${op.href}`
+          : undefined
+      const back = new Map<string, number>()
+      for (const op of again.ops) {
+        const key = pairKey(op, (path) => path)
+        if (key !== undefined) back.set(key, (back.get(key) ?? 0) + 1)
+      }
+      const reasonsOf = (vacate: OverlayOp): ReadonlyArray<string> =>
+        round.drop[round.ops.indexOf(vacate)]?.reasons ?? []
+      const gone: Array<DroppedOp> = []
+      round.drop.forEach((entry, at) => {
+        const op = round.ops[at]
+        const key = pairKey(op, (path) => settled.homes.get(path) ?? path)
+        const count = key === undefined ? 0 : (back.get(key) ?? 0)
+        if (key !== undefined && count > 0) {
+          back.set(key, count - 1)
+          return
+        }
+        gone.push(
+          op === undefined || (op.kind !== "archive" && op.kind !== "move")
+            ? entry
+            : { ...entry, reasons: [...entry.reasons, ...followed(op, settled)] }
+        )
+      })
+      for (const follower of settled.removed) {
+        gone.push({ kind: follower.kind, path: follower.path, reasons: reasonsOf(follower.vacate) })
+      }
+      dropped.push(...gone)
+      session = yield* replaceOps(session, next)
+      yield* recordDropped(session.root, session.id, gone)
+      if (session.ops.length === 0) break
+      outcome =
+        again.overflow.length > 0
+          ? { kind: "refused", violations: again.overflow }
+          : yield* commit(session)
     }
     const afterCommit =
       input.afterCommit ?? ((sha: string) => snapshotAfterCommit(session.root, sha, input.base))
@@ -1320,7 +1388,12 @@ export interface DroppedOp {
 const opsToDrop = (
   ops: ReadonlyArray<OverlayOp>,
   violations: ReadonlyArray<Violation>
-): { readonly drop: ReadonlyArray<DroppedOp>; readonly keep: ReadonlyArray<OverlayOp> } => {
+): {
+  readonly drop: ReadonlyArray<DroppedOp>
+  /** The dropped ops themselves, one for each entry of `drop`, in its order. */
+  readonly ops: ReadonlyArray<OverlayOp>
+  readonly keep: ReadonlyArray<OverlayOp>
+} => {
   const reasons = new Map<string, Array<string>>()
   for (const violation of violations) {
     if (violation.kind === "batch-cap") continue
@@ -1329,13 +1402,49 @@ const opsToDrop = (
     reasons.set(violation.path, list)
   }
   const drop: Array<DroppedOp> = []
+  const dropped: Array<OverlayOp> = []
   const keep: Array<OverlayOp> = []
   for (const op of ops) {
     const hit = touchedPaths(op).find((path) => reasons.has(path))
     if (hit === undefined) keep.push(op)
-    else drop.push({ kind: op.kind, path: op.path, reasons: reasons.get(hit) ?? [] })
+    else {
+      drop.push({ kind: op.kind, path: op.path, reasons: reasons.get(hit) ?? [] })
+      dropped.push(op)
+    }
   }
-  return { drop, keep }
+  return { drop, ops: dropped, keep }
+}
+
+/**
+ * The reasons a dropped archive or move gains for the kept ops {@link afterDroppedVacates} rewrote
+ * for it: the ops at a move's destination now made at the record's path, and the edges aimed back
+ * at the record's path, which is the op's source or, for a chain the round dropped whole, where the
+ * chain began. Its own pairs are listed in `dropped` under its reasons.
+ */
+const followed = (
+  vacate: Extract<OverlayOp, { readonly kind: "archive" | "move" }>,
+  settled: {
+    readonly retargeted: ReadonlyArray<VacateFollower>
+    readonly returned: ReadonlyArray<VacateFollower>
+  }
+): ReadonlyArray<string> => {
+  const mine = (list: ReadonlyArray<VacateFollower>) => list.filter((one) => one.vacate === vacate)
+  // The record's path: the vacate's source, or where a chain of dropped ops on it began.
+  const home = [...mine(settled.returned), ...mine(settled.retargeted)][0]?.home ?? vacate.path
+  const returned = mine(settled.returned).map((one) => `${one.kind} ${one.detail}`)
+  const aimed = mine(settled.retargeted).map((one) => `${one.path} ${one.detail}`)
+  return [
+    ...(returned.length === 0
+      ? []
+      : [
+          `the ops kept at ${vacate.to} are made at ${home}, where the record still is: ${returned.join(", ")}`
+        ]),
+    ...(aimed.length === 0
+      ? []
+      : [
+          `the edges kept ops aimed at ${pathToHref(vacate.to)} now name ${pathToHref(home)}, where the record still is: ${aimed.join(", ")}`
+        ])
+  ]
 }
 
 /**
@@ -1834,7 +1943,10 @@ export const curateMerge = (input: {
       })
       // A move on the branch repointed the edges its base held; `into` may have gained one to the
       // old path since, so the replay completes the repoints against the tip it lands on.
-      session = yield* appendOps(session, withRepoints(head.view, replay.reconstruction.ops))
+      session = yield* appendOps(
+        session,
+        withRepoints(head.view, replay.reconstruction.ops, MERGE_SCOPE)
+      )
       const violations = validateOps(head.view, session.ops, {
         scope: MERGE_SCOPE,
         batchCap: MERGE_BATCH_CAP,
