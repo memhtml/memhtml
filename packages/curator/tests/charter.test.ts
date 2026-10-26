@@ -43,7 +43,7 @@ const strictCharter = async (): Promise<string> =>
  * `{{placementQuota}}` replace dropped from `renderCharter` -> "fills every placeholder from the
  * store's policy" (the placeholder reaches the model). Mutation (2026-10-26): rule 2 put back to
  * "giving one a missing entity (rule 4) is the one edit they take" -> "lets a people record or a
- * task take a label and an edge repair, and nothing else".
+ * task take a label and an edge repair as its only edits".
  */
 describe("the charter", () => {
   it("loads through the effect and matches the file on disk", async () => {
@@ -72,7 +72,7 @@ describe("the charter", () => {
     for (const [at, subject] of subjects.entries()) expect(rules[at], subject).toContain(subject)
   })
 
-  it("lets a people record or a task take a label and an edge repair, and nothing else", async () => {
+  it("lets a people record or a task take a label and an edge repair as its only edits", async () => {
     const text = await Effect.runPromise(CURATOR_CHARTER)
     const rules = text.split(/^\d+\. /m).slice(1)
     const protectedRule = rules[1] ?? ""
@@ -124,6 +124,18 @@ describe("the charter", () => {
     expect(integrity).toContain("`successor`")
     expect(text).toContain("Never write a review, calibration, or run-summary record")
     expect(text).toContain("never write a memory about this run")
+  })
+
+  it("archives the briefing's moot detected tasks and leaves every other task alone", async () => {
+    const text = await Effect.runPromise(CURATOR_CHARTER)
+    expect(text).toContain("`mootDetectedTasks` holds")
+    const rules = text.split(/^\d+\. /m).slice(1)
+    // The task protection names its one exception, and the rule that makes it does the archive.
+    const protection = rules.find((rule) => rule.includes("resources/people/"))
+    expect(protection).toContain("`mootDetectedTasks`")
+    const resolution = rules.find((rule) => rule.startsWith("Entity resolution"))
+    expect(resolution).toContain("`archive` every task in the briefing's `mootDetectedTasks` list")
+    expect(resolution).toContain("no other task")
   })
 
   it("gives placement a quota over the inbox list and keeps it behind the protections", async () => {

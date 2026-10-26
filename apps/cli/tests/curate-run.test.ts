@@ -5,9 +5,9 @@ import { dirname, join } from "node:path"
 
 import { DEFAULT_WRITE_BAR, type MemoryRecord } from "@memhtml/contracts"
 import { archivePathFor } from "@memhtml/contracts/paths"
-import { CURATOR_MODEL_VAR } from "@memhtml/curator"
+import { briefingFromView, CURATOR_MODEL_VAR } from "@memhtml/curator"
 import { frameKeyOf } from "@memhtml/domain"
-import { versionFromRecords } from "@memhtml/head"
+import { versionFromRecords, withOverlay } from "@memhtml/head"
 import { contentHash, parseMemory, renderTemplate } from "@memhtml/html"
 import { PROXY_BASE_URL_VAR } from "@memhtml/llm"
 import {
@@ -917,6 +917,60 @@ describe("land completes an archive's repoints against the version it commits ov
       readonly ops: ReadonlyArray<unknown>
     }
     expect(log.ops).toHaveLength(200)
+  }, 120_000)
+})
+
+/**
+ * Closing a moot detected task through the binder: the briefing over the head names it, and
+ * `archive`, the one session op that retires a task, lands it under the strict bar and the
+ * curator's scope, after which the briefing over head plus overlay no longer lists it.
+ */
+describe("the propose tool closes a moot detected task", () => {
+  const TASK = "areas/inbox/tasks/det-0123456789ab-confirm-whether-work-a-and-work-b-are-one.html"
+  const FACT = "areas/inbox/a-fact.html"
+  const task = renderTemplate({
+    title: "Confirm whether work:a and work:b are one work",
+    claim: 'confirm: are "work:a" and "work:b" the same work?',
+    memoryType: "task",
+    taskStatus: "todo",
+    tags: ["detected", "entity-resolution"],
+    entities: ["work:a", "work:b"],
+    at: "2031-01-01T00:00:00Z"
+  })
+  const fact = renderTemplate({
+    title: "A fact",
+    claim: "The acme widget ships with two fasteners.",
+    memoryType: "semantic",
+    entities: ["work:a"],
+    at: "2031-01-01T00:00:00Z"
+  })
+
+  it("archives the task the briefing names, and the overlay commits clean", async () => {
+    const head = headOver(
+      await Effect.runPromise(Effect.all([recordFrom(TASK, task), recordFrom(FACT, fact)]))
+    )
+    expect(
+      briefingFromView(head.view).mootDetectedTasks.map(({ path, reason }) => ({ path, reason }))
+    ).toEqual([{ path: TASK, reason: "work:b has no claim outside detected tasks" }])
+    const overlay = memoryOverlay()
+    const tools = bindTools({
+      head,
+      overlay,
+      ref: "refs/heads/curate/2031-01-02",
+      writeBar: STRICT_POLICY.writeBar
+    })
+    const to = `archive/2031/${TASK}`
+    expect(await tools.propose([{ kind: "archive", path: TASK, to, html: task }])).toEqual({
+      appended: 1,
+      violations: []
+    })
+    expect(await tools.read(TASK)).toBeNull()
+    expect((await tools.read(to))?.archived).toBe(true)
+    expect(
+      validateOps(head.view, overlay.ops(), { scope: "curate", writeBar: STRICT_POLICY.writeBar })
+    ).toEqual([])
+    const after = await Effect.runPromise(withOverlay(head.view, overlay.ops()))
+    expect(briefingFromView(after).mootDetectedTasks).toEqual([])
   }, 120_000)
 })
 

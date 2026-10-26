@@ -251,7 +251,13 @@ export const NeighborsRequest = Schema.Struct({
   lines: Schema.Array(SessionPutOpSchema),
   at: Schema.String,
   /** The session is run-bound (`MEMHTML_SESSION`): `duplicate` and `claim-edit` block too. Absent is false. */
-  runBound: Schema.optionalKey(Schema.Boolean)
+  runBound: Schema.optionalKey(Schema.Boolean),
+  /**
+   * The client reads `placements` from the answer ({@link NeighborsAnswer}). Always sent by this
+   * client: a server that predates the key decodes requests strictly, so it refuses the request
+   * with a 400 before it places, judges, or embeds anything, and the client places the puts itself.
+   */
+  placements: Schema.optionalKey(Schema.Literal(true))
 })
 export type NeighborsRequest = typeof NeighborsRequest.Type
 
@@ -627,13 +633,23 @@ const ViolationSchema = Schema.Union([
 
 /**
  * `POST /v1/neighbors`: `preparePuts`'s answer, the ops to append, the puts as rendered and placed,
+ * each put's placement (its path and the collision ordinal it took, `null` for an explicit path),
  * their neighbors, every violation, the blocking ones, and the vector arm's report, with the version
  * it was computed over.
+ *
+ * `placements` is required, and must stay required. A server whose answer lacks it was built before
+ * filename stems took the word-boundary cut (`slugifyStem`), so the paths in its `puts` were placed
+ * by the plain 80-character cut and would mint a stem that ends inside a word. Such an answer does
+ * not decode, the client counts it as no answer, and places the puts itself by the current rule. The
+ * request's `placements` marker makes that server refuse sooner, before it computes anything.
  */
 export const NeighborsAnswer = Schema.Struct({
   appended: Schema.Array(OverlayOpSchema),
   puts: Schema.Array(
     Schema.Struct({ kind: Schema.Literal("put"), path: Schema.String, html: Schema.String })
+  ),
+  placements: Schema.Array(
+    Schema.Struct({ path: Schema.String, ordinal: Schema.NullOr(Schema.Finite) })
   ),
   neighbors: Schema.Array(
     Schema.Struct({ path: Schema.String, hits: Schema.Array(SearchHitSchema) })

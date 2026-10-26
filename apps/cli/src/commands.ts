@@ -1283,12 +1283,20 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         description:
           "Ask the head server on .memhtml/head.sock first (`memhtml head serve`), falling back to loading the head here when no server accepts within 100 ms or answers within 10 s; `--no-server` always loads here. The placements, violations, and neighbors (label lines included, the vector arm run with the server's cache and embedder) are then computed by the server over the version at the session's base; the append always happens here. The payload's `head.source` is `server` when the server answered.",
         default: true
+      },
+      {
+        name: "dry-run",
+        type: "boolean",
+        description:
+          "Answer as the put would and append nothing: the same `paths`, `placements` (each put's `path` and the collision `ordinal` it took: 1 unsuffixed, 2 for `-2`, null for an explicit `path` used as given), neighbors, and violations, and the same refusal when a violation blocks, with `dryRun: true`, `appended: 0`, and the log untouched. Under $MEMHTML_SESSION with no log yet, no session is started: the answer is over the base that start would take, with an empty log. The answer holds for the session's base and log as they are; a put that lands first can take a path.",
+        default: false
       }
     ],
     responseTypes: ["session.appended"],
     examples: [
       "memhtml session put --id s1 --file ops.jsonl",
-      "memhtml session put --id s1 --file ops.jsonl --no-server"
+      "memhtml session put --id s1 --file ops.jsonl --no-server",
+      "memhtml session put --id s1 --file ops.jsonl --dry-run"
     ]
   },
   {
@@ -1485,6 +1493,63 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
     examples: [
       "memhtml head search 'vip drain' --limit 5",
       "memhtml head search 'vip drain' --no-server"
+    ]
+  },
+  /**
+   * Read-only like `head search`: it builds the version at HEAD, places one write over it the way
+   * `session put` places a write line, and writes nothing.
+   */
+  {
+    name: "path",
+    summary:
+      "Print the path a write with these fields would land at over the version at HEAD, and the collision ordinal it took. Reads no session: inside one, `session put --dry-run` answers over the session's base and its puts. Writes nothing.",
+    args: [],
+    flags: [
+      {
+        name: "title",
+        type: "string",
+        description:
+          "The write's title, as a write line gives it. Its slug is the filename stem: kebab-case, at most 80 characters, a longer title cut at its last word boundary that keeps at least 60, else at 80.",
+        required: true
+      },
+      {
+        name: "type",
+        type: "string",
+        description:
+          "The memory type, as a write line gives it. `episodic` takes the `YYYYMMDD-` prefix of the current UTC day, `task` routes to `tasks/` under its workspace or the inbox, and `arc` to `areas/arcs/`, which only the `curate` scope writes.",
+        values: MEMORY_TYPES,
+        required: true
+      },
+      {
+        name: "workspace",
+        type: "string",
+        description: "Routes the write to projects/<slug>/, as a write line's `workspace` does."
+      },
+      {
+        name: "tag",
+        type: "string",
+        description:
+          "A tag, as a write line's `tags` holds one. Repeatable; the first non-blank one routes a semantic, procedural, or precedent write with no workspace to resources/<slug>/, except one that slugs to `people`, which no rule routes into, so that write falls to the inbox.",
+        repeatable: true
+      },
+      {
+        name: "path",
+        type: "string",
+        description:
+          "An explicit path, as a write line's `path`. A usable one is the answer as given, in canonical form, with `ordinal: null` and no suffix, and `occupied` says whether the head or --claimed already holds it (a put there is judged against that record rather than stepped past it). One that is not a usable memory path is ignored and the path derived, as a put derives it."
+      },
+      {
+        name: "claimed",
+        type: "string",
+        description:
+          "A file of paths pending elsewhere (another session's puts, a draft not written yet), one repo-relative memory path per line, blank lines skipped; `-` reads stdin. Each counts as taken, as a path the head holds does, so the answer steps past it. An unreadable file is ERR_PATH_NOT_FOUND and a line that is not a usable memory path is ERR_INVALID_FLAG naming the line, both at exit 2 before anything opens."
+      }
+    ],
+    responseTypes: ["memory.path"],
+    examples: [
+      "memhtml path --title 'Checkout retries' --type semantic",
+      "memhtml path --title 'Checkout retries' --type procedural --workspace payments --claimed claimed.txt",
+      "memhtml path --title 'Checkout retries' --type semantic --path areas/inbox/checkout-retries.html"
     ]
   },
   /**
