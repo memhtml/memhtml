@@ -64,7 +64,7 @@ These are the codes a tool can reach, and the suggestions each one carries (`app
 | `ERR_STORE_CONFIG`               | report to the operator, who has to fix `memhtml.config.json`; keep working with `memory_search`, `memory_read`, and `memory_link`                       |
 | `ERR_INDEX_STALE`, `ERR_UNKNOWN` | none                                                                                                                                                    |
 
-Two suggestion texts don't fit every case they reach. The `ERR_INVALID_MEMORY` text says the store refused "at the render gate", but the same text follows a `body`/`article_html` refusal, a self-link, and a `trace_links` call with neither key. The `ERR_WRITE_CONFLICT` text says to retry the write, but a retry at the same occupied path conflicts again. `memory_correct` is the replacement (`apps/mcp/src/tools.ts:191-192`).
+One suggestion text doesn't fit every case it reaches. The `ERR_WRITE_CONFLICT` text says to retry the write, but a retry at the same occupied path conflicts again. `memory_correct` is the replacement (`apps/mcp/src/tools.ts:191-192`).
 
 `mcpSuggestionsFor` also has arms for `ERR_DUPLICATE_CONTENT`, `ERR_MODEL_UNAVAILABLE`, `ERR_DIRTY_TREE`, and `ERR_DISCRIMINATION_FAILED`. No tool or resource raises those codes at this tree. A duplicate is a successful dedupe, and an embedder or extractor failure degrades the call instead of failing it. Only the CLI's `curate merge` raises a dirty-tree refusal (`apps/cli/src/v2.ts:1741-1743`).
 
@@ -301,7 +301,7 @@ const MemoryArchive = Tool.make("memory_archive", {
 
 Soft-evicts a memory with a `git mv` into `archive/<YYYY>/` and the archive stamps. Nothing is deleted, and `git log --follow` reads straight through the move.
 
-**Input:** `path`, the memory to evict, and `reason`, both required. `reason` is recorded only in the commit subject, after the path (`packages/store/src/store.ts:1166`). An archive path isn't refused. Archiving one again nests it under a second `archive/<YYYY>/`.
+**Input:** `path`, the memory to evict, and `reason`, both required. `reason` is recorded only in the commit subject, after the path (`packages/store/src/store.ts:1166`). A `path` under `archive/`, or one that isn't a usable memory path, such as a `./` or `../` spelling of an archived file, is refused before the store reads it, because archiving it again would nest it under `archive/<YYYY>/archive/` (`archiveSourceRefusal` at `packages/store/src/store.ts:563`).
 
 No store policy closes this tool, because it edits a record that already exists.
 
@@ -309,6 +309,7 @@ No store policy closes this tool, because it edits a record that already exists.
 
 **Failure:**
 
+- `ERR_INVALID_MEMORY` when `path` is under `archive/` or isn't a usable memory path. No journal opens, so nothing moves and a change staged on the path stays staged (`packages/store/src/store.ts:1176`).
 - `ERR_PATH_NOT_FOUND` when no file is at `path`, found before anything is written (`packages/store/src/store.ts:1151-1153`).
 - `ERR_GIT` or `ERR_STORAGE` from the move or the commit. The journal, `compensated`, puts the file back at its original path (`packages/store/src/store.ts:1155-1169`).
 - `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` from `reindex`, after the archive commit has landed (`apps/cli/src/operations.ts:1118`).
@@ -359,7 +360,7 @@ The store policy can close this tool, because it creates a record (see [The stor
 **Failure:**
 
 - `ERR_SESSION_BOUND`, `ERR_V1_DOOR_CLOSED`, or `ERR_STORE_CONFIG` from `guardV1Door`, before anything else runs (`apps/mcp/src/handlers.ts:658`).
-- `ERR_INVALID_MEMORY` before anything is written, for both or neither of `body` and `article_html`, a target that doesn't parse, or markup the render gate, `renderChecked`, refuses (`packages/store/src/store.ts:1062`).
+- `ERR_INVALID_MEMORY` before anything is written, for both or neither of `body` and `article_html`, a target that doesn't parse, a `target_path` under `archive/` or not a usable memory path (`packages/store/src/store.ts:1081`), or markup the render gate, `renderChecked`, refuses (`packages/store/src/store.ts:1062`).
 - `ERR_PATH_NOT_FOUND` before anything is written, when the first `readMemory` finds no file at `target_path` (`apps/cli/src/operations.ts:1065`).
 - `ERR_GIT` or `ERR_STORAGE` from the move, the write, or the commit. The journal, `compensated`, puts the target back and removes the new file (`packages/store/src/store.ts:1100-1136`).
 - `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` from `reindex`, after the commit has landed (`apps/cli/src/operations.ts:1087`).

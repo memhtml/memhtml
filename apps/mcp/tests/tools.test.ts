@@ -119,6 +119,16 @@ describe("tool surface", () => {
     }
   })
 
+  it("names the archived-source refusal in the description of every tool that archives", () => {
+    // The refusal is decided before anything moves, and the description is the only text an agent
+    // reads before it calls, so a caller holding an archived path learns not to send it.
+    for (const name of ["memory_archive", "memory_correct"] as const) {
+      const description = MemhtmlToolkit.tools[name].description ?? ""
+      expect(description, name).toContain("already under archive/")
+      expect(description, name).toContain("ERR_INVALID_MEMORY")
+    }
+  })
+
   it("states the whole article_html contract in every authoring tool's description", () => {
     /**
      * `tools/list` publishes `description`, and it is the ONLY place an agent reads before it fills

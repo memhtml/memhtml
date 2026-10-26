@@ -104,7 +104,7 @@ export const mcpSuggestionsFor = (error: unknown): ReadonlyArray<string> => {
     case "InvalidMemory":
       return [
         "fix the violated constraint named above and call the same tool again",
-        "nothing was written and no commit was made — the store refused at the render gate"
+        "nothing was written and no commit was made: the store refused before it changed anything"
       ]
     case "ModelUnavailable":
       return [
