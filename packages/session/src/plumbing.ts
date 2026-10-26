@@ -24,11 +24,18 @@ interface ProcessResult {
  * Fixed environment for every git call. `GIT_TERMINAL_PROMPT=0` keeps a credential prompt from
  * hanging a headless process, `GIT_OPTIONAL_LOCKS=0` stops a read from taking the index lock, and
  * `LC_ALL=C` pins the message locale so the raced-ref classification reads the same words everywhere.
+ * The four `*_PATHSPECS` variables are pinned to `0`, git's default, as the store's git service pins
+ * them: each changes how every pathspec matches, and `dirtyPaths` hands its paths to git as
+ * pathspecs spelled for that default.
  */
 const GIT_ENV: Readonly<Record<string, string>> = {
   GIT_TERMINAL_PROMPT: "0",
   GIT_OPTIONAL_LOCKS: "0",
-  LC_ALL: "C"
+  LC_ALL: "C",
+  GIT_LITERAL_PATHSPECS: "0",
+  GIT_NOGLOB_PATHSPECS: "0",
+  GIT_GLOB_PATHSPECS: "0",
+  GIT_ICASE_PATHSPECS: "0"
 }
 
 /**

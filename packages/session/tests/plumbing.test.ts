@@ -13,6 +13,7 @@ import { blobShaOf, commitFiles, git, makeRepo, memory, type Repo } from "./help
  * Mutation notes, one per guard, each run once with the change applied and the named test red:
  * - `updateRef`: drop the `cannot lock ref` branch (always fail) -> "classifies a moved ref as raced".
  * - `childEnv`: skip the `GIT_REPO_SELECTION_ENV` loop -> "ignores an ambient GIT_INDEX_FILE".
+ * - `GIT_ENV`: drop the four pathspec pins -> "matches each pathspec as git's default does".
  */
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect)
@@ -192,5 +193,52 @@ describe("the shared side", () => {
       )
     ).toEqual(["areas/inbox/a.html", "areas/inbox/new.html", "areas/inbox/staged.html"])
     expect(await run(plumbing.dirtyPaths([]))).toEqual([])
+  })
+})
+
+describe("the environment cannot change how a pathspec matches", () => {
+  /**
+   * `dirtyPaths` hands its paths to `git status` as pathspecs, and four variables change how every
+   * pathspec matches: `GIT_LITERAL_PATHSPECS` and `GIT_NOGLOB_PATHSPECS` turn `[` into a plain
+   * character, `GIT_GLOB_PATHSPECS` stops `*` from matching `/`, and `GIT_ICASE_PATHSPECS` folds
+   * case. The store's git service pins the same four, so a value inherited from the calling shell
+   * moves neither. Each case compares a call made with the variable set against the same call made
+   * with it unset, after checking the pathspec is one the variable would change.
+   */
+  it("matches each pathspec as git's default does, whatever the four variables say", async () => {
+    const { root } = await seeded()
+    for (const name of ["a[b].html", "ab.html"]) {
+      await writeFile(join(root, "areas/inbox", name), memory(name, `${name}.`), "utf8")
+    }
+    const dirty = (pathspec: string) => run(plumbingIn(root).dirtyPaths([pathspec]))
+
+    const cases = [
+      {
+        name: "GIT_LITERAL_PATHSPECS",
+        pathspec: "areas/inbox/a[b].html",
+        has: "areas/inbox/ab.html"
+      },
+      {
+        name: "GIT_NOGLOB_PATHSPECS",
+        pathspec: "areas/inbox/a[b].html",
+        has: "areas/inbox/ab.html"
+      },
+      { name: "GIT_GLOB_PATHSPECS", pathspec: "areas/*.html", has: "areas/inbox/ab.html" },
+      { name: "GIT_ICASE_PATHSPECS", pathspec: "AREAS/INBOX/AB.HTML", has: null }
+    ] as const
+    for (const { name, pathspec, has } of cases) {
+      const unset = await dirty(pathspec)
+      if (has === null) expect(unset, name).toEqual([])
+      else expect(unset, name).toContain(has)
+      const saved = process.env[name]
+      process.env[name] = "1"
+      try {
+        // Built after the variable is set, since `makePlumbing` snapshots the environment once.
+        expect(await dirty(pathspec), name).toEqual(unset)
+      } finally {
+        if (saved === undefined) delete process.env[name]
+        else process.env[name] = saved
+      }
+    }
   })
 })
