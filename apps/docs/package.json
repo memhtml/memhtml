@@ -15,13 +15,13 @@
     "lint": "biome check src tests astro.config.ts vitest.config.ts vitest.a11y.config.ts cspell.json --no-errors-on-unmatched && pnpm run spellcheck"
   },
   "dependencies": {
-    "@astrojs/markdown-satteri": "^0.4.4",
+    "@astrojs/markdown-satteri": "^0.4.5",
     "@astrojs/starlight": "^0.42.6",
-    "@expressive-code/plugin-collapsible-sections": "^0.44.2",
-    "@expressive-code/plugin-line-numbers": "^0.44.2",
+    "@expressive-code/plugin-collapsible-sections": "^0.44.3",
+    "@expressive-code/plugin-line-numbers": "^0.44.3",
     "@memhtml/cli": "workspace:*",
     "@tabler/icons-astro": "^3.49.0",
-    "astro": "^7.4.1",
+    "astro": "^7.4.2",
     "astro-d2": "^0.14.0",
     "astro-og-canvas": "^0.13.2",
     "canvaskit-wasm": "^0.42.0",
@@ -34,9 +34,9 @@
     "starlight-scroll-to-top": "^2.0.0"
   },
   "devDependencies": {
-    "@astrojs/check": "^0.9.11",
+    "@astrojs/check": "^0.9.12",
     "@axe-core/playwright": "^4.14.0",
-    "@biomejs/biome": "2.5.15",
+    "@biomejs/biome": "2.6.2",
     "@expo-google-fonts/tinos": "^0.4.2",
     "@types/hast": "^3.0.5",
     "@types/node": "26.6.5",
