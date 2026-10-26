@@ -1,5 +1,5 @@
 import { relClassFor } from "@memhtml/contracts/edges"
-import { normalizePath, paraBucketOf } from "@memhtml/contracts/paths"
+import { normalizePath, originalPathFor, paraBucketOf } from "@memhtml/contracts/paths"
 import { parseEntity } from "@memhtml/contracts/types"
 import { frameKeyOf } from "@memhtml/domain"
 import type { MemoryDoc } from "@memhtml/html"
@@ -368,11 +368,11 @@ export const authoredEdgesFor = (
     params: [path, edge.rel, edge.dstPath, relClassFor(edge.rel), contentHash, createdAt]
   }))
 
-/** The pre-archive path an archived file came from, for `files.origin_path`. */
-const originOf = (archivePath: string): string | null => {
-  const match = /^archive\/\d{4,}\/(.+)$/.exec(archivePath)
-  return match?.[1] ?? null
-}
+/**
+ * The pre-archive path an archived file came from, for `files.origin_path`: the archive mapping's
+ * own inverse, so a generation slot (`archive/<YYYY>.<n>/`) names its origin like a bare-year one.
+ */
+const originOf = (archivePath: string): string | null => originalPathFor(archivePath) ?? null
 
 const dedupe = (values: ReadonlyArray<string>): ReadonlyArray<string> => [...new Set(values)]
 

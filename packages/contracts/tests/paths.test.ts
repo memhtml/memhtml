@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest"
 
 import {
   ARCS_DIR,
+  archiveGenerationOf,
   archivePathFor,
+  archiveSlotFor,
   archiveYearOf,
   INBOX_DIR,
   isArchivePath,
@@ -131,6 +133,107 @@ describe("archive path algebra", () => {
         expect(isValidMemoryPath(archived)).toBe(true)
       }),
       { numRuns: 1000 }
+    )
+  })
+})
+
+describe("archive generation slots", () => {
+  const generation = fc.integer({ min: 1, max: 10_000 })
+
+  it("reads a generation slot as the same year's archive of the same path", () => {
+    expect(originalPathFor("archive/2031.2/a/b.html")).toBe("a/b.html")
+    expect(archiveYearOf("archive/2031.2/a/b.html")).toBe(2031)
+    expect(isArchivePath("archive/2031.2/a/b.html")).toBe(true)
+    expect(archiveGenerationOf("archive/2031.2/a/b.html")).toBe(2)
+    expect(archiveGenerationOf("archive/2031/a/b.html")).toBe(1)
+    expect(archiveGenerationOf("areas/inbox/a.html")).toBeUndefined()
+  })
+
+  it("spells generation one as the bare year and every later one as <YYYY>.<n>", () => {
+    expect(archivePathFor("areas/inbox/a.html", 2031, 1)).toBe("archive/2031/areas/inbox/a.html")
+    expect(archivePathFor("areas/inbox/a.html", 2031, 2)).toBe("archive/2031.2/areas/inbox/a.html")
+    expect(archivePathFor("areas/inbox/a.html", 2031, 12)).toBe(
+      "archive/2031.12/areas/inbox/a.html"
+    )
+  })
+
+  it("inverts archivePathFor for every path, year, and generation", () => {
+    fc.assert(
+      fc.property(memoryPath, year, generation, (path, y, n) => {
+        const slot = archivePathFor(path, y, n)
+        expect(originalPathFor(slot)).toBe(path)
+        expect(archiveYearOf(slot)).toBe(y)
+        expect(archiveGenerationOf(slot)).toBe(n)
+        expect(paraBucketOf(slot)).toBe("archive")
+        expect(isValidMemoryPath(slot)).toBe(true)
+      }),
+      { numRuns: 1000 }
+    )
+  })
+
+  it("is injective over (path, year, generation), so no two archivings share a slot", () => {
+    fc.assert(
+      fc.property(
+        memoryPath,
+        memoryPath,
+        year,
+        year,
+        generation,
+        generation,
+        (a, b, ya, yb, na, nb) => {
+          if (a === b && ya === yb && na === nb) return
+          expect(archivePathFor(a, ya, na)).not.toBe(archivePathFor(b, yb, nb))
+        }
+      ),
+      { numRuns: 1000 }
+    )
+  })
+
+  it("gives each slot one spelling: a .0, .1, or zero-padded generation is not an archive path", () => {
+    for (const path of [
+      "archive/2031.0/a/b.html",
+      "archive/2031.1/a/b.html",
+      "archive/2031.02/a/b.html",
+      "archive/2031./a/b.html"
+    ]) {
+      expect(originalPathFor(path), path).toBeUndefined()
+      expect(archiveYearOf(path), path).toBeUndefined()
+      expect(archiveGenerationOf(path), path).toBeUndefined()
+    }
+  })
+
+  it("archiveSlotFor names the first generation of the year that no record holds", () => {
+    const path = "resources/acme-widget/b.html"
+    expect(archiveSlotFor(path, 2031, () => false)).toBe(
+      "archive/2031/resources/acme-widget/b.html"
+    )
+    const held = new Set([
+      "archive/2031/resources/acme-widget/b.html",
+      "archive/2031.2/resources/acme-widget/b.html"
+    ])
+    expect(archiveSlotFor(path, 2031, (slot) => held.has(slot))).toBe(
+      "archive/2031.3/resources/acme-widget/b.html"
+    )
+    // Another year's slots, and another path's, do not count against this one.
+    const elsewhere = new Set([
+      "archive/2030/resources/acme-widget/b.html",
+      "archive/2031/resources/acme-widget/c.html"
+    ])
+    expect(archiveSlotFor(path, 2031, (slot) => elsewhere.has(slot))).toBe(
+      "archive/2031/resources/acme-widget/b.html"
+    )
+  })
+
+  it("archiveSlotFor never answers a held slot, and always one that maps back to the path", () => {
+    fc.assert(
+      fc.property(memoryPath, year, fc.array(generation, { maxLength: 8 }), (path, y, taken) => {
+        const held = new Set(taken.map((n) => archivePathFor(path, y, n)))
+        const slot = archiveSlotFor(path, y, (candidate) => held.has(candidate))
+        expect(held.has(slot)).toBe(false)
+        expect(originalPathFor(slot)).toBe(path)
+        expect(archiveYearOf(slot)).toBe(y)
+      }),
+      { numRuns: 500 }
     )
   })
 })

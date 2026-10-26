@@ -354,7 +354,7 @@ export const harvestOps = (input: {
     // An archive slot the view already held, rewritten while the active file it maps back to
     // vanished: the record is being archived again over its earlier archived copy. It is a twin
     // candidate for the pairing below, never a head edit of the old copy, even when the two copies
-    // share an article.
+    // share an article. `validateOps` then refuses the archive and names the year's free slot.
     const source = originalPathFor(file.path)
     const reclaimsSlot =
       before !== undefined &&

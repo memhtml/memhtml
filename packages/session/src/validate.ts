@@ -1,6 +1,8 @@
 import type { HeadView, OverlayOp, WriteBarPolicy } from "@memhtml/contracts"
 import {
   ARCS_DIR,
+  archiveSlotFor,
+  archiveYearOf,
   DEFAULT_WRITE_BAR,
   hrefToPath,
   isArchivePath,
@@ -295,14 +297,32 @@ export const validateOps = (
           reasons.push("archive source is not an active record in the head")
         } else if (movedAway.has(normalizePath(op.path))) {
           reasons.push("archive source was moved away earlier in this batch")
+        } else if (archived.has(normalizePath(op.path))) {
+          reasons.push("archive source was archived earlier in this batch")
         }
         if (originalPathFor(op.to) !== normalizePath(op.path)) {
-          reasons.push("archive destination is not archive/<YYYY>/<original path>")
+          reasons.push("archive destination is not archive/<YYYY>[.<n>]/<original path>")
         }
-        // A destination the head already holds is an earlier archive of this same path (the
-        // destination maps back to the source, checked above): a record archived once, recreated
-        // at its path, and archived again. The new copy replaces the old one, whose bytes stay in
-        // git history. Two archives of one source in a single batch are still refused.
+        // An archive takes its year's first free generation and never writes over a record. A slot
+        // the head holds is an earlier archiving's history, and the record in it need not even be
+        // this path's (its article is not checked); a later generation past a free one leaves a gap
+        // that readers taking the newest generation would not see past. Both reasons name the slot.
+        const year = archiveYearOf(op.to)
+        const to = normalizePath(op.to)
+        if (year !== undefined && !archiveDestinations.has(to)) {
+          const free = archiveSlotFor(
+            op.path,
+            year,
+            (slot) => view.get(slot) !== undefined || archiveDestinations.has(slot)
+          )
+          if (view.get(to) !== undefined) {
+            reasons.push(
+              `archive destination ${to} already holds a record; the free slot is ${free}`
+            )
+          } else if (to !== free && originalPathFor(to) === normalizePath(op.path)) {
+            reasons.push(`archive destination ${to} skips the free slot ${free}`)
+          }
+        }
         if (archiveDestinations.has(normalizePath(op.to))) {
           reasons.push("archive destination is written twice in this batch")
         }

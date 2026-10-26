@@ -288,7 +288,7 @@ Follow a possibly-moved path forward to the memory that carries the fact now.
 
 ### `memhtml archive`
 
-Soft-evict: `git mv` into archive/<YYYY>/ with the archive stamps. Never a delete.
+Soft-evict: `git mv` into archive/<YYYY>/ (archive/<YYYY>.<n>/ when an earlier archiving holds that slot) with the archive stamps. Never a delete.
 
 - `<path>` — The memory to archive.
 

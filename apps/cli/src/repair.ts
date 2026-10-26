@@ -52,9 +52,11 @@ export const ARCHIVE_LOOKBACK_YEARS = 10
 /**
  * The archive path a missing target now lives at, or `undefined` when it is genuinely gone.
  *
- * Years are tried newest-first from the given year back over {@link ARCHIVE_LOOKBACK_YEARS}, so the
- * most recent archiving of a path that was archived more than once wins. That is the one a live edge
- * means, since an earlier archiving was superseded by a later restore.
+ * Years are tried newest-first from the given year back over {@link ARCHIVE_LOOKBACK_YEARS}, and
+ * within a year the newest generation wins, so the most recent archiving of a path that was
+ * archived more than once wins. That is the one a live edge means, since an earlier archiving was
+ * superseded by a later restore. A year's generations fill from the bare year up (`archiveSlotFor`
+ * takes the first free one), so the newest is the last of the unbroken run of slots the tree holds.
  */
 export const archivedFormOf = (
   target: string,
@@ -62,8 +64,13 @@ export const archivedFormOf = (
   runYear: number
 ): string | undefined => {
   for (let back = 0; back <= ARCHIVE_LOOKBACK_YEARS; back += 1) {
-    const candidate = archivePathFor(target, runYear - back)
-    if (known.has(candidate)) return candidate
+    let newest: string | undefined
+    for (let generation = 1; ; generation += 1) {
+      const candidate = archivePathFor(target, runYear - back, generation)
+      if (!known.has(candidate)) break
+      newest = candidate
+    }
+    if (newest !== undefined) return newest
   }
   return undefined
 }

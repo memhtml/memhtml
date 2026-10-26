@@ -516,7 +516,8 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   },
   {
     name: "archive",
-    summary: "Soft-evict: `git mv` into archive/<YYYY>/ with the archive stamps. Never a delete.",
+    summary:
+      "Soft-evict: `git mv` into archive/<YYYY>/ (archive/<YYYY>.<n>/ when an earlier archiving holds that slot) with the archive stamps. Never a delete.",
     args: [{ name: "path", description: "The memory to archive.", required: true }],
     flags: [{ name: "reason", type: "string", description: "Why it was evicted.", required: true }],
     responseTypes: ["memory.archived"]

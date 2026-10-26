@@ -109,6 +109,22 @@ describe("the archive lookup", () => {
     )
   })
 
+  it("prefers a year's newest generation, in this year or an earlier one", () => {
+    // The string order of these paths is the wrong order: `.` sorts before `/`, and `2031.10`
+    // before `2031.9`. Generations fill from the bare year up, so the newest ends the run.
+    const run = Array.from({ length: 10 }, (_, index) =>
+      index === 0 ? "archive/2031/areas/x.html" : `archive/2031.${String(index + 1)}/areas/x.html`
+    )
+    expect(archivedFormOf("areas/x.html", new Set(run), 2031)).toBe("archive/2031.10/areas/x.html")
+    expect(
+      archivedFormOf(
+        "areas/x.html",
+        new Set(["archive/2030/areas/x.html", "archive/2030.2/areas/x.html"]),
+        2031
+      )
+    ).toBe("archive/2030.2/areas/x.html")
+  })
+
   it("returns undefined for a target that is genuinely gone", () => {
     expect(archivedFormOf("areas/x.html", new Set(), 2026)).toBeUndefined()
   })

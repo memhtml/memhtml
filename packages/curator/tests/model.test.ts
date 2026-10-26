@@ -1,4 +1,11 @@
+import { execFile } from "node:child_process"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { dirname, join } from "node:path"
+import { promisify } from "node:util"
+
 import type { LanguageModelV4GenerateResult } from "@ai-sdk/provider"
+import { archiveSlotFor } from "@memhtml/contracts"
 import { generateText } from "ai"
 import { MockLanguageModelV4 } from "ai/test"
 import { Effect } from "effect"
@@ -245,5 +252,45 @@ describe("the fake model through the loop", () => {
     expect(script.indexOf("const unlinked")).toBeGreaterThan(script.indexOf("archived.push"))
     expect(script).toContain('["areas", "projects", "resources"]')
     expect(script).toContain("fs.existsSync(ROOT + href)")
+  })
+
+  it("the dedup script archives into the slot archiveSlotFor names, past a held one", async () => {
+    // Run with node over a temp tree standing in for the sandbox mount. The kept file's archive
+    // slot is free; the other's bare-year slot holds an older record, so its archive takes `.2`.
+    const root = await mkdtemp(join(tmpdir(), "memhtml-fake-dedup-"))
+    try {
+      const page = (claim: string) =>
+        `<!doctype html>\n<html><head>\n<title>t</title>\n</head><body><p>${claim}</p></body></html>\n`
+      const files: Record<string, string> = {
+        "areas/inbox/a.html": page("kept"),
+        "areas/inbox/b.html": page("duplicate"),
+        "archive/2031/areas/inbox/b.html": page("an older record")
+      }
+      for (const [path, html] of Object.entries(files)) {
+        await mkdir(dirname(join(root, path)), { recursive: true })
+        await writeFile(join(root, path), html, "utf8")
+      }
+      const held = new Set(Object.keys(files))
+      const expected = archiveSlotFor("areas/inbox/b.html", 2031, (slot) => held.has(slot))
+      expect(expected).toBe("archive/2031.2/areas/inbox/b.html")
+
+      const script = fakeDedupScript(
+        [{ paths: ["areas/inbox/b.html", "areas/inbox/a.html"] }],
+        "2031"
+      ).replace('const ROOT = "/mnt/memhtml"', `const ROOT = ${JSON.stringify(root)}`)
+      const child = promisify(execFile)(process.execPath, ["--input-type=module", "-e", script])
+      const { stdout } = await child
+      const printed = JSON.parse(stdout) as { archived: ReadonlyArray<{ to: string }> }
+      expect(printed.archived.map((entry) => entry.to)).toEqual([expected])
+      expect(await readFile(join(root, expected), "utf8")).toBe(page("duplicate"))
+      expect(await readFile(join(root, "archive/2031/areas/inbox/b.html"), "utf8")).toBe(
+        page("an older record")
+      )
+      expect(await readFile(join(root, "areas/inbox/a.html"), "utf8")).toContain(
+        `href="/${expected}"`
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 })

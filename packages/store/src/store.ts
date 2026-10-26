@@ -10,7 +10,7 @@ import {
   WriteConflict
 } from "@memhtml/contracts/errors"
 import {
-  archivePathFor,
+  archiveSlotFor,
   isValidMemoryPath,
   memoryPathFor,
   memoryPathViolation,
@@ -577,9 +577,24 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
     )
 
   /**
-   * Move a file to its archive path with the archive stamps applied, staged but not committed.
-   * The caller commits, which is what lets a correction put the new file and the archived one
-   * in one commit.
+   * The slot an archive of `path` at `at` takes: {@link archiveSlotFor}'s first generation of the
+   * year with no file on disk, so an archive never lands on an earlier one. Asked one slot at a
+   * time, because the disk answers through an effect and `archiveSlotFor` takes a plain predicate.
+   */
+  const archiveSlotOf = (path: string, at: number): Effect.Effect<string, StorageFailure> =>
+    Effect.gen(function* () {
+      const held = new Set<string>()
+      for (;;) {
+        const slot = archiveSlotFor(path, yearOf(at), (candidate) => held.has(candidate))
+        if ((yield* readFileOrNull(absolute(slot))) === null) return slot
+        held.add(slot)
+      }
+    })
+
+  /**
+   * Move a file to its archive slot ({@link archiveSlotOf}) with the archive stamps applied, staged
+   * but not committed. The caller commits, which is what lets a correction put the new file and the
+   * archived one in one commit.
    */
   const stageArchive = (
     path: string,
@@ -589,7 +604,7 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
     Effect.gen(function* () {
       const normalized = normalizePath(path)
       const html = yield* readRaw(normalized)
-      const target = archivePathFor(normalized, yearOf(at))
+      const target = yield* archiveSlotOf(normalized, at)
 
       // `git mv` rejects a destination whose parent does not exist. Probed live 2026-08-02:
       // `fatal: renaming … failed: No such file or directory`. The year partition is new every
@@ -1058,7 +1073,8 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
       // written, or the tree gains an orphan superseding file with nothing to supersede.
       const targetHtml = yield* readRaw(normalizedTarget)
 
-      const archivePath = archivePathFor(normalizedTarget, yearOf(millis))
+      // The slot `stageArchive` takes below: nothing between here and there writes under archive/.
+      const archivePath = yield* archiveSlotOf(normalizedTarget, millis)
       const html = yield* renderChecked(input, at)
       const hash = contentHash(html)
       /**
@@ -1157,7 +1173,7 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
         journal,
         Effect.gen(function* () {
           yield* journal.note(normalized)
-          yield* journal.note(archivePathFor(normalized, yearOf(millis)))
+          yield* journal.note(yield* archiveSlotOf(normalized, millis))
           const archivePath = yield* stageArchive(normalized, millis, [
             ["memhtml-status", "archived"],
             ["memhtml-updated", at],
@@ -1224,7 +1240,7 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
              */
             const validFrom = winnerValidFrom.get(pair.winner) ?? at
             yield* journal.note(pair.loser)
-            yield* journal.note(archivePathFor(pair.loser, yearOf(millis)))
+            yield* journal.note(yield* archiveSlotOf(pair.loser, millis))
             yield* journal.note(pair.winner)
             const archivePath = yield* stageArchive(pair.loser, millis, [
               ["memhtml-status", "archived"],

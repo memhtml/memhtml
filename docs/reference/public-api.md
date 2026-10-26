@@ -515,16 +515,13 @@ Appends ops to a session's log, persists the log, and returns the session the ca
 ### originalPathFor
 
 ```ts
-export const originalPathFor = (archivePath: string): string | undefined => {
-  const normalized = normalizePath(archivePath)
-  const match = /^archive\/(\d{4,})\/(.+)$/.exec(normalized)
-  return match?.[2]
-}
+export const originalPathFor = (archivePath: string): string | undefined =>
+  ARCHIVE_SLOT.exec(normalizePath(archivePath))?.[3]
 ```
 
-The inverse of `archivePathFor` (`packages/contracts/src/paths.ts:217-218`). It normalizes the path, strips exactly one `archive/<year>/` prefix whose year has four or more digits, and returns the rest. It returns `undefined` for a path without such a prefix, and `isArchivePath` asks the same question as a boolean (`packages/contracts/src/paths.ts:232`). A memory archived twice gives back its first archive path. An archive op whose destination doesn't map back to its source through `originalPathFor` is a format violation (`packages/session/src/validate.ts:299-301`).
+The inverse of `archivePathFor` (`packages/contracts/src/paths.ts:236-237`). It normalizes the path, strips exactly one `archive/<year>/` or `archive/<year>.<n>/` prefix whose year has four or more digits and whose generation n is 2 or more with no leading zero (`ARCHIVE_SLOT` at `packages/contracts/src/paths.ts:221`), and returns the rest. It returns `undefined` for a path without such a prefix, and `isArchivePath` asks the same question as a boolean (`packages/contracts/src/paths.ts:270`). A memory archived twice gives back its first archive path. An archive op whose destination doesn't map back to its source through `originalPathFor` is a format violation (`packages/session/src/validate.ts:303-305`).
 
-`packages/contracts/src/paths.ts:225-229`, 6 importer files
+`packages/contracts/src/paths.ts:266-267`, 6 importer files
 
 ### setMeta
 

@@ -52,7 +52,7 @@ Code, message, and suggestions fold into `.message` at construction, because MCP
 
 ## 6. Guidance and the sugar commands
 
-The CLI's own guidance lives in the manifest's `guide` blocks (`apps/cli/src/commands.ts:839`) and is rendered into `AGENTS.md` by the same generator (`apps/cli/src/agents-doc.ts:52`), so the document and the live answer cannot disagree.
+The CLI's own guidance lives in the manifest's `guide` blocks (`apps/cli/src/commands.ts:840`) and is rendered into `AGENTS.md` by the same generator (`apps/cli/src/agents-doc.ts:52`), so the document and the live answer cannot disagree.
 
 The `memhtml task` family is sugar over the same use cases. `task add` is `write --type task`. `task status` edits one head meta and routes `done` through the archive machinery. `task list` is a direct indexed scan that never enters retrieval, backed by a partial index over live tasks (`packages/index/migrations/0008_tasks.sql:136-137`).
 

@@ -1,4 +1,6 @@
 import {
+  archiveGenerationOf,
+  archiveYearOf,
   type HeadView,
   hrefToPath,
   type MemoryRecord,
@@ -120,8 +122,9 @@ export interface SupersededRecord {
 
 /**
  * One edge from an active record whose target is no record. `archived` is the target's newest
- * `archive/<YYYY>/` form when one exists, and `successor` the active record that supersedes that
- * form, the better home for the edge; both `null` when absent.
+ * archived form when one exists (the latest year, then that year's latest generation), and
+ * `successor` the active record that supersedes that form, the better home for the edge; both
+ * `null` when absent.
  */
 export interface DanglingEdge {
   readonly path: string
@@ -233,6 +236,15 @@ const cut = (text: string, chars: number): string =>
 const instant = (value: string): number => Date.parse(value)
 
 /**
+ * True when archive path `a` is a later archiving than `b`: a later year, or a later generation of
+ * the same year. Not their string order, which puts `archive/2031.2/` before `archive/2031/`.
+ */
+const isLaterArchiving = (a: string, b: string): boolean => {
+  const year = (archiveYearOf(a) ?? 0) - (archiveYearOf(b) ?? 0)
+  return year !== 0 ? year > 0 : (archiveGenerationOf(a) ?? 0) > (archiveGenerationOf(b) ?? 0)
+}
+
+/**
  * Compute the briefing over a view. Pure over the view: the one field it cannot derive, the last
  * curate ref, is passed in by the caller that read git for it, and the neighbors of the recent
  * records come from the caller's search (`options.neighborsOf`, none when absent).
@@ -276,7 +288,9 @@ export const briefingFromView = (
       const original = originalPathFor(record.path)
       if (original !== undefined) {
         const known = archivedForm.get(original)
-        if (known === undefined || known < record.path) archivedForm.set(original, record.path)
+        if (known === undefined || isLaterArchiving(record.path, known)) {
+          archivedForm.set(original, record.path)
+        }
       }
       continue
     }

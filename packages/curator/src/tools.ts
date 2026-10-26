@@ -1,4 +1,4 @@
-import type { OverlayOp } from "@memhtml/contracts"
+import { archiveSlotFor, type OverlayOp } from "@memhtml/contracts"
 import type { Violation } from "@memhtml/session"
 import { z } from "zod"
 
@@ -90,7 +90,8 @@ export interface CuratorTools {
 
 /**
  * The op shape the MODEL proposes. An `archive` names only its source: the loop reads the source's
- * bytes through `read` and derives `to` as `archive/<YYYY>/<path>`, because the contract's
+ * bytes through `read` and derives `to` as the year's free slot (`archive/<YYYY>/<path>`, or
+ * `archive/<YYYY>.<n>/<path>` when that one is held), because the contract's
  * `OverlayOp.archive` carries the article's bytes to name which article is meant, and a model
  * restating a whole file is how a byte drifts. A `move` names its source and its destination and
  * the loop reads the bytes the same way; the binder adds the `unlink` and `link` pairs that repoint
@@ -110,7 +111,9 @@ export const ProposedOp = z.discriminatedUnion("kind", [
       .string()
       .min(1)
       .optional()
-      .describe("archive/<YYYY>/<path>; defaults to this year's archive of the same path.")
+      .describe(
+        "archive/<YYYY>/<path>, or archive/<YYYY>.<n>/<path> when that slot is held; defaults to this year's first free slot for the same path."
+      )
   }),
   z.object({
     kind: z.literal("link"),
@@ -161,13 +164,29 @@ export const ProposedOp = z.discriminatedUnion("kind", [
 ])
 export type ProposedOp = z.infer<typeof ProposedOp>
 
-/** `archive/<YYYY>/<path>` for `path`, the year taken from `now` in UTC. */
-export const archivePathFor = (path: string, now: Date): string =>
-  `archive/${String(now.getUTCFullYear())}/${path}`
+/**
+ * The archive slot for `path` in the year of `now` (UTC): `archiveSlotFor`'s first generation the
+ * view behind `read` holds no record at, so a model's archive never lands on an earlier one. Asked
+ * one slot at a time, because `read` answers asynchronously.
+ */
+export const archivePathFor = async (
+  path: string,
+  now: Date,
+  read: CuratorTools["read"]
+): Promise<string> => {
+  const held = new Set<string>()
+  for (;;) {
+    const slot = archiveSlotFor(path, now.getUTCFullYear(), (candidate) => held.has(candidate))
+    if ((await read(slot)) === null) return slot
+    held.add(slot)
+  }
+}
 
 /**
  * Proposed ops as overlay ops. An archive whose source `read` cannot find is reported rather than
- * silently dropped, so the model learns the path was wrong.
+ * silently dropped, so the model learns the path was wrong. An archive that names no `to` takes
+ * the year's free slot ({@link archivePathFor}); one that names a held slot is the validator's to
+ * refuse, and its reason names the free one.
  */
 export const toOverlayOps = async (
   proposed: ReadonlyArray<ProposedOp>,
@@ -188,7 +207,7 @@ export const toOverlayOps = async (
           ? {
               kind: "archive",
               path: op.path,
-              to: op.to ?? archivePathFor(op.path, now),
+              to: op.to ?? (await archivePathFor(op.path, now, tools.read)),
               html: record.html
             }
           : { kind: "move", path: op.path, to: op.to, html: record.html }

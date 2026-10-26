@@ -421,6 +421,28 @@ describe("the work lists", () => {
     ])
     expect(briefing.danglingEdgesTotal).toBe(3)
   })
+
+  it("names a target's newest generation as its archived form, not the first in string order", () => {
+    // `archive/2031.2/` sorts before `archive/2031/` as a string, and `2031.10` before `2031.9`.
+    const view = viewOver([
+      record("areas/inbox/a.html", {
+        links: [{ rel: "part_of", href: "/areas/arcs/widget-arc.html" }]
+      }),
+      record("archive/2031/areas/arcs/widget-arc.html"),
+      record("archive/2031.9/areas/arcs/widget-arc.html"),
+      record("archive/2031.10/areas/arcs/widget-arc.html"),
+      record("archive/2030.3/areas/arcs/widget-arc.html")
+    ])
+    expect(briefingFromView(view).danglingEdges).toEqual([
+      {
+        path: "areas/inbox/a.html",
+        rel: "part_of",
+        href: "/areas/arcs/widget-arc.html",
+        archived: "archive/2031.10/areas/arcs/widget-arc.html",
+        successor: null
+      }
+    ])
+  })
 })
 
 describe("renderBriefing and parseBriefing", () => {

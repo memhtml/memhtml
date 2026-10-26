@@ -1,6 +1,11 @@
 import { readFile } from "node:fs/promises"
 
-import type { HeadView, OverlayOp, WriteBarPolicy } from "@memhtml/contracts"
+import {
+  archiveSlotFor,
+  type HeadView,
+  type OverlayOp,
+  type WriteBarPolicy
+} from "@memhtml/contracts"
 import {
   type DirtyTree,
   InvalidMemory,
@@ -70,8 +75,8 @@ import { type HeadStats, headStats, type LoadedHead, qualifyRef, revParse } from
  * ## Archive clusters
  *
  * No model. Members are archived in chunks of {@link ARCHIVE_CHUNK}, one session per chunk, each
- * validated against the tip the chunk starts from; a member already archived or whose destination
- * exists is skipped and named.
+ * validated against the tip the chunk starts from; a member already archived is skipped and named.
+ * Every archive takes the year's free slot, `archive/<YYYY>.<n>/` past one an older record holds.
  *
  * ## Fold clusters
  *
@@ -244,7 +249,17 @@ const describeError = (cause: unknown): string => {
 export const collapseSessionId = (clusterId: string, suffix = ""): string =>
   `collapse-${clusterId}${suffix}`.replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 128)
 
-const archivePathFor = (path: string, year: string): string => `archive/${year}/${path}`
+/**
+ * The archive slot for `path` in the plan's archive year: the first generation the view holds no
+ * record at, so an archive never writes over an older record, and the `supersedes` link names the
+ * member's own archived copy.
+ */
+const archiveSlotIn = (view: HeadView, path: string, year: string): string =>
+  archiveSlotFor(path, Number(year), (slot) => view.get(slot) !== undefined)
+
+/** Each archived source in `ops` mapped to the slot its archive op writes. */
+const archiveDestinationsOf = (ops: ReadonlyArray<OverlayOp>): ReadonlyMap<string, string> =>
+  new Map(ops.flatMap((op) => (op.kind === "archive" ? [[op.path, op.to] as const] : [])))
 
 const isActive = (view: HeadView, path: string): boolean => {
   const record = view.get(path)
@@ -456,11 +471,11 @@ const archiveCluster = (driver: Driver, cluster: CollapseCluster): Effect.Effect
           const ops: Array<OverlayOp> = []
           for (const path of slice) {
             const record = loaded.view.get(path)
-            const to = archivePathFor(path, driver.plan.archiveYear)
-            if (record === undefined || record.archived || loaded.view.get(to) !== undefined) {
+            if (record === undefined || record.archived) {
               skipped.push(path)
               continue
             }
+            const to = archiveSlotIn(loaded.view, path, driver.plan.archiveYear)
             ops.push({ kind: "archive", path, to, html: record.html })
           }
           if (ops.length === 0) return
@@ -523,13 +538,16 @@ const supersedesInPut = (put: OverlayOp): Effect.Effect<ReadonlySet<string>> =>
 /**
  * Archive-plus-link sessions for the members a fold still owes after its model session landed: the
  * rest of a large cluster, and whatever `BATCH_CAP` pushed out of the first session. Each member
- * costs an archive and a link; a member already archived costs the link alone.
+ * costs an archive to its free slot and a link to that slot; a member the first session archived
+ * costs the link alone, to the slot `archivedTo` says it took. A member that left its path some
+ * other way has no slot this fold knows, so it is named under `skipped` and gets no link.
  */
 const followUp = (
   driver: Driver,
   cluster: CollapseCluster,
   canonical: string,
   owed: ReadonlyArray<string>,
+  archivedTo: ReadonlyMap<string, string>,
   results: {
     commits: Array<string>
     driver: { archive: number; link: number }
@@ -555,20 +573,19 @@ const followUp = (
       const ops: Array<OverlayOp> = []
       while (work.length > 0 && ops.length + 2 <= BATCH_CAP) {
         const path = work.shift() as string
-        const to = archivePathFor(path, driver.plan.archiveYear)
         const record = view.get(path)
-        const destinationExists = view.get(to) !== undefined
-        if (record !== undefined && !record.archived && !destinationExists) {
-          ops.push({ kind: "archive", path, to, html: record.html })
-        } else if (record !== undefined && !record.archived) {
-          // Still active, but its destination is taken: an earlier archive of the same bytes.
+        const active = record !== undefined && !record.archived
+        // The link needs a target: the archive this batch writes, or the one already in the tree.
+        const to = active
+          ? archiveSlotIn(view, path, driver.plan.archiveYear)
+          : archivedTo.get(path)
+        if (to === undefined || (!active && view.get(to) === undefined)) {
           results.skipped.push(path)
+          continue
         }
-        // The link needs a target: the archive this batch writes, or one already in the tree.
-        const targetWillExist =
-          destinationExists || ops.some((op) => op.kind === "archive" && op.path === path)
+        if (active) ops.push({ kind: "archive", path, to, html: record.html })
         const href = `/${to}`
-        if (targetWillExist && !linked.has(href)) {
+        if (!linked.has(href)) {
           ops.push({ kind: "link", path: canonical, rel: "supersedes", href })
         }
       }
@@ -704,23 +721,21 @@ const foldCluster = (
         if (archivedByModel.has(path)) continue
         if (ops.length + completion.length >= BATCH_CAP) break
         const record = view.get(path)
-        if (
-          record === undefined ||
-          view.get(archivePathFor(path, driver.plan.archiveYear)) !== undefined
-        )
-          continue
+        if (record === undefined) continue
         completion.push({
           kind: "archive",
           path,
-          to: archivePathFor(path, driver.plan.archiveYear),
+          to: archiveSlotIn(view, path, driver.plan.archiveYear),
           html: record.html
         })
       }
-      const willArchive = new Set([...archivedByModel, ...completion.map((op) => op.path)])
+      // Each member's link names the slot its archive takes, the model's or the driver's.
+      const willArchiveTo = archiveDestinationsOf([...ops, ...completion])
       const links: Array<OverlayOp> = []
       for (const path of first) {
-        if (!willArchive.has(path)) continue
-        const href = `/${archivePathFor(path, driver.plan.archiveYear)}`
+        const to = willArchiveTo.get(path)
+        if (to === undefined) continue
+        const href = `/${to}`
         if (linkedByPut.has(href)) continue
         if (ops.length + completion.length + links.length >= BATCH_CAP) break
         links.push({ kind: "link", path: canonical, rel: "supersedes", href })
@@ -771,20 +786,19 @@ const foldCluster = (
 
       // Whatever the first session did not settle: the rest of a large cluster, the members the cap
       // pushed out, and any archived member the canonical does not yet point at.
-      const landedArchives = new Set(
-        finalOps.flatMap((op) => (op.kind === "archive" ? [op.path] : []))
-      )
+      const landedArchives = archiveDestinationsOf(finalOps)
       const landedLinks = new Set([
         ...linkedByPut,
         ...finalOps.flatMap((op) => (op.kind === "link" ? [op.href] : []))
       ])
-      const owed = active.filter(
-        (path) =>
-          !landedArchives.has(path) ||
-          !landedLinks.has(`/${archivePathFor(path, driver.plan.archiveYear)}`)
-      )
+      const owed = active.filter((path) => {
+        const to = landedArchives.get(path)
+        return to === undefined || !landedLinks.has(`/${to}`)
+      })
       const owedAll = [...new Set([...rest, ...owed])]
-      if (owedAll.length > 0) yield* followUp(driver, cluster, canonical, owedAll, results)
+      if (owedAll.length > 0) {
+        yield* followUp(driver, cluster, canonical, owedAll, landedArchives, results)
+      }
       return {
         ...base,
         ...spent,

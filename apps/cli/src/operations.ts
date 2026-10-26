@@ -1108,7 +1108,10 @@ export const linkMemories = (srcPath: string, rel: string, dstPath: string) =>
     return { ...result, srcPath: src, dstPath: normalizePath(dstPath), rel: edgeRel }
   })
 
-/** Soft-evict: `git mv` into `archive/<YYYY>/` with the archive stamps. Never a delete. */
+/**
+ * Soft-evict: `git mv` into `archive/<YYYY>/` (`archive/<YYYY>.<n>/` when an earlier archiving holds
+ * that slot) with the archive stamps. Never a delete.
+ */
 export const archiveMemory = (path: string, reason: string) =>
   Effect.gen(function* () {
     const store = yield* Store

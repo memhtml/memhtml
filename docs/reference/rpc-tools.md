@@ -299,13 +299,13 @@ const MemoryArchive = Tool.make("memory_archive", {
 })
 ```
 
-Soft-evicts a memory with a `git mv` into `archive/<YYYY>/` and the archive stamps. Nothing is deleted, and `git log --follow` reads straight through the move.
+Soft-evicts a memory with a `git mv` into `archive/<YYYY>/` and the archive stamps, or into `archive/<YYYY>.<n>/`, the year's first free generation, when an earlier archiving holds that slot. Nothing is deleted, and `git log --follow` reads straight through the move.
 
 **Input:** `path`, the memory to evict, and `reason`, both required. `reason` is recorded only in the commit subject, after the path (`packages/store/src/store.ts:1166`). An archive path isn't refused. Archiving one again nests it under a second `archive/<YYYY>/`.
 
 No store policy closes this tool, because it edits a record that already exists.
 
-**Output:** `path`, normalized, and `archive_path`, where the file now lives. The archive path mirrors the original path under the year (`packages/contracts/src/paths.ts:217-218`).
+**Output:** `path`, normalized, and `archive_path`, where the file now lives. The archive path mirrors the original path under the year, or under `<YYYY>.<n>` when an earlier archiving holds the year's slot (`packages/contracts/src/paths.ts:236-258`).
 
 **Failure:**
 

@@ -11,7 +11,7 @@ $MEMHTML_ROOT/                     a git repo, one global memory store
   projects/<slug>/tasks/           task files: one named segment, not a fifth bucket
   areas/<area>/  areas/arcs/  areas/inbox/
   resources/<topic>/  resources/people/<person>.html
-  archive/<YYYY>/<original-path>   soft-evicted, path-preserving
+  archive/<YYYY>[.<n>]/<original-path> soft-evicted, path-preserving
   .memhtml/index.db                gitignored, rebuildable
   .memhtml/state.db                gitignored, NOT rebuildable from git
   .memhtml/state/access.jsonl      COMMITTED sidecar: a copy of state.access
@@ -51,9 +51,11 @@ Rule 1 reads "an explicit **valid** path", and the validity clause is where a ca
 
 ## 3. The archive mapping can be inverted
 
-`archivePathFor` (`packages/contracts/src/paths.ts:213`) mirrors the whole original path beneath `archive/<YYYY>/`, and `originalPathFor` (`packages/contracts/src/paths.ts:221`) strips exactly one such prefix. Stripping one rather than all of them keeps it a left inverse even for a memory archived twice. `git log --follow` reads through the move, and `diff -M` reports `R100` instead of a delete plus an add. No memory is removed from the repository.
+`archivePathFor` (`packages/contracts/src/paths.ts:236`) mirrors the whole original path beneath `archive/<YYYY>/`, and `originalPathFor` (`packages/contracts/src/paths.ts:266`) strips exactly one such prefix. Stripping one rather than all of them keeps it a left inverse even for a memory archived twice. `git log --follow` reads through the move, and `diff -M` reports `R100` instead of a delete plus an add. No memory is removed from the repository.
 
 A test pins the property: `originalPathFor(archivePathFor(p, y)) === p` for every generated path. That invertibility is what lets `memhtml doctor --fix` derive an archived target's new href rather than searching for it, and no rename-similarity score is consulted anywhere in the system.
+
+A path archived again while its year's slot is held takes the next generation of that year, `archive/<YYYY>.2/<original-path>`, then `.3`, and so on, so an archive never writes over an earlier one. `archiveSlotFor` (`packages/contracts/src/paths.ts:249`) names the first free generation. Every writer that archives takes that slot, and the session validator refuses any other. `originalPathFor` reads a generation slot back to the same original path, so the property holds for every generation: `originalPathFor(archivePathFor(p, y, n)) === p`.
 
 Figure 1 draws the mapping as a ladder rather than as a round trip. From a twice-evicted path the inverse climbs one rung, reaching the once-evicted path, which is what "exactly one prefix" means.
 

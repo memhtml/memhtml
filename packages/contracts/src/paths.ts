@@ -203,8 +203,22 @@ export const memoryPathFor = (
   return `${placementFor(input)}/${filename}`
 }
 
-/** Format a year as the four-digit `archive/<YYYY>/` segment. */
-const yearSegment = (year: number): string => Math.trunc(year).toString().padStart(4, "0")
+/**
+ * Format a year and a generation as the `archive/<YYYY>/` segment, or `archive/<YYYY>.<n>/` for a
+ * generation of two or more.
+ */
+const yearSegment = (year: number, generation: number): string => {
+  const yyyy = Math.trunc(year).toString().padStart(4, "0")
+  const n = Math.trunc(generation)
+  return n >= 2 ? `${yyyy}.${String(n)}` : yyyy
+}
+
+/**
+ * An archive path's three parts: the year, the generation when the segment carries one, and the
+ * original path. A generation is written once, as `.<n>` with n >= 2 and no leading zero, so every
+ * slot has exactly one spelling and `archive/<YYYY>.1/` is not an archive path at all.
+ */
+const ARCHIVE_SLOT = /^archive\/(\d{4,})(?:\.([2-9]|[1-9]\d+))?\/(.+)$/
 
 /**
  * The archive path a memory moves to on eviction: `archive/<YYYY>/<original-path>`, with the
@@ -213,26 +227,64 @@ const yearSegment = (year: number): string => Math.trunc(year).toString().padSta
  * `year` is a calendar year (a label, not an offset). Mirroring the whole original path is
  * what makes the mapping injective and invertible, so `git log --follow` reads through the
  * move and `diff -M` reports it as `R100` rather than a delete plus an add.
+ *
+ * `generation` numbers the archivings of one path within one year. The first is the bare year;
+ * a path archived again while that slot is held goes to `archive/<YYYY>.2/<original-path>`, then
+ * `.3`, and so on, so an archive never writes over an earlier one. {@link archiveSlotFor} picks
+ * the generation.
  */
-export const archivePathFor = (path: string, year: number): string =>
-  `${ARCHIVE_BUCKET}/${yearSegment(year)}/${normalizePath(path)}`
+export const archivePathFor = (path: string, year: number, generation = 1): string =>
+  `${ARCHIVE_BUCKET}/${yearSegment(year, generation)}/${normalizePath(path)}`
+
+/**
+ * The slot an archive of `path` in `year` writes: the first generation `isHeld` does not claim,
+ * starting from the bare year, with "held" meaning a record (active or archived) the caller's view
+ * or tree already has at the slot. Every writer that archives takes this slot, and the session
+ * validator refuses any other.
+ *
+ * Generations are tried in order, so the answer is the lowest free one and the slots of one path
+ * fill without gaps. It terminates for any predicate that holds for finitely many slots, which is
+ * every predicate over a real tree.
+ */
+export const archiveSlotFor = (
+  path: string,
+  year: number,
+  isHeld: (slot: string) => boolean
+): string => {
+  for (let generation = 1; ; generation += 1) {
+    const slot = archivePathFor(path, year, generation)
+    if (!isHeld(slot)) return slot
+  }
+}
 
 /**
  * The pre-eviction path behind an archive path, or `undefined` when the path is not an
- * archive path. Strips exactly one `archive/<YYYY>/` prefix, so it is the left inverse of
- * {@link archivePathFor} even for a memory archived twice.
+ * archive path. Strips exactly one `archive/<YYYY>/` or `archive/<YYYY>.<n>/` prefix, so it is
+ * the left inverse of {@link archivePathFor} for every generation, even for a memory archived
+ * twice.
  */
-export const originalPathFor = (archivePath: string): string | undefined => {
-  const normalized = normalizePath(archivePath)
-  const match = /^archive\/(\d{4,})\/(.+)$/.exec(normalized)
-  return match?.[2]
-}
+export const originalPathFor = (archivePath: string): string | undefined =>
+  ARCHIVE_SLOT.exec(normalizePath(archivePath))?.[3]
 
 /** True when a path sits under the archive bucket with a year partition. */
 export const isArchivePath = (path: string): boolean => originalPathFor(path) !== undefined
 
-/** The archive year of an archive path, or `undefined` when the path is not archived. */
+/**
+ * The archive year of an archive path, or `undefined` when the path is not archived. A generation
+ * slot belongs to its year: `archive/2031.2/x.html` is archived in 2031.
+ */
 export const archiveYearOf = (path: string): number | undefined => {
-  const match = /^archive\/(\d{4,})\//.exec(normalizePath(path))
+  const match = ARCHIVE_SLOT.exec(normalizePath(path))
   return match?.[1] === undefined ? undefined : Number(match[1])
+}
+
+/**
+ * The generation of an archive path: 1 for `archive/<YYYY>/`, n for `archive/<YYYY>.<n>/`, or
+ * `undefined` when the path is not archived. Year then generation orders the archivings of one
+ * path oldest first; the paths' string order does not, since `.` sorts before `/`.
+ */
+export const archiveGenerationOf = (path: string): number | undefined => {
+  const match = ARCHIVE_SLOT.exec(normalizePath(path))
+  if (match === null) return undefined
+  return match[2] === undefined ? 1 : Number(match[2])
 }

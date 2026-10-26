@@ -27,8 +27,14 @@ import { mapHead, memory, recordFrom, STRICT_BAR } from "./helpers.js"
  * - format: skip `checkMemory` -> "collects format violations".
  * - archive hash: drop the `contentHash(op.html) !== sourceHash` reason -> "refuses an archive op
  *   whose article is not the source's".
- * - archive slot twice: drop the `archiveDestinations.has(...)` reason -> "archives over an earlier
- *   archived copy of its own path, and writes one slot once per batch" (the doubled archive passes).
+ * - archive slot twice: drop the `archiveDestinations.has(...)` reason -> "never archives over a held
+ *   slot: it names the free generation, which it then takes" (the doubled archive passes).
+ * - archive slot held: drop the `view.get(to)` reason -> the same case and "refuses an archive onto a
+ *   slot another record's history holds" (both archives onto a held slot pass).
+ * - archive slot gap: drop the `to !== free` reason -> "takes the year's first free generation, and
+ *   archives one source once per batch" (the `.2` past a free bare year passes).
+ * - archive source twice: drop the `archived.has(...)` source reason -> the same case (the second
+ *   archive of one source, into the next slot, passes).
  * - link target: drop the `view.get(target) === undefined` check -> "a link must point at a record
  *   in the head or in the batch" (the missing target passes).
  * - unlink edge: drop the `!edgesOf(op.path).has(...)` reason -> "an unlink must name an edge the
@@ -243,7 +249,7 @@ describe("validateOps", () => {
       {
         kind: "format",
         path: "areas/inbox/capital.html",
-        reasons: ["archive destination is not archive/<YYYY>/<original path>"]
+        reasons: ["archive destination is not archive/<YYYY>[.<n>]/<original path>"]
       }
     ])
     expect(
@@ -272,28 +278,138 @@ describe("validateOps", () => {
     ])
   })
 
-  it("archives over an earlier archived copy of its own path, and writes one slot once per batch", async () => {
-    // A record archived once, recreated at its path, and archived again (the 64 people stubs on
-    // the live store, 2026-09-28): the destination holds the earlier copy, which the new one replaces.
+  it("never archives over a held slot: it names the free generation, which it then takes", async () => {
+    // A record archived once, recreated at its path, and archived again. The earlier copy keeps its
+    // slot, and the reason names the next generation of the same year.
+    const PERSON = memory("Ada Example", "Ada Example maintains the acme widget build.", {
+      entities: ["person:ada-example"]
+    })
     const view = await mapHead("0".repeat(40), [
-      await recordFrom("areas/inbox/capital.html", CAPITAL),
+      await recordFrom("resources/people/p.html", PERSON),
       await recordFrom(
-        "archive/2026/areas/inbox/capital.html",
-        memory("Capital", "The capital of india is new delhi.")
+        "archive/2031/resources/people/p.html",
+        memory("Ada Example", "Ada Example joined the acme widget project.", {
+          entities: ["person:ada-example"]
+        })
+      ),
+      await recordFrom(
+        "archive/2031/resources/people/q.html",
+        memory("Grace Example", "Grace Example reviews the acme widget releases.", {
+          entities: ["person:grace-example"]
+        })
       )
     ])
-    const archive: OverlayOp = {
+    const archive = (to: string): OverlayOp => ({
+      kind: "archive",
+      path: "resources/people/p.html",
+      to,
+      html: PERSON
+    })
+    const curate = { scope: "curate" } as const
+    expect(validateOps(view, [archive("archive/2031/resources/people/p.html")], curate)).toEqual([
+      {
+        kind: "format",
+        path: "resources/people/p.html",
+        reasons: [
+          "archive destination archive/2031/resources/people/p.html already holds a record; the free slot is archive/2031.2/resources/people/p.html"
+        ]
+      }
+    ])
+    expect(validateOps(view, [archive("archive/2031.2/resources/people/p.html")], curate)).toEqual(
+      []
+    )
+    // One slot is still written once per batch.
+    const twice = archive("archive/2031.2/resources/people/p.html")
+    expect(validateOps(view, [twice, twice], curate)).toEqual([
+      {
+        kind: "format",
+        path: "resources/people/p.html",
+        reasons: [
+          "archive source was archived earlier in this batch",
+          "archive destination is written twice in this batch"
+        ]
+      }
+    ])
+    // A held destination that does not mirror its source names the source's own free slot.
+    expect(validateOps(view, [archive("archive/2031/resources/people/q.html")], curate)).toEqual([
+      {
+        kind: "format",
+        path: "resources/people/p.html",
+        reasons: [
+          "archive destination is not archive/<YYYY>[.<n>]/<original path>",
+          "archive destination archive/2031/resources/people/q.html already holds a record; the free slot is archive/2031.2/resources/people/p.html"
+        ]
+      }
+    ])
+  })
+
+  it("takes the year's first free generation, and archives one source once per batch", async () => {
+    const view = await head()
+    const archive = (to: string): OverlayOp => ({
       kind: "archive",
       path: "areas/inbox/capital.html",
-      to: "archive/2026/areas/inbox/capital.html",
+      to,
       html: CAPITAL
-    }
-    expect(validateOps(view, [archive])).toEqual([])
-    expect(validateOps(view, [archive, archive])).toEqual([
+    })
+    // The bare year is free, so a later generation would leave a gap no reader looks past.
+    expect(validateOps(view, [archive("archive/2031.2/areas/inbox/capital.html")])).toEqual([
       {
         kind: "format",
         path: "areas/inbox/capital.html",
-        reasons: ["archive destination is written twice in this batch"]
+        reasons: [
+          "archive destination archive/2031.2/areas/inbox/capital.html skips the free slot archive/2031/areas/inbox/capital.html"
+        ]
+      }
+    ])
+    // Two archives of one source, each into a slot free when it runs, would write two copies.
+    expect(
+      validateOps(view, [
+        archive("archive/2031/areas/inbox/capital.html"),
+        archive("archive/2031.2/areas/inbox/capital.html")
+      ])
+    ).toEqual([
+      {
+        kind: "format",
+        path: "areas/inbox/capital.html",
+        reasons: ["archive source was archived earlier in this batch"]
+      }
+    ])
+  })
+
+  it("refuses an archive onto a slot another record's history holds, naming the held slot", async () => {
+    // The slot mirrors the source's path, yet the record in it is a different one: its article is
+    // not the source's. An archive there would replace that record's only live copy.
+    const LIVE = memory("Widget owner", "Ada Example owns the acme widget release.", {
+      entities: ["person:ada-example"]
+    })
+    const view = await mapHead("0".repeat(40), [
+      await recordFrom("resources/people/x-2.html", LIVE),
+      await recordFrom(
+        "archive/2031/resources/people/x-2.html",
+        memory("Gadget owner", "Grace Example owned the acme gadget pilot.", {
+          entities: ["person:grace-example"]
+        })
+      )
+    ])
+    const violations = validateOps(
+      view,
+      [
+        {
+          kind: "archive",
+          path: "resources/people/x-2.html",
+          to: "archive/2031/resources/people/x-2.html",
+          html: LIVE
+        }
+      ],
+      { scope: "curate" }
+    )
+    expect(violations).toEqual([
+      {
+        kind: "format",
+        path: "resources/people/x-2.html",
+        reasons: [
+          "archive destination archive/2031/resources/people/x-2.html already holds a record; the free slot is archive/2031.2/resources/people/x-2.html"
+        ]
       }
     ])
   })
