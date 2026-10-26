@@ -238,8 +238,9 @@ export const archiveYearOf = (path: string): number | undefined => {
 }
 
 /**
- * The filename prefix that makes a detected task recognizable from its path alone: a task a detector
- * minted at `det-<digest>-<slug>.html`, with no `author` column and no commit message to read.
+ * The filename prefix that makes a detected task recognizable from its path alone: a task a
+ * detector minted at `det-<digest>-<slug>.html`, with no `author` column and no commit message to
+ * read.
  * `memhtml task list --detected` filters on it and the curator's briefing reads it, so both agree
  * about what a detected path is.
  */

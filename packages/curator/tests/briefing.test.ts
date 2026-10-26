@@ -41,7 +41,8 @@ import {
  * - `mootReason`: the both-archived branch dropped -> "names a task whose sides' records are all
  *   archived ..."; its preference for a never-claimed entity dropped -> the same case.
  * - `inboxWorkList`: `new Set(record.entities)` in place of `claimedEntities` in the generic
- *   census, or in a home's tally -> "keeps detected tasks out of the entity counts ...".
+ *   census, or in a home's tally -> "keeps entity questions, and no other detected task, out of
+ *   the inbox list's entity counts".
  */
 
 /** A record whose frame key is computed from its claim, the way the head computes it. */
@@ -433,13 +434,18 @@ describe("the work lists", () => {
 })
 
 describe("moot detected tasks", () => {
-  /** A live detected task at the inbox path its key names, questioning `entities`. */
+  /**
+   * A live entity question: a detected task at the inbox path its key names, tagged the way the
+   * entity-resolution detector tagged its tasks (`detected` first, the detector second), asking
+   * whether `entities` name one subject.
+   */
   const detected = (digest: string, entities: ReadonlyArray<string>, archived = false) =>
     record(
       `${archived ? "archive/2031/" : ""}areas/inbox/tasks/det-${digest}-confirm-one-subject.html`,
       {
         memoryType: "task",
         claim: `confirm: are ${entities.join(" and ")} one subject?`,
+        tags: ["detected", "entity-resolution"],
         entities: [...entities]
       }
     )
@@ -531,6 +537,45 @@ describe("moot detected tasks", () => {
     expect(briefing.mootDetectedTasksTotal).toBe(1)
   })
 
+  it("leaves every other detected task off the list and counts its entities as claims", () => {
+    const view = viewOver([
+      // A commitment found in prose, labeled with its subject afterward: open work, not a question.
+      record("areas/inbox/tasks/det-111111111111-confirm-the-runbook-move-is-still-wanted.html", {
+        memoryType: "task",
+        claim: "Move the acme runbook to the wiki. Confirm it is still wanted, or close it.",
+        tags: ["detected", "trace-commitment"],
+        entities: ["project:acme-runbook"]
+      }),
+      // A follow-up a detector found in a memory's own prose, the same way.
+      record("areas/inbox/tasks/det-222222222222-follow-up-on-the-widget-pricing.html", {
+        memoryType: "task",
+        claim: "Follow up on the acme widget pricing.",
+        tags: ["detected", "task-detection"],
+        entities: ["project:acme-widget-pricing"]
+      }),
+      // Their entities are claims, so a question naming one of them still has both sides.
+      detected("333333333333", ["project:acme-runbook", "project:acme-runbooks"]),
+      record("areas/inbox/b.html", { entities: ["project:acme-runbooks"] }),
+      // A file at a detected path that is not a task claims what it names, whatever its tags say.
+      record("resources/acme-widget/det-444444444444-a-fact.html", {
+        tags: ["detected", "entity-resolution"],
+        entities: ["work:x"]
+      }),
+      detected("555555555555", ["work:x", "work:y"]),
+      record("areas/inbox/c.html", { entities: ["work:y"] }),
+      // The control: a question whose side nothing else claims.
+      detected("666666666666", ["work:gone"])
+    ])
+    expect(
+      briefingFromView(view).mootDetectedTasks.map(({ path, reason }) => [path, reason])
+    ).toEqual([
+      [
+        "areas/inbox/tasks/det-666666666666-confirm-one-subject.html",
+        "work:gone has no claim outside detected tasks"
+      ]
+    ])
+  })
+
   it("caps the list and reports the uncapped total", () => {
     const records = Array.from({ length: BRIEFING_GROUP_CAP + 3 }, (_, at) =>
       detected(at.toString(16).padStart(12, "0"), [`work:lone-${String(at)}`])
@@ -540,7 +585,7 @@ describe("moot detected tasks", () => {
     expect(briefing.mootDetectedTasksTotal).toBe(BRIEFING_GROUP_CAP + 3)
   })
 
-  it("keeps detected tasks out of the entity counts the inbox list homes records by", () => {
+  it("keeps entity questions, and no other detected task, out of the inbox list's entity counts", () => {
     const entity = "project:acme-widget"
     const records = [
       record("areas/inbox/a-fact.html", { entities: [entity] }),
@@ -562,12 +607,30 @@ describe("moot detected tasks", () => {
         record("areas/gadgets/e.html", { entities: ["project:acme-gadget"] }),
         record("areas/gadgets/det-abcdefabcdef-confirm-one-subject.html", {
           memoryType: "task",
+          tags: ["detected", "entity-resolution"],
           entities: ["project:acme-gadget", "project:acme-gadgets"]
         })
       ])
     ).inbox[0]
     expect(shared?.home).toBeNull()
     expect(shared?.alternative).toEqual({ dir: "areas/gadgets", score: 1 })
+
+    // A commitment a detector found, filed under the same home, is a carrier like any record.
+    const committed = briefingFromView(
+      viewOver([
+        record("areas/inbox/d-fact.html", { entities: ["project:acme-gadget"] }),
+        record("areas/gadgets/e.html", { entities: ["project:acme-gadget"] }),
+        record("areas/gadgets/det-bcdefabcdefa-confirm-the-gadget-audit-is-still-wanted.html", {
+          memoryType: "task",
+          tags: ["detected", "trace-commitment"],
+          entities: ["project:acme-gadget"]
+        })
+      ])
+    ).inbox[0]
+    expect(committed?.home).toMatchObject({
+      dir: "areas/gadgets",
+      shared: [{ entity: "project:acme-gadget", records: 2 }]
+    })
   })
 })
 

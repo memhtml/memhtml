@@ -795,6 +795,7 @@ describe("the propose tool closes a moot detected task", () => {
     claim: 'confirm: are "work:a" and "work:b" the same work?',
     memoryType: "task",
     taskStatus: "todo",
+    tags: ["detected", "entity-resolution"],
     entities: ["work:a", "work:b"],
     at: "2031-01-01T00:00:00Z"
   })

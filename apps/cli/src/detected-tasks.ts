@@ -4,9 +4,10 @@ import { DETECTION_DIGEST_CHARS, DETECTION_PREFIX, placementFor } from "@memhtml
 import { SLUG_FALLBACK, SLUG_MAX_LENGTH, slugify } from "@memhtml/contracts/slug"
 
 /**
- * The path algebra of a machine-detected task: the key a detector derives from a finding and the path
- * that key names. Recognizing one from its path alone (`detectionKeyOf`, `isDetectedTaskPath`) is in
- * `@memhtml/contracts/paths`, because `task list --detected` and the curator's briefing both read it.
+ * The path algebra of a machine-detected task: the key a detector derives from a finding and the
+ * path that key names. Recognizing one from its path alone (`detectionKeyOf`,
+ * `isDetectedTaskPath`) is in `@memhtml/contracts/paths`, because `task list --detected` and the
+ * curator's briefing both read it.
  *
  * A detected task is an ordinary task and files where one files. `placementFor` routes a workspaceless
  * task to `areas/inbox/tasks`, and `memhtml doctor` reports inbox depth, so a noisy detector shows up

@@ -36,8 +36,8 @@ import {
  * matches, such as an importer's `*-import`, which name who wrote a record rather than what it is
  * about; none by default). An entity carried by more than {@link GENERIC_ENTITY_SHARE} of the active
  * records (never fewer than {@link GENERIC_ENTITY_FLOOR}) is the store's subject rather than a
- * record's, and places nothing: one person entity on 209 of 838 active records on 2026-09-30. A
- * detected task's entities are left out of every entity count here ({@link claimedEntities}).
+ * record's, and places nothing: one person entity on 209 of 838 active records on 2026-09-30. An
+ * entity question's entities are left out of every entity count here ({@link claimedEntities}).
  *
  * Each candidate scores {@link NAMED_WEIGHT} per entity whose name is the home's directory name, 1
  * per tag that is, and 1 per record at the home carrying each of the record's entities. The best
@@ -186,12 +186,30 @@ const cut = (text: string, chars: number): string =>
 
 const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
 
+/** The tag a detector's task carries first, and the detector whose tasks question entity names. */
+const DETECTED_TAG = "detected"
+const ENTITY_QUESTION_DETECTOR = "entity-resolution"
+
 /**
- * The entities a record claims, for counting: none for a detected task (`det-<digest>-…`), whose
- * entities name the spellings its question is about rather than a subject it states anything of.
+ * True when a record is an entity question: a task at a detected path (`isDetectedTaskPath`) whose
+ * first two tags are `detected` and `entity-resolution`, in document order, the way that detector
+ * tagged what it opened. It asks whether the spellings it carries name one subject, so its entities
+ * are what it asks about. Every other detected task (a dedup or edge review, a follow-up or a
+ * commitment found in prose) records work, and an entity on it names the subject of that work.
+ */
+export const isEntityQuestion = (record: MemoryRecord): boolean =>
+  record.memoryType === "task" &&
+  isDetectedTaskPath(record.path) &&
+  record.tags[0] === DETECTED_TAG &&
+  record.tags[1] === ENTITY_QUESTION_DETECTOR
+
+/**
+ * The entities a record claims, for counting: none for an entity question
+ * ({@link isEntityQuestion}), whose entities name the spellings it asks about rather than a subject
+ * it states anything of.
  */
 export const claimedEntities = (record: MemoryRecord): ReadonlySet<string> =>
-  isDetectedTaskPath(record.path) ? new Set() : new Set(record.entities)
+  isEntityQuestion(record) ? new Set() : new Set(record.entities)
 
 /** True when a record is an inbox record the list quotes: not a task, a verdict, or a people record. */
 export const isPlaceable = (record: MemoryRecord, headlineTypes: ReadonlySet<string>): boolean =>

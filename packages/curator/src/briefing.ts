@@ -1,7 +1,6 @@
 import {
   type HeadView,
   hrefToPath,
-  isDetectedTaskPath,
   type MemoryRecord,
   type MemoryRel,
   originalPathFor
@@ -14,6 +13,7 @@ import {
   type InboxPolicy,
   type InboxRecord,
   inboxWorkList,
+  isEntityQuestion,
   PLACEMENT_QUOTA
 } from "./inbox.js"
 
@@ -64,13 +64,16 @@ import {
  * - `inbox`: the active records under `areas/inbox/`, each with the home code would move it to and
  *   the evidence (`inbox.ts`), homes first. 535 of 923 active records sat there on 2026-09-30 and
  *   the two curator runs before this list existed moved none.
- * - `mootDetectedTasks`: live detected tasks (`det-<digest>-…`, `isDetectedTaskPath`) whose
- *   question has lost a side: an entity the task carries is carried by no live record outside
- *   detected tasks, or every record carrying its entities is archived. No code in this build mints
- *   or closes a detected task, so the briefing names the moot ones with the reason and the
- *   charter's entity-resolution rule archives them. A detected task's entities are what it asks
- *   about, not what it claims, so no entity count here or in `inbox.ts` reads them
- *   (`claimedEntities`).
+ * - `mootDetectedTasks`: live entity questions (`isEntityQuestion` in `inbox.ts`: a detected task
+ *   at a `det-<digest>-…` path tagged `detected` and `entity-resolution`, asking whether the
+ *   spellings it carries name one subject) whose question has lost a side: an entity the task
+ *   carries is carried by no live record but entity questions, or every record carrying its
+ *   entities is archived. No code in this build mints or closes a detected task, so the briefing
+ *   names the moot questions with the reason and the charter's entity-resolution rule archives
+ *   them. Every other detected task records work and stays off the list. An entity question's
+ *   entities are what it asks about, not what it claims, so no entity count here or in `inbox.ts`
+ *   reads them (`claimedEntities`); every other record's entities, other detected tasks' included,
+ *   are claims.
  */
 
 /** One active record in a group: its path, its claim, and the value the claim writes. */
@@ -141,9 +144,9 @@ export interface DanglingEdge {
 }
 
 /**
- * One live detected task whose question is moot. `entities` are the ones it carries, sorted, and
- * `reason` names the side that lost its records: `<entity> has no claim outside detected tasks`, or
- * `every record carrying <entities> is archived`.
+ * One live entity question whose question is moot. `entities` are the ones it carries, sorted, and
+ * `reason` names the side that lost its records: `<entity> has no claim outside detected tasks`
+ * (its only live carriers are entity questions), or `every record carrying <entities> is archived`.
  */
 export interface MootDetectedTask {
   readonly path: string
@@ -208,7 +211,7 @@ export interface Briefing {
   /** Dangling edges from active records, by path then href, capped at {@link BRIEFING_GROUP_CAP}. */
   readonly danglingEdges: ReadonlyArray<DanglingEdge>
   readonly danglingEdgesTotal: number
-  /** Live detected tasks whose question is moot, by path, capped at {@link BRIEFING_GROUP_CAP}. */
+  /** Live entity questions that are moot, by path, capped at {@link BRIEFING_GROUP_CAP}. */
   readonly mootDetectedTasks: ReadonlyArray<MootDetectedTask>
   readonly mootDetectedTasksTotal: number
   /**
@@ -263,11 +266,12 @@ const joinAnd = (items: ReadonlyArray<string>): string =>
     : `${items.slice(0, -1).join(", ")}, and ${items.at(-1) ?? ""}`
 
 /**
- * Why a detected task questioning `entities` is moot, or `null` while every entity it names still
- * has a live claim (a live record outside detected tasks carrying it). `live` and `archived` count
- * those claims per entity among active and archived records. When no entity has a live claim and
- * each has an archived one, both sides' records are archived and the reason says so; otherwise it
- * names the first entity with no live claim, preferring one no record ever carried.
+ * Why an entity question about `entities` is moot, or `null` while every entity it names still
+ * has a live claim (a live record carrying it that is not an entity question). `live` and
+ * `archived` count those claims per entity among active and archived records. When no entity has a
+ * live claim and each has an archived one, both sides' records are archived and the reason says
+ * so; otherwise it names the first entity with no live claim, preferring one no record ever
+ * carried.
  */
 const mootReason = (
   entities: ReadonlyArray<string>,
@@ -311,10 +315,10 @@ export const briefingFromView = (
   const supersededBy = new Map<string, Array<string>>()
   // original path -> its newest archived form.
   const archivedForm = new Map<string, string>()
-  // entity -> the active and the archived records claiming it, detected tasks never among them.
+  // entity -> the active and the archived records claiming it, entity questions never among them.
   const liveClaims = new Map<string, number>()
   const archivedClaims = new Map<string, number>()
-  const detectedTasks: Array<MemoryRecord> = []
+  const entityQuestions: Array<MemoryRecord> = []
   for (const record of view.records()) {
     const claims = record.archived ? archivedClaims : liveClaims
     for (const entity of claimedEntities(record)) claims.set(entity, (claims.get(entity) ?? 0) + 1)
@@ -342,7 +346,7 @@ export const briefingFromView = (
       continue
     }
     active += 1
-    if (record.memoryType === "task" && isDetectedTaskPath(record.path)) detectedTasks.push(record)
+    if (isEntityQuestion(record)) entityQuestions.push(record)
     if (record.entities.length === 0 && !record.path.startsWith(ANCHORED_PREFIX)) {
       unlabeled.push({ path: record.path, claim: record.claim, memoryType: record.memoryType })
     }
@@ -431,7 +435,7 @@ export const briefingFromView = (
   unlabeled.sort(byPath)
 
   const mootDetectedTasks: Array<MootDetectedTask> = []
-  for (const task of detectedTasks) {
+  for (const task of entityQuestions) {
     const entities = [...new Set(task.entities)].sort()
     const reason = mootReason(entities, liveClaims, archivedClaims)
     if (reason !== null)
