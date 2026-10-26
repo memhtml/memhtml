@@ -25,9 +25,10 @@ interface ProcessResult {
  * hanging a headless process, `GIT_OPTIONAL_LOCKS=0` stops a read from taking the index lock, and
  * `LC_ALL=C` pins the message locale so the raced-ref classification reads the same words everywhere.
  * The four `*_PATHSPECS` variables are pinned to `0`, git's default, as the store's git service pins
- * them, because each changes how every pathspec matches. `dirtyPaths` passes its paths as
- * `:(literal)` pathspecs, which `GIT_LITERAL_PATHSPECS=1` would read as part of the path, so that
- * nothing matched, and `GIT_ICASE_PATHSPECS=1` would match in any case.
+ * them. `dirtyPaths` passes its paths as `:(literal)` pathspecs, and two of the four still change
+ * those: `GIT_LITERAL_PATHSPECS=1` reads the `:(literal)` prefix as part of the path, so nothing
+ * matches, and `GIT_ICASE_PATHSPECS=1` folds case. The other two cannot move a literal pathspec, and
+ * are pinned so that a later call passing a pattern starts from git's default as well.
  */
 const GIT_ENV: Readonly<Record<string, string>> = {
   GIT_TERMINAL_PROMPT: "0",
@@ -111,9 +112,9 @@ const FULL_SHA = /^[0-9a-f]{40}$/
 
 /**
  * Each path as a `:(literal)` pathspec, so `[`, `*` and `?` in a record's path match only
- * themselves; the rule of `literalPathspecs` in `packages/store/src/git.ts`. An empty path fails as
- * a `GitFailure` naming `command` before git runs: git refuses a bare `""`, but `:(literal)` with
- * nothing after it matches every path.
+ * themselves, the same rule as `literalPathspecs` in `packages/store/src/git.ts`. An empty path
+ * fails as a `GitFailure` naming `command` before git runs: git refuses a bare `""`, but
+ * `:(literal)` with nothing after it matches every path.
  */
 const literalPathspecs = (
   command: string,

@@ -97,7 +97,7 @@ export interface GitShape {
    * because `git add` reads its arguments as pathspecs and `[`, `*` and `?` are ordinary characters
    * in a record's path: a bare `resources/a[b]/index.html` also stages an untracked
    * `resources/ab/index.html`. A directory still stages what is under it, a tracked path missing
-   * from the tree stages its removal, and an empty path fails before git runs.
+   * from the working tree stages its removal, and an empty path fails before git runs.
    */
   readonly add: (paths: ReadonlyArray<string>) => Effect.Effect<void, GitFailure>
   /** `git mv`. The destination's parent directory must already exist, since git will not make it. */
