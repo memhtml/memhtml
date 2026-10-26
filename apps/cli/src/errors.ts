@@ -1,5 +1,6 @@
 import { closedDoorRefusal, sessionDoorRefusal } from "./doors.js"
 import { type ErrorCode, type Failure, fail } from "./envelope.js"
+import { MARKUP_IN_PROSE_SUGGESTIONS, markupInProseReason } from "./prose.js"
 
 /**
  * The one translation from a typed domain failure to an envelope code.
@@ -96,6 +97,10 @@ export const codeFor = (error: unknown): ErrorCode => {
     // (the contract a runtime already branches on), the store's own code when `closed` did alone.
     case "V1DoorClosed":
       return typeof error.session === "string" ? "ERR_SESSION_BOUND" : "ERR_V1_DOOR_CLOSED"
+    // A prose `body` holding an HTML block tag outside code, refused at the door before rendering.
+    // The usage code the JSONL doors give for the same line, since the fix is in the call.
+    case "MarkupInProse":
+      return "ERR_INVALID_FLAG"
     default:
       return "ERR_UNKNOWN"
   }
@@ -158,6 +163,11 @@ export const messageFor = (error: unknown): string => {
         ? closedDoorRefusal(door).error
         : sessionDoorRefusal(door, session).error
     }
+    case "MarkupInProse":
+      return markupInProseReason({
+        line: typeof error.line === "number" ? error.line : 0,
+        tag: text(error.tag) ?? "a block tag"
+      })
     default:
       return `unexpected failure: ${error._tag}`
   }
@@ -259,6 +269,8 @@ export const SUGGESTIONS: Readonly<Record<string, SuggestionsFor>> = {
     "memhtml config",
     `fix or remove ${text(error.path) ?? "memhtml.config.json"}, then retry`
   ],
+  // The same line with the markup in `article_html`, or the tag kept as prose in backticks.
+  MarkupInProse: () => MARKUP_IN_PROSE_SUGGESTIONS,
   // The session door that does the same job, for the door that was closed.
   V1DoorClosed: (error) => {
     const door = text(error.door) ?? "write"

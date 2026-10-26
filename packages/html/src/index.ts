@@ -7,6 +7,8 @@
  * markup it came from.
  */
 
+export type { BlockTagInArticle, BlockTagText } from "./block-tags.js"
+export { blockTagInArticle, blockTagInText } from "./block-tags.js"
 export type { CheckResult } from "./constraints.js"
 export {
   checkDocument,

@@ -18,9 +18,13 @@
  * landing a file with an empty `files.gist`. What this module carries is the authoring convenience
  * the doors exist to provide: a JSONL line and an MCP call carry no `claim` field, so the door
  * derives one instead of asking an author to restate the body's first sentence.
+ *
+ * The one refusal the doors share about a body's text lives here too, for the same one-copy
+ * reason: {@link MarkupInProse}, a body holding an HTML block tag outside code.
  */
 
-import { closesFence, fenceOpeningOf } from "@memhtml/html"
+import { blockTagInText, closesFence, fenceOpeningOf } from "@memhtml/html"
+import { Schema } from "effect"
 
 /**
  * Split prose into paragraphs on blank lines, dropping the empties. Inside a fenced code block a
@@ -76,3 +80,47 @@ export const proseTail = (prose: string): ReadonlyArray<string> => {
   const remainder = prose.trim().slice(claimFromProse(prose).length).trim()
   return remainder === "" ? [] : paragraphsOf(remainder)
 }
+
+/**
+ * A prose body that holds an HTML block tag outside code: the refusal both doors give before a
+ * body is rendered. `line` is the body's own 1-based line and `tag` the tag as written, raw or
+ * entity-escaped.
+ *
+ * Prose is escaped as text, so `<p>One.</p>` in a body would land as the characters `&lt;p&gt;One.`
+ * inside the claim's `<mark>`, and the render gate accepts that because escaped text is valid
+ * content. A block tag outside code in prose is almost never meant as text, and the door is the
+ * last place that still knows the writer sent it, so the door refuses and names `article_html`, the
+ * field that takes markup. A tag the record discusses goes in backticks or a fenced block, which the
+ * check reads as code (`blockTagInText` in `@memhtml/html`, the detector `validateOps` shares).
+ *
+ * A typed error rather than a door-local failure because the MCP tools raise it inside a handler,
+ * where `codeFor`, `messageFor`, and each door's suggestions give it its envelope; `memhtml apply`
+ * and `memhtml session put` refuse with the same reason at exit 2, naming the JSONL line too.
+ */
+export class MarkupInProse extends Schema.TaggedError<MarkupInProse>()("MarkupInProse", {
+  line: Schema.Finite,
+  tag: Schema.String
+}) {}
+
+/** The refusal for a prose body holding a block tag outside code, or `undefined` for none. */
+export const markupInProse = (prose: string): MarkupInProse | undefined => {
+  const found = blockTagInText(prose)
+  return found === undefined ? undefined : new MarkupInProse(found)
+}
+
+/** The reason a {@link MarkupInProse} refusal gives, the same words on every door. */
+export const markupInProseReason = (refusal: {
+  readonly line: number
+  readonly tag: string
+}): string =>
+  `\`body\` holds the HTML block tag \`${refusal.tag}\` on its line ${String(refusal.line)}, outside a code fence or backticks: \`body\` is prose and is stored as escaped text, so the tag would reach the claim and the paragraphs as literal characters. Send the article as markup in \`article_html\` instead, with its own <mark> in the first <p>, or put a tag the record discusses in backticks`
+
+/**
+ * What a JSONL writer does about a {@link MarkupInProse} refusal: the same line with the markup in
+ * `article_html`, or the tag kept as prose in backticks. Neither entry holds a backtick itself,
+ * because the reference site renders each suggestion inside a code span.
+ */
+export const MARKUP_IN_PROSE_SUGGESTIONS: ReadonlyArray<string> = [
+  '{"op":"write","title":"<title>","type":"semantic","article_html":"<p><mark><the claim></mark></p><ul><li><an item></li></ul>"}',
+  "keep body and put a tag the record discusses in backticks or a fenced block, which the check reads as code"
+]

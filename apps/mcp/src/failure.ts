@@ -106,6 +106,16 @@ export const mcpSuggestionsFor = (error: unknown): ReadonlyArray<string> => {
         "fix the violated constraint named above and call the same tool again",
         "nothing was written and no commit was made — the store refused at the render gate"
       ]
+    /*
+     * A prose `body` holding a block tag outside code. The tool takes markup in its other
+     * parameter, so the recovery is the same call with the article moved there; a record that only
+     * discusses a tag keeps `body` and puts the tag in backticks.
+     */
+    case "MarkupInProse":
+      return [
+        "call the same tool with the article as markup in article_html instead of body, with exactly one <mark> in its first <p>",
+        "keep body and put a tag the record discusses in backticks or a fenced block, if the tag is the subject rather than the markup"
+      ]
     case "ModelUnavailable":
       return [
         "retry — search degrades to the lexical floor without the embedder, so results are narrower but real",

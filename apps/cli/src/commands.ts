@@ -1922,6 +1922,10 @@ export const GUIDE: ReadonlyArray<GuideBlock> = [
       "is one paragraph after it) or you supply `--article-html` and own the markup yourself. " +
       "On a `memhtml apply` line the prose form is the `body` field, whose first sentence becomes the claim, " +
       "and the markup form is `article_html`. " +
+      "Prose is stored as escaped text, so a `body` on an `apply` or `session put` line that holds an HTML " +
+      "block tag (`<p>`, `<ul>`, `<li>`, `<dl>`, `<table>`, `<h2>` and the like, raw or escaped as " +
+      "`&lt;p&gt;`) outside a fenced block or backticks is refused at exit 2 with ERR_INVALID_FLAG naming " +
+      "the line: send that article as `article_html`, and put a tag the memory discusses in backticks. " +
       "When you supply markup you own two constraints. It must contain EXACTLY ONE `<mark>`, and that " +
       "`<mark>` must sit in the article's first `<p>` or `<li>` and not inside an `<aside>` or " +
       "`<details>`. The claim leads the article and is never a caveat or behind a fold. And the first " +

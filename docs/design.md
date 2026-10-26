@@ -486,14 +486,14 @@ A session id matches `SESSION_ID` (`packages/session/src/session.ts`). `session 
 
 `validateOps(view, ops, { scope, writeBar, batchCap })` (`packages/session/src/validate.ts`) judges a whole batch against the version the session sees and returns every violation it finds, except that a batch over the cap returns the `batch-cap` violation alone:
 
-| kind            | when                                                                                                                                                   |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `format`        | the file doesn't parse or breaks a format constraint, or a move leaves a live edge pointing at the old path                                            |
-| `duplicate`     | the put's content hash is already active at another path                                                                                               |
-| `claim-edit`    | a put over an active path with a different content hash                                                                                                |
-| `reserved-path` | `.memhtml/`, `memhtml.config.json`, `index.html`, or `sitemap.xml` under any scope; `areas/arcs/` and `resources/people/` unless the scope is `curate` |
-| `batch-cap`     | more than 200 ops (`BATCH_CAP`)                                                                                                                        |
-| `write-bar`     | the store's write bar refuses the record (§19)                                                                                                         |
+| kind            | when                                                                                                                                                                                                           |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `format`        | the file doesn't parse or breaks a format constraint, a put's `<p>` or `<mark>` text holds a block tag as characters outside code (`blockTagInArticle`), or a move leaves a live edge pointing at the old path |
+| `duplicate`     | the put's content hash is already active at another path                                                                                                                                                       |
+| `claim-edit`    | a put over an active path with a different content hash                                                                                                                                                        |
+| `reserved-path` | `.memhtml/`, `memhtml.config.json`, `index.html`, or `sitemap.xml` under any scope; `areas/arcs/` and `resources/people/` unless the scope is `curate`                                                         |
+| `batch-cap`     | more than 200 ops (`BATCH_CAP`)                                                                                                                                                                                |
+| `write-bar`     | the store's write bar refuses the record (§19)                                                                                                                                                                 |
 
 The scope is `session` for every ref except one under `refs/heads/curate/`, which is `curate` (`sessionScopeOf` in `apps/cli/src/v2.ts`). An `archive` op's article must be its source's, because the commit writes the source as the batch left it. Head ops judge their source as the batch has left it, so a batch may drop an edge it added and may not drop one twice, and a `label` of a value the record already carries is a violation.
 

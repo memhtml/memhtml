@@ -11,6 +11,8 @@ import {
   type layerApp,
   linkMemories,
   listMemories,
+  type MarkupInProse,
+  markupInProse,
   messageFor,
   neighborsOf,
   proseTail,
@@ -140,6 +142,12 @@ const arr = <A>(value: ReadonlyArray<A> | null | undefined): ReadonlyArray<A> =>
  * The prose path derives through `claimFromProse`/`proseTail`, imported from `@memhtml/cli` so this door
  * and `memhtml apply` split prose the same way. A second copy here would let the same body produce
  * different gists depending on which door wrote it.
+ *
+ * The prose path also refuses a body holding an HTML block tag outside code (`markupInProse`, the
+ * check `memhtml apply` runs), with `ERR_INVALID_FLAG` naming `article_html`. Prose is escaped as
+ * text, so such a body would write the tag's characters into the claim, and the render gate cannot
+ * tell them from text the caller meant. It runs after the XOR, so a call that names both fields
+ * still gets the XOR's answer.
  */
 interface Authored {
   readonly claim: string
@@ -150,7 +158,7 @@ interface Authored {
 const authored = (
   body: string | null | undefined,
   articleHtml: string | null | undefined
-): Effect.Effect<Authored, InvalidMemory> => {
+): Effect.Effect<Authored, InvalidMemory | MarkupInProse> => {
   const prose = opt(body)
   const markup = opt(articleHtml)
   const hasProse = prose !== undefined && prose.trim() !== ""
@@ -162,15 +170,14 @@ const authored = (
       })
     )
   }
-  return Effect.succeed(
-    hasMarkup
-      ? { claim: "", body: [], articleHtml: markup }
-      : {
-          claim: claimFromProse(prose as string),
-          body: proseTail(prose as string),
-          articleHtml: undefined
-        }
-  )
+  if (hasMarkup) return Effect.succeed({ claim: "", body: [], articleHtml: markup })
+  const refusal = markupInProse(prose as string)
+  if (refusal !== undefined) return Effect.fail(refusal)
+  return Effect.succeed({
+    claim: claimFromProse(prose as string),
+    body: proseTail(prose as string),
+    articleHtml: undefined
+  })
 }
 
 /** One `memory_write_batch` op as it arrives on the wire, before the XOR has been resolved. */
@@ -217,8 +224,8 @@ const writeParamsOf = (op: BatchOpParams, article: Authored): WriteParams => ({
 })
 
 /**
- * An op's XOR refusal as that op's own report, through the SAME `codeFor`/`messageFor` pair
- * `operations.ts`'s `reportFailure` uses.
+ * An op's XOR refusal, or its body's markup refusal, as that op's own report, through the SAME
+ * `codeFor`/`messageFor` pair `operations.ts`'s `reportFailure` uses.
  *
  * Not a second mapping of the error: a per-op `code` is part of the batch payload's contract, and
  * `memhtml apply` and `memory_write_batch` reporting different codes for one refused op is exactly the
@@ -227,7 +234,7 @@ const writeParamsOf = (op: BatchOpParams, article: Authored): WriteParams => ({
  * `WriteParams` takes an already-resolved `claim`/`body`/`articleHtml`. So this is the one place
  * a report is built outside `batchWrite`, and it is built with `batchWrite`'s own functions.
  */
-const xorReport = (index: number, error: InvalidMemory): BatchOpReport => ({
+const xorReport = (index: number, error: InvalidMemory | MarkupInProse): BatchOpReport => ({
   index,
   ok: false,
   code: codeFor(error),
