@@ -67,9 +67,10 @@ import { STRICT_POLICY } from "./strict-store.js"
  * - `curate-run.ts` `bindTools` (2026-10-18): `promise` runs every call through `Effect.runPromise`,
  *   ignoring `context` -> "a tool call logs through the logger of the fiber that bound it" (the line
  *   goes to the default logger, on stdout, and the captured list is empty).
- * - `curate-run.ts` `land` (2026-10-26): the rebase round without its `withRepoints` completion ->
- *   "repoints an edge the ref gained to the archived path while the curator ran" (the commit is
- *   refused naming the new record, and `land` fails).
+ * - `curate-run.ts` `land` (2026-10-26): the rebase round without its completion -> "repoints an
+ *   edge the ref gained to the archived path while the curator ran" (the commit is refused naming
+ *   the new record, and `land` fails); the completion before the first attempt dropped -> "completes
+ *   a log written without repoints before its first attempt" (the same refusal on attempt 1).
  */
 
 const parse = (stdout: string): Record<string, unknown> =>
@@ -787,34 +788,40 @@ describe("the propose and exec tools move a record", () => {
   }, 120_000)
 })
 
-describe("land completes an archive's repoints after a rebase", () => {
-  it("repoints an edge the ref gained to the archived path while the curator ran", async () => {
-    const root = await repo()
+describe("land completes an archive's repoints against the version it commits over", () => {
+  const retired = "resources/acme-widget/b.html"
+  const slot = archivePathFor(retired, 2031)
+  const later = "resources/acme-widget/d.html"
+  const retiredHtml = renderTemplate({
+    title: "Widget batch size",
+    claim: "The acme widget ships in batches of twelve.",
+    memoryType: "semantic",
+    entities: ["project:acme-widget"],
+    at: "2031-03-01T12:00:00Z"
+  })
+  const laterHtml = renderTemplate({
+    title: "Widget packing note",
+    claim: "Widget batches are packed by hand.",
+    memoryType: "semantic",
+    entities: ["project:acme-widget"],
+    links: [{ rel: "relates_to", href: `/${retired}` }],
+    at: "2031-03-02T12:00:00Z"
+  })
+  const commitFiles = async (root: string, files: Record<string, string>, message: string) => {
     const git = makeGit(root)
-    const commitFiles = async (files: Record<string, string>, message: string) => {
-      for (const [path, html] of Object.entries(files)) {
-        await mkdir(dirname(join(root, path)), { recursive: true })
-        await writeFile(join(root, path), html, "utf8")
-      }
-      await Effect.runPromise(git.run(["add", "-A"]).pipe(Effect.orDie))
-      await Effect.runPromise(git.run(["commit", "-q", "-m", message]).pipe(Effect.orDie))
-      const sha = await Effect.runPromise(revParse(root, "HEAD"))
-      if (sha === null) throw new Error("no HEAD")
-      return sha
+    for (const [path, html] of Object.entries(files)) {
+      await mkdir(dirname(join(root, path)), { recursive: true })
+      await writeFile(join(root, path), html, "utf8")
     }
-    const retired = "resources/acme-widget/b.html"
-    const slot = archivePathFor(retired, 2031)
-    const later = "resources/acme-widget/d.html"
-    const retiredHtml = renderTemplate({
-      title: "Widget batch size",
-      claim: "The acme widget ships in batches of twelve.",
-      memoryType: "semantic",
-      entities: ["project:acme-widget"],
-      at: "2031-03-01T12:00:00Z"
-    })
-    const base = await commitFiles({ [retired]: retiredHtml }, "one claim")
+    await Effect.runPromise(git.run(["add", "-A"]).pipe(Effect.orDie))
+    await Effect.runPromise(git.run(["commit", "-q", "-m", message]).pipe(Effect.orDie))
+    const sha = await Effect.runPromise(revParse(root, "HEAD"))
+    if (sha === null) throw new Error("no HEAD")
+    return sha
+  }
+  /** A curator session over `base` whose log holds the archive alone, with no repoints. */
+  const bareArchive = async (root: string, base: string) => {
     const head = await Effect.runPromise(loadHeadAt(root, base))
-    // Nothing cites the record at the base, so the archive goes alone.
     const session = await Effect.runPromise(
       startSession({ root, id: "curate-land", base: head.view }).pipe(
         Effect.flatMap((started) =>
@@ -822,27 +829,42 @@ describe("land completes an archive's repoints after a rebase", () => {
         )
       )
     )
-    // Another writer lands a record citing it at its live path before the curator's session does.
-    await commitFiles(
-      {
-        [later]: renderTemplate({
-          title: "Widget packing note",
-          claim: "Widget batches are packed by hand.",
-          memoryType: "semantic",
-          entities: ["project:acme-widget"],
-          links: [{ rel: "relates_to", href: `/${retired}` }],
-          at: "2031-03-02T12:00:00Z"
-        })
-      },
-      "another writer"
+    return { head, session }
+  }
+  const landedCites = async (root: string, sha: string) => {
+    const cites = await Effect.runPromise(makeGit(root).run(["show", `${sha}:${later}`]))
+    expect(cites).toContain(`<link rel="memhtml-relates-to" href="/${slot}">`)
+    expect(cites).not.toContain(`href="/${retired}"`)
+  }
+
+  it("repoints an edge the ref gained to the archived path while the curator ran", async () => {
+    const root = await repo()
+    // Nothing cites the record at the base, so the archive goes alone.
+    const { head, session } = await bareArchive(
+      root,
+      await commitFiles(root, { [retired]: retiredHtml }, "one claim")
     )
+    // Another writer lands a record citing it at its live path before the curator's session does.
+    await commitFiles(root, { [later]: laterHtml }, "another writer")
     const landed = await Effect.runPromise(
       land({ root, session, head, message: "retire one claim", writeBar: DEFAULT_WRITE_BAR })
     )
     expect(landed.rebases).toBe(1)
-    const cites = await Effect.runPromise(git.run(["show", `${landed.sha}:${later}`]))
-    expect(cites).toContain(`<link rel="memhtml-relates-to" href="/${slot}">`)
-    expect(cites).not.toContain(`href="/${retired}"`)
+    await landedCites(root, landed.sha)
+  }, 120_000)
+
+  it("completes a log written without repoints before its first attempt", async () => {
+    const root = await repo()
+    // The citer is at the base, and the resumed log holds the bare archive an older build wrote.
+    const { head, session } = await bareArchive(
+      root,
+      await commitFiles(root, { [retired]: retiredHtml, [later]: laterHtml }, "two claims")
+    )
+    const landed = await Effect.runPromise(
+      land({ root, session, head, message: "retire one claim", writeBar: DEFAULT_WRITE_BAR })
+    )
+    expect(landed.rebases).toBe(0)
+    await landedCites(root, landed.sha)
   }, 120_000)
 })
 

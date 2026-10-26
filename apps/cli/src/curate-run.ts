@@ -31,8 +31,8 @@ import {
   appendOps,
   type CommitScope,
   commitSession,
+  missingRepoints,
   rebaseSession,
-  replaceOps,
   resumeSession,
   type Session,
   saveSession,
@@ -493,6 +493,24 @@ export const land = (input: {
     let session = input.session
     let head = input.head
     const reload = input.reload ?? ((sha: string) => loadHeadAt(input.root, sha))
+    // The repoints the log's archives and moves lack against the version it is about to commit
+    // over, appended before each attempt: a resumed log may predate the completion, and a rebase
+    // can bring a record that gained an edge to a path the log vacates. `session commit` does the
+    // same (`commitOverHead`).
+    const complete = () =>
+      Effect.gen(function* () {
+        if (session.pending !== undefined) return
+        const completion = missingRepoints(head.view, session.ops, CURATE_SCOPE)
+        if (completion.overflow.length > 0) {
+          return yield* Effect.fail(
+            InvalidMemory.make({
+              reason: `curate run: the session's ops were refused at commit, so nothing landed and the log stays for --resume: ${completion.overflow.map(describeViolation).join(" | ")}`
+            })
+          )
+        }
+        if (completion.ops.length > 0) session = yield* appendOps(session, completion.ops)
+      })
+    yield* complete()
     for (let attempt = 1; attempt <= COMMIT_ATTEMPTS; attempt += 1) {
       const outcome = yield* commitSession({
         session,
@@ -508,12 +526,7 @@ export const land = (input: {
           head = yield* reload(outcome.mainSha)
           session = rebaseSession(session, head.view)
           yield* saveSession(session)
-          // The new tip may hold a record with an edge to a path the log vacates; its repoint is
-          // added before the next attempt, as `session commit` and `curate merge` add theirs.
-          const completed = withRepoints(head.view, session.ops, CURATE_SCOPE)
-          if (completed.length > session.ops.length) {
-            session = yield* replaceOps(session, completed)
-          }
+          yield* complete()
           break
         }
         case "refused":
