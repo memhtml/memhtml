@@ -186,9 +186,13 @@ const markContradictions = (
   Effect.gen(function* () {
     const contradictions: Array<{ path: string; against: string }> = []
     // A rival this batch moves is linked at its destination, so the edge never names a path the
-    // commit empties.
+    // commit empties; one it archives is not linked at all.
     const movedTo = new Map<string, string>()
-    for (const op of ops) if (op.kind === "move") movedTo.set(op.path, op.to)
+    const archiving = new Set<string>()
+    for (const op of ops) {
+      if (op.kind === "move") movedTo.set(op.path, op.to)
+      else if (op.kind === "archive") archiving.add(op.path)
+    }
     for (const op of ops) {
       if (op.kind !== "put") continue
       const html = writes.get(op.path)
@@ -201,7 +205,7 @@ const markContradictions = (
       for (const other of head.byFrameKey(key)) {
         if (other === op.path) continue
         const record = head.get(other)
-        if (record === undefined || record.archived) continue
+        if (record === undefined || record.archived || archiving.has(other)) continue
         const against = movedTo.get(other) ?? other
         linked = addLink(linked, "contradicts", pathToHref(against))
         contradictions.push({ path: op.path, against })

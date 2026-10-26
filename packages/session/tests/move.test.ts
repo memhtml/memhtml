@@ -54,6 +54,9 @@ import {
  * - withRepoints, scope (2026-10-26): the `isReservedPath(holder, scope)` skip dropped -> "leaves a
  *   holder the scope may not write to the curator, and repoints it under curate" (the arc is
  *   repointed under `session`).
+ * - commit, step 3 (2026-10-26): the `archiving` skip dropped from `markContradictions` -> "marks no
+ *   contradiction against a rival the same batch archives" (the successor is marked against the
+ *   path the archive empties).
  * - withRepoints, moved holders (2026-10-26): batch unlinks keyed by the path they name, not the
  *   path the holder had when the batch began -> "takes an unlink at the path the batch moved a
  *   holder to as that holder's repoint" (a second pair is added at the old path).
@@ -512,6 +515,38 @@ describe("withRepoints completes an archive", () => {
         expect(paths, `${path} -> ${match[1]}`).toContain(match[1])
       }
     }
+  })
+
+  it("marks no contradiction against a rival the same batch archives", async () => {
+    const repo = await makeRepo()
+    repos.push(repo)
+    await commitFiles(repo.root, { [RETIRED]: RETIRED_HTML })
+    const head = await loadHead(repo.root)
+    // The successor shares the retired claim's frame key and names it at its archive slot.
+    const successor = addLink(
+      memory("Widget batch size, revised", "The acme widget ships in batches of twenty.", {
+        entities: ["project:acme-widget"],
+        at: "2031-03-02T12:00:00Z"
+      }),
+      "supersedes",
+      `/${SLOT}`
+    )
+    const ops = withRepoints(head, [
+      { kind: "put", path: SUCCESSOR, html: successor },
+      retire(RETIRED, RETIRED_HTML)
+    ])
+    expect(validateOps(head, ops)).toEqual([])
+    const session = await run(
+      startSession({ root: repo.root, id: "replace", base: head }).pipe(
+        Effect.flatMap((s) => appendOps(s, ops))
+      )
+    )
+    const outcome = await run(commitSession({ session, head, message: "replace one claim" }))
+    if (outcome.kind !== "committed") throw new Error(JSON.stringify(outcome))
+    expect(outcome.contradictions).toEqual([])
+    const landed = await fileAt(repo.root, outcome.sha, SUCCESSOR)
+    expect(landed).not.toContain("memhtml-contradicts")
+    expect(landed).toContain(`<link rel="memhtml-supersedes" href="/${SLOT}">`)
   })
 })
 
