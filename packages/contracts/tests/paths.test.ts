@@ -225,15 +225,22 @@ describe("activeRecordPathViolation", () => {
   it("refuses a `.` or `..` spelling, which the bucket test alone would read as outside archive/", () => {
     // Both name an archived file once the filesystem resolves them, and `archivePathFor` would copy
     // the spelling into the destination.
-    for (const path of [
-      "./archive/2031/areas/inbox/a-fact.html",
-      "areas/../archive/2031/areas/inbox/a-fact.html"
-    ]) {
-      const reason = activeRecordPathViolation(path)
-      expect(reason).toBe(
-        `path \`${path}\` is not a usable memory path: ${memoryPathViolation(path)}`
-      )
-    }
+    expect(activeRecordPathViolation("areas/../archive/2031/areas/inbox/a-fact.html")).toBe(
+      "path `areas/../archive/2031/areas/inbox/a-fact.html` is not a usable memory path: it carries a `..` path segment"
+    )
+  })
+
+  it("names a leading `.` or `..` segment rather than calling the path bucketless", () => {
+    // A path that visibly starts with a bucket after its `./` is not told it has none.
+    expect(activeRecordPathViolation("./projects/acme-widget/the-widget-pool-size.html")).toBe(
+      "path `./projects/acme-widget/the-widget-pool-size.html` is not a usable memory path: it starts with a `.` segment; drop the leading `./`"
+    )
+    expect(activeRecordPathViolation("./archive/2031/areas/inbox/a-fact.html")).toBe(
+      "path `./archive/2031/areas/inbox/a-fact.html` is not a usable memory path: it starts with a `.` segment; drop the leading `./`"
+    )
+    expect(activeRecordPathViolation("../archive/2031/areas/inbox/a-fact.html")).toBe(
+      "path `../archive/2031/areas/inbox/a-fact.html` is not a usable memory path: it starts with a `..` segment"
+    )
   })
 
   it("refuses every archive path the archive mapping produces", () => {

@@ -245,13 +245,19 @@ export const archiveYearOf = (path: string): number | undefined => {
  * {@link memoryPathViolation}'s own reason, because `normalizePath` keeps `.` and `..` segments: the
  * filesystem resolves `./archive/2031/x.html` and `areas/../archive/2031/x.html` to an archived
  * file, while the bucket read below sees `.` and `areas`, and {@link archivePathFor} would copy the
- * spelling into the destination. A path in the archive bucket is already archived, year partition or
- * not, because the index reads every path under `archive/` as archived. Archiving one again would
- * nest it under `archive/<YYYY>/archive/`, where {@link originalPathFor} maps it back to an archive
- * path rather than to a live one.
+ * spelling into the destination. A leading `.` or `..` segment is named as such, ahead of the bucket
+ * clause it would otherwise trip, so `./projects/x.html` is not told it has no bucket. A path in the
+ * archive bucket is already archived, year partition or not, because the index reads every path
+ * under `archive/` as archived. Archiving one again would nest it under `archive/<YYYY>/archive/`,
+ * where {@link originalPathFor} maps it back to an archive path rather than to a live one.
  */
 export const activeRecordPathViolation = (path: string): string | undefined => {
   const normalized = normalizePath(path)
+  const lead = normalized.split("/")[0]
+  if (lead === "." || lead === "..") {
+    const advice = normalized.startsWith("./") ? "; drop the leading `./`" : ""
+    return `path \`${normalized}\` is not a usable memory path: it starts with a \`${lead}\` segment${advice}`
+  }
   const violation = memoryPathViolation(normalized)
   if (violation !== undefined) {
     return `path \`${normalized}\` is not a usable memory path: ${violation}`
