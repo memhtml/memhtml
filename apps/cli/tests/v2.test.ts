@@ -274,7 +274,9 @@ describe("sessionScopeOf names the scope a session is judged under from its ref"
  * The two read-only answers to "where would this write land": `memhtml path` over the version at
  * HEAD, and `session put --dry-run` over a session's view. Both run the placement a put runs
  * (`putPathFor` in `v2.ts`), so a caller can learn the path, and the collision ordinal it took,
- * before anything is appended or committed. Every case checks that nothing under the root moved.
+ * before anything is appended or committed. `memhtml path` reads no session and judges nothing, so
+ * inside a session, or for a line the write bar might refuse, the dry run is the answer. Every case
+ * checks that nothing under the root moved.
  *
  * Mutations, each run once with the change applied and the named case red:
  * - `v2.ts` `pathPreview`: pass an empty set instead of the `--claimed` paths -> "steps past the
@@ -510,13 +512,49 @@ describe("memhtml path and session put --dry-run preview a write's path, writing
     expect(await readFile(sessionStateFile(repo.root, "s1"), "utf8")).toBe(log)
     expect(await stateOf(repo)).toBe(before)
 
-    // The put itself lands where the dry run said, and `memhtml path` agrees for one line.
+    // The put itself lands where the dry run said.
     const put = await data(repo, ["session", "put", "--id", "s1", "--file", file, "--no-server"])
     expect(put.dryRun).toBe(false)
     expect(put.paths).toEqual(preview.paths)
     expect(put.placements).toEqual(preview.placements)
+
+    // `memhtml path` answers over HEAD and reads no session, so it still names the path s1's put
+    // now holds. Inside the session, its own dry run is the answer, and it steps past both puts.
     const single = await data(repo, ["path", "--title", "A fact", "--type", "semantic"])
     expect(single.path).toBe("areas/inbox/a-fact-2.html")
+    const again = await data(repo, [
+      "session",
+      ...["put", "--id", "s1", "--file", await opsFile([aFact]), "--no-server", "--dry-run"]
+    ])
+    expect(again.paths).toEqual(["areas/inbox/a-fact-4.html"])
+  })
+
+  it("refuses a dry run a blocking violation refuses, and leaves the log as it was", async () => {
+    const repo = await corpus()
+    await data(repo, ["session", "start", "--id", "s1"])
+    const log = await readFile(sessionStateFile(repo.root, "s1"), "utf8")
+    const before = await stateOf(repo)
+    // A filename the site generator owns, and a directory only curation writes.
+    const reserved = [
+      { op: "write", title: "Index", type: "semantic", body: "An index fact." },
+      { ...aFact, path: "areas/arcs/acme-widget.html" }
+    ]
+    for (const line of reserved) {
+      const file = await opsFile([aFact, line])
+      const { exitCode, body } = await cli(repo, [
+        "session",
+        ...["put", "--id", "s1", "--file", file, "--no-server", "--dry-run"]
+      ])
+      expect(exitCode, JSON.stringify(body)).toBe(EXIT_RUNTIME)
+      expect(body.code).toBe("ERR_INVALID_MEMORY")
+      expect(String(body.error)).toContain("reserved path")
+      expect(await readFile(sessionStateFile(repo.root, "s1"), "utf8")).toBe(log)
+    }
+    expect(await stateOf(repo)).toBe(before)
+
+    // `memhtml path` places and does not judge, so it still names the reserved path.
+    const placed = await data(repo, ["path", "--title", "Index", "--type", "semantic"])
+    expect(placed.path).toBe("areas/inbox/index.html")
   })
 
   it("starts no session when a dry run is the first use of MEMHTML_SESSION", async () => {

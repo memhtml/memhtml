@@ -589,12 +589,12 @@ Retrieval over the version at HEAD, or over the head server's version of its ref
 
 ### `memhtml path`
 
-Print the path a write with these fields would land at over the version at HEAD, and the collision ordinal it took, by the placement `session put` runs. Writes nothing.
+Print the path a write with these fields would land at over the version at HEAD, and the collision ordinal it took. Reads no session: inside one, `session put --dry-run` answers over the session's base and its puts. Writes nothing.
 
 - `--title` (string) — The write's title, as a write line gives it. Its slug is the filename stem: kebab-case, at most 80 characters, a longer title cut at its last word boundary that keeps at least 60, else at 80. _(**required**)_
-- `--type` (string) — The memory type, as a write line gives it. `episodic` takes the `YYYYMMDD-` prefix of the current UTC day, `task` routes to `tasks/` under its workspace or the inbox, and `arc` to `areas/arcs/`. _(**required**; one of: `episodic`, `semantic`, `procedural`, `agent_insight`, `user_preference`, `error_pattern`, `verdict`, `precedent`, `arc`, `task`)_
+- `--type` (string) — The memory type, as a write line gives it. `episodic` takes the `YYYYMMDD-` prefix of the current UTC day, `task` routes to `tasks/` under its workspace or the inbox, and `arc` to `areas/arcs/`, which only the `curate` scope writes. _(**required**; one of: `episodic`, `semantic`, `procedural`, `agent_insight`, `user_preference`, `error_pattern`, `verdict`, `precedent`, `arc`, `task`)_
 - `--workspace` (string) — Routes the write to projects/<slug>/, as a write line's `workspace` does.
-- `--tag` (string) — A tag, as a write line's `tags` holds one. Repeatable; the first routes a semantic, procedural, or precedent write with no workspace to resources/<slug>/. _(repeatable)_
+- `--tag` (string) — A tag, as a write line's `tags` holds one. Repeatable; the first non-blank one routes a semantic, procedural, or precedent write with no workspace to resources/<slug>/, except one that slugs to `people`, which no rule routes into, so that write falls to the inbox. _(repeatable)_
 - `--path` (string) — An explicit path, as a write line's `path`. A usable one is the answer as given, in canonical form, with `ordinal: null` and no suffix, and `occupied` says whether the head or --claimed already holds it (a put there is judged against that record rather than stepped past it). One that is not a usable memory path is ignored and the path derived, as a put derives it.
 - `--claimed` (string) — A file of paths pending elsewhere (another session's puts, a draft not written yet), one repo-relative memory path per line, blank lines skipped; `-` reads stdin. Each counts as taken, as a path the head holds does, so the answer steps past it. An unreadable file is ERR_PATH_NOT_FOUND and a line that is not a usable memory path is ERR_INVALID_FLAG naming the line, both at exit 2 before anything opens.
 

@@ -1280,7 +1280,7 @@ Then it asks the head server's `/v1/neighbors` route to place, judge, and rank t
 
 The append always happens in this process, under the session's lock, and only when the log on disk still holds the ops this call read (`appendOps` at `packages/session/src/session.ts:325-335`).
 
-With `--dry-run` the call runs the same steps and stops before the append, so it answers where each put would land, with the same refusal when a violation blocks, and writes nothing (`apps/cli/src/v2.ts:720`). It also skips the implicit start: under `MEMHTML_SESSION` with no log yet, it answers over the base that start would take, with an empty log (`apps/cli/src/v2.ts:657-670`). `memhtml path` answers the same question for one write over the version at HEAD.
+With `--dry-run` the call runs the same steps and stops before the append, so it answers where each put would land, with the same refusal when a violation blocks, and writes nothing (`apps/cli/src/v2.ts:720`). It also skips the implicit start: under `MEMHTML_SESSION` with no log yet, it answers over the base that start would take, with an empty log (`apps/cli/src/v2.ts:657-670`). `memhtml path` answers the same question for one write over the version at HEAD, but reads no session and judges nothing, so inside a session the dry run is the answer.
 
 Flags:
 
@@ -1561,14 +1561,18 @@ memhtml path --title 'Checkout retries' --type semantic --path areas/inbox/check
 
 Prints the path a write with these fields would land at, and the collision ordinal it took, over the version at HEAD (`pathPreview` at `apps/cli/src/v2.ts:792-829`). It resolves HEAD and loads that version as `head status` does, then places the write with `putPathFor`, the function `session put` places a write line with (`apps/cli/src/v2.ts:324-349`). So the directory comes from the same placement rules, the filename from the same slug, and a derived path the head already holds takes the same `-2`, `-3` suffix. It never asks the head server, builds no app layer, and writes nothing.
 
+It reads no session. A session places its puts over its base, which can trail HEAD, and over the puts it already holds, so inside a session `memhtml path` can name a path the next `session put` won't take. There, `session put --dry-run` is the answer (see [session put](#session-put)).
+
+It places and does not judge. A path the write bar refuses is still answered, such as `areas/inbox/index.html` for a title `Index` (a filename the site generator owns) or a path under `areas/arcs/`, which only the `curate` scope writes (`isReservedPath` at `packages/session/src/validate.ts:87-97`). `session put --dry-run` judges each line as the put does and refuses such a line.
+
 `--claimed` names paths pending elsewhere, such as another session's puts or a draft not written yet. The file holds one repo-relative memory path per line, and each counts as taken, as a path the head holds does. It's read and judged before anything opens, so a file of another shape is refused rather than read as claiming nothing (`claimedPathsOf` at `apps/cli/src/v2.ts:759-779`, `apps/cli/src/run.ts:2222-2254`).
 
 Flags:
 
 - `--title` (string, required): "The write's title, as a write line gives it. Its slug is the filename stem: kebab-case, at most 80 characters, a longer title cut at its last word boundary that keeps at least 60, else at 80."
-- `--type` (string, required, one of `episodic`, `semantic`, `procedural`, `agent_insight`, `user_preference`, `error_pattern`, `verdict`, `precedent`, `arc`, `task`): "The memory type, as a write line gives it. `episodic` takes the `YYYYMMDD-` prefix of the current UTC day, `task` routes to `tasks/` under its workspace or the inbox, and `arc` to `areas/arcs/`."
+- `--type` (string, required, one of `episodic`, `semantic`, `procedural`, `agent_insight`, `user_preference`, `error_pattern`, `verdict`, `precedent`, `arc`, `task`): "The memory type, as a write line gives it. `episodic` takes the `YYYYMMDD-` prefix of the current UTC day, `task` routes to `tasks/` under its workspace or the inbox, and `arc` to `areas/arcs/`, which only the `curate` scope writes."
 - `--workspace` (string): "Routes the write to `projects/<slug>/`, as a write line's `workspace` does."
-- `--tag` (string, repeatable): "A tag, as a write line's `tags` holds one. Repeatable; the first routes a semantic, procedural, or precedent write with no workspace to `resources/<slug>/`."
+- `--tag` (string, repeatable): "A tag, as a write line's `tags` holds one. Repeatable; the first non-blank one routes a semantic, procedural, or precedent write with no workspace to `resources/<slug>/`, except one that slugs to `people`, which no rule routes into, so that write falls to the inbox."
 - `--path` (string): "An explicit path, as a write line's `path`. A usable one is the answer as given, in canonical form, with `ordinal: null` and no suffix, and `occupied` says whether the head or --claimed already holds it (a put there is judged against that record rather than stepped past it). One that is not a usable memory path is ignored and the path derived, as a put derives it."
 - `--claimed` (string): "A file of paths pending elsewhere (another session's puts, a draft not written yet), one repo-relative memory path per line, blank lines skipped; `-` reads stdin. Each counts as taken, as a path the head holds does, so the answer steps past it. An unreadable file is ERR_PATH_NOT_FOUND and a line that is not a usable memory path is ERR_INVALID_FLAG naming the line, both at exit 2 before anything opens."
 

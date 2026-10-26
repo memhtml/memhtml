@@ -1502,7 +1502,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   {
     name: "path",
     summary:
-      "Print the path a write with these fields would land at over the version at HEAD, and the collision ordinal it took, by the placement `session put` runs. Writes nothing.",
+      "Print the path a write with these fields would land at over the version at HEAD, and the collision ordinal it took. Reads no session: inside one, `session put --dry-run` answers over the session's base and its puts. Writes nothing.",
     args: [],
     flags: [
       {
@@ -1516,7 +1516,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "type",
         type: "string",
         description:
-          "The memory type, as a write line gives it. `episodic` takes the `YYYYMMDD-` prefix of the current UTC day, `task` routes to `tasks/` under its workspace or the inbox, and `arc` to `areas/arcs/`.",
+          "The memory type, as a write line gives it. `episodic` takes the `YYYYMMDD-` prefix of the current UTC day, `task` routes to `tasks/` under its workspace or the inbox, and `arc` to `areas/arcs/`, which only the `curate` scope writes.",
         values: MEMORY_TYPES,
         required: true
       },
@@ -1529,7 +1529,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "tag",
         type: "string",
         description:
-          "A tag, as a write line's `tags` holds one. Repeatable; the first routes a semantic, procedural, or precedent write with no workspace to resources/<slug>/.",
+          "A tag, as a write line's `tags` holds one. Repeatable; the first non-blank one routes a semantic, procedural, or precedent write with no workspace to resources/<slug>/, except one that slugs to `people`, which no rule routes into, so that write falls to the inbox.",
         repeatable: true
       },
       {

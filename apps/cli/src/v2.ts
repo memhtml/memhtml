@@ -783,11 +783,15 @@ export const claimedPathsOf = (
 
 /**
  * `memhtml path`: the path a write with these fields would land at over the version at `HEAD`, and
- * the collision ordinal it took, by the placement `session put` runs ({@link putPathFor}).
+ * the collision ordinal it took, placed by {@link putPathFor}, the function `session put` runs.
  * `claimed` holds paths pending elsewhere (another session's puts, a draft not written yet), and
  * each counts as taken, as a path the head holds does. Read-only: the head is loaded the cheapest
  * way and nothing is written, so the answer holds for `head.sha` and the claimed set given, and a
  * write that lands first can take the path.
+ *
+ * It reads no session, and it places without judging. `session put` places over the session's base,
+ * which can trail `HEAD`, and the session's own puts, and it refuses a line the write bar refuses
+ * (a reserved path, say), so inside a session `session put --dry-run` is the answer.
  *
  * `occupied` is true when the answer is an explicit path the head or `claimed` already holds: a put
  * there is judged against that record (`claim-edit` or `duplicate`) rather than stepped past it.

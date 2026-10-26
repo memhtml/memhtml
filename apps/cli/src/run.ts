@@ -1029,10 +1029,7 @@ const sessionBoundRefusal = (
   return fail("ERR_SESSION_BOUND", bound.error, bound.suggestions)
 }
 
-/**
- * `memhtml path`: a blank `--title` is refused, as a write line refuses one, so the answer is never
- * a path no write can take.
- */
+/** `memhtml path`: a blank `--title` is refused, as a write line refuses one. */
 const pathFlags = (parsed: Parsed): Failure | undefined => {
   if (parsed.command !== "path") return undefined
   const title = str(parsed, "title")
