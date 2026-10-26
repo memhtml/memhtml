@@ -2011,7 +2011,9 @@ export const setTaskStatus = (params: TaskStatusParams) =>
      * memory path, is refused here, before the stamp is written (`activeRecordPathViolation`). `done`
      * would archive it again, which the store refuses only after the write below has reached disk.
      * Any other status would restamp an archived file in place, out of `task list`, where no later
-     * `done` could finish it. The reason names the move that reopens an archived task.
+     * `done` could finish it. The reason names the move that reopens an archived task, when there is
+     * one: `originalPathFor` strips a single prefix, so for a task archived twice it names another
+     * archive path, and the advice is left out.
      */
     const refusal = activeRecordPathViolation(path)
     if (refusal !== undefined) {
@@ -2019,7 +2021,7 @@ export const setTaskStatus = (params: TaskStatusParams) =>
       return yield* Effect.fail(
         InvalidMemory.make({
           reason:
-            live === undefined
+            live === undefined || activeRecordPathViolation(live) !== undefined
               ? refusal
               : `${refusal}. An archived task keeps its status: to reopen it, \`git mv\` it back to ${live}, commit, and run \`memhtml index update\``
         })

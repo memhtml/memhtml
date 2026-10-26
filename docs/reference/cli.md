@@ -750,7 +750,7 @@ A caller reads `path`, `taskStatus`, `archived`, `archivePath`, `commitSha`, and
 
 Errors:
 
-- `ERR_INVALID_MEMORY` (exit 1) for a status outside `TASK_STATUSES`, a file that isn't a task, a file that doesn't parse, or a change of status on a task under `archive/` or at a path that isn't a usable memory path, which is refused after the no-op check and before the stamp is written. That reason names the reopening move, `git mv` back to the live path (`decodeTaskStatus` at `apps/cli/src/operations.ts:150-157`, `apps/cli/src/operations.ts:1986-1992`, `apps/cli/src/operations.ts:2016`).
+- `ERR_INVALID_MEMORY` (exit 1) for a status outside `TASK_STATUSES`, a file that isn't a task, a file that doesn't parse, or a change of status on a task under `archive/` or at a path that isn't a usable memory path, which is refused after the no-op check and before the stamp is written. When the path one archive prefix up is a live path, the reason names the reopening move, `git mv` back to it. A task archived twice gets no such advice, because that path is another archive path (`decodeTaskStatus` at `apps/cli/src/operations.ts:150-157`, `apps/cli/src/operations.ts:1986-1992`, `apps/cli/src/operations.ts:2018`).
 - `ERR_PATH_NOT_FOUND` (exit 1) when no file is at the path (`readRaw` at `packages/store/src/store.ts:483-488`).
 - `ERR_STORAGE` (exit 1) as `task.write:<path>`, and `ERR_GIT` (exit 1) from `add`, `commit`, or the archive move.
 - `ERR_STORAGE` (exit 1) as `checkout.locked` when another writer of the checkout holds `.memhtml/checkout.lock` for the whole 15 s wait (`withCheckoutLock` at `packages/store/src/checkout-lock.ts:39-44`).

@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { promisify } from "node:util"
 
+import { archivePathFor, archiveYearOf } from "@memhtml/contracts/paths"
 import { renderTemplate } from "@memhtml/html"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
@@ -443,6 +444,37 @@ describe("a status change on a task that is already under archive/", () => {
     expect(repeat.unchanged).toBe(true)
     expect(repeat.commitSha).toBeNull()
     expect(await snapshot(finished)).toEqual(before)
+  })
+
+  it("gives no git mv advice for a task archived twice, whose way back is another archive path", async () => {
+    // `originalPathFor` strips a single prefix, so for a nested task it names a path that is itself
+    // under archive/, and moving the file there would reopen nothing.
+    const task = await cli.json<TaskWritten>([
+      "task",
+      "add",
+      "--title",
+      "Retire the widget queue",
+      "--workspace",
+      "acme-widget"
+    ])
+    const once = (
+      await cli.json<{ readonly archivePath: string }>([
+        "archive",
+        task.path,
+        "--reason",
+        "evicted"
+      ])
+    ).archivePath
+    const twice = archivePathFor(once, archiveYearOf(once) ?? new Date().getUTCFullYear())
+    await mkdir(dirname(join(cli.root, twice)), { recursive: true })
+    await runProcess("git", ["mv", once, twice], { cwd: cli.root })
+    await runProcess("git", ["commit", "-m", "archive an archived task"], { cwd: cli.root })
+
+    const result = await cli.run(["task", "status", twice, "doing"])
+    expect(result.exitCode).toBe(EXIT_RUNTIME)
+    const body = JSON.parse(result.stdout) as Record<string, unknown>
+    expect(body.error).toContain(`already archived at ${twice}`)
+    expect(body.error).not.toContain("git mv")
   })
 })
 
