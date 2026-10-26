@@ -192,7 +192,7 @@ export const Edge = Schema.Struct({
 
 This module provides placement, archival, and normalization as pure total functions over repo-root-relative paths. It has 16 non-test importers across 4 packages and 2 apps, and it's the only module that decides where a memory lands in the root.
 
-**Producer:** `packages/contracts/src/paths.ts:10-305`
+**Producer:** `packages/contracts/src/paths.ts:10-306`
 
 **Consumer(s):**
 
@@ -282,7 +282,7 @@ export const compareArchivings = (a: string, b: string): number => {
 - `packages/index/src/project.ts:344-347` assumes the leading slash in a link's `href` must be stripped before it becomes a `dst_path`, because the `edges` table stores the git-tree form and a slashed value would fail to join `files.path` while looking exactly like a corpus with no edges.
 - A caller that wants an invalid path rejected instead of re-derived asks the store for it, with `strictPath` on a `WriteInput` (`packages/store/src/store.ts`, `strictPathRefusal`).
 - `packages/index/src/project.ts:371-375` derives `files.origin_path` with `originalPathFor` itself rather than a copy of its regex, so the index's origin and the session's inverse agree on every archive path, generation slots included.
-- Every reader that picks a path's latest archiving orders its archive paths with `compareArchivings`, by year and then generation as numbers, never by string order, which puts `archive/<YYYY>.2/` before `archive/<YYYY>/` (`packages/contracts/src/paths.ts:292-305`).
+- Every reader that picks a path's latest archiving orders its archive paths with `compareArchivings`, by year and then generation as numbers, never by string order, which puts `archive/<YYYY>.2/` before `archive/<YYYY>/` (`packages/contracts/src/paths.ts:293-306`).
 - `PlacementInput` allows `| undefined` on every optional field. `packages/contracts/src/paths.ts:115-121` states that under `exactOptionalPropertyTypes` a bare `path?: string` would force every tool adapter to strip absent fields by hand, so the contract accepts the shape the MCP and CLI layers already hold.
 
 **Drift risk:** Adding a routing rule to `placementFor` changes where new memories land without moving anything already in the root, so the same logical memory can sit in two directories depending on when it was written. Mitigation: treat a rule change as needing a migration pass over the root, and check inbox depth through `memhtml doctor`, which already reports it as a health signal (`packages/contracts/src/paths.ts:18-21`).
@@ -367,7 +367,7 @@ This is the one interface between every SQL-writing module and the driver. 17 no
 - `packages/index/src/indexer.ts:11` takes it as an indexer dependency.
 - `packages/index/src/traces-persist.ts`, `packages/index/src/index-state.ts`, and `packages/index/src/reinforce.ts` all reference it, and `packages/index/src/sidecar.ts:44` and `packages/index/src/vector-coverage.ts:100` take it as their first argument.
 - `packages/eval/src/harness.ts` references it.
-- `apps/cli/src/api-layer.ts` wires it, and `apps/cli/src/operations.ts`, `apps/cli/src/views.ts`, `apps/cli/src/doctor.ts`, `apps/cli/src/hook.ts:5`, `apps/cli/src/artifacts.ts:32`, and `apps/cli/src/repair.ts:118`, `:130` consume it.
+- `apps/cli/src/api-layer.ts` wires it, and `apps/cli/src/operations.ts`, `apps/cli/src/views.ts`, `apps/cli/src/doctor.ts`, `apps/cli/src/hook.ts:5`, `apps/cli/src/artifacts.ts:34`, and `apps/cli/src/repair.ts:118`, `:130` consume it.
 - `packages/index/src/index.ts:10-18` publishes `DatabaseService`, `DatabaseShape`, `SqlValue`, `Write`, `attachState`, `makeDatabase`, `runStateMigrations` as the package's SQL surface.
 
 **Shape:**
@@ -944,7 +944,7 @@ The closed element and metadata vocabulary that defines what a memory file may c
 - `packages/html/src/constraints.ts:26` imports `REQUIRED_META` and checks each at `packages/html/src/constraints.ts:352-355`, then rejects an out-of-vocabulary meta name at `packages/html/src/constraints.ts:356-359`.
 - `packages/html/src/parse.ts` reads the same prefix when collecting head metas and links (`packages/html/src/parse.ts:277-288`).
 - `packages/store/src/store.ts:22-31` imports `checkMemory` and `renderTemplate`, so every v1 write passes the vocabulary gate before a file is created.
-- `packages/session/src/validate.ts:18` imports `checkMemory` and runs it on every `put` and on the `html` an `archive` or a `move` carries (`packages/session/src/validate.ts:269`, `:330`, `:449`). A failure is a `format` violation (`packages/session/src/validate.ts:270-272`), so a session op meets the same gate as a v1 write.
+- `packages/session/src/validate.ts:18` imports `checkMemory` and runs it on every `put` and on the `html` an `archive` or a `move` carries (`packages/session/src/validate.ts:271`, `:332`, `:452`). A failure is a `format` violation (`packages/session/src/validate.ts:272-274`), so a session op meets the same gate as a v1 write.
 - `apps/cli/src/doctor.ts:6` imports `checkMemory` to report violations over the whole root.
 
 **Shape:**
@@ -1025,7 +1025,7 @@ Where memhtml puts things inside the external root, and which of those things su
 - `apps/cli/src/config.ts:107-117` documents `MEMHTML_ROOT` for `memhtml manifest` and the generated agent doc.
 - `packages/index/src/schema-const.ts:7-20` names the migrations directories and the `state` schema the ATTACH uses.
 - `tests-integration/tests/rebuild.test.ts:211-218` deletes both databases from `.memhtml/` and rebuilds, asserting the whole claim.
-- The v2 packages declare their own copies of the v2 paths instead of importing the store's: `SESSIONS_DIR` (`packages/session/src/session.ts:58`), `HEAD_SOCKET` (`packages/session/src/exclude.ts:28`), `SNAPSHOTS_DIR` (`packages/snapshot/src/snapshot.ts:177`), and `VECTORS_DIR` (`packages/snapshot/src/vectors.ts:68`). Nothing outside the store's own barrel (`packages/store/src/index.ts:33-47`) imports the store's v2 constants.
+- The v2 packages declare their own copies of the v2 paths instead of importing the store's: `SESSIONS_DIR` (`packages/session/src/session.ts:58`), `HEAD_SOCKET` (`packages/session/src/exclude.ts:28`), `SNAPSHOTS_DIR` (`packages/snapshot/src/snapshot.ts:177`), and `VECTORS_DIR` (`packages/snapshot/src/vectors.ts:68`). Nothing outside the store's own barrel (`packages/store/src/index.ts:35-50`) imports the store's v2 constants.
 
 **Shape:**
 
@@ -1306,7 +1306,7 @@ The LLM-proxy vocabulary is declared once. `packages/llm/src/proxy-config.ts:31,
 
 A session is a base commit, a ref, and a log of overlay ops, and its commit lands those ops on the ref as one git commit. `@memhtml/session` does this with its own git plumbing and never imports `@memhtml/store`. The two packages meet at two points only, the repository's shared index and the checkout lock that guards it, and the lock's contract lives in `@memhtml/contracts` so neither side has to import the other.
 
-**Producer:** `packages/session/src/session.ts:38-53` for the session and its log, `packages/session/src/commit.ts:399-426` for the commit order, `packages/session/src/plumbing.ts:7-50` for the git plumbing, and `packages/contracts/src/checkout-lock.ts:5-97` for the lock both writers take
+**Producer:** `packages/session/src/session.ts:38-53` for the session and its log, `packages/session/src/commit.ts:399-426` for the commit order, `packages/session/src/plumbing.ts:7-59` for the git plumbing, and `packages/contracts/src/checkout-lock.ts:5-97` for the lock both writers take
 
 **Consumer(s):**
 
@@ -1366,7 +1366,7 @@ export const CheckoutLockHeld = Context.Reference<ReadonlySet<string>>(
 **Assumptions consumers make:**
 
 - The session assumes it must spawn git itself. `packages/session/src/plumbing.ts:7-14` states that a session writes through its own index file, and the store's `Git` service scrubs `GIT_INDEX_FILE` from every child, so the store's client can't stage into a session's index. A commit stages through a temporary index it removes on every outcome (`packages/session/src/commit.ts:514-528`).
-- Both sides assume the same set of repo-selecting variables is removed from every child, because a hook exports an absolute `GIT_DIR` that a child would follow (`packages/store/src/git.ts:180-190`). The session's copy at `packages/session/src/plumbing.ts:41-50` says it's "The same list as" the store's at `packages/store/src/git.ts:191-200`. The store's list is pinned by tests to the copy in `apps/cli/src/mount.ts`, and no test compares the session's copy with either.
+- Both sides assume the same set of repo-selecting variables is removed from every child, because a hook exports an absolute `GIT_DIR` that a child would follow (`packages/store/src/git.ts:194-204`). The session's copy at `packages/session/src/plumbing.ts:50-59` says it's "The same list as" the store's at `packages/store/src/git.ts:205-214`. The store's list is pinned by tests to the copy in `apps/cli/src/mount.ts`, and no test compares the session's copy with either.
 - Both writers assume the other holds the checkout lock around the window where the shared index and the ref disagree. `packages/contracts/src/checkout-lock.ts:9-20` gives the race it prevents. A v1 commit takes the whole shared index, so without the lock it sweeps a session's just-staged file into its own commit, the session's swap loses, and the rollback stages that file's deletion. The two must agree on the lock's path, its timing, and the reentrancy key (`packages/contracts/src/checkout-lock.ts:22-28`).
 - A writer that already holds the lock assumes a nested acquisition runs without waiting on itself (`packages/contracts/src/checkout-lock.ts:88-97`). The held set is a `Context.Reference` per fiber, so it scopes to the holder's own effect and the fibers it forks.
 - `landOnRef` assumes the checkout moves before the ref (`packages/session/src/commit.ts:267-283`). The ref must still name the expected commit, a dirty session path is `worktree-dirty`, `read-tree -m -u` moves the shared index and working tree, and `update-ref` is the compare-and-swap. A lost swap rolls the checkout back and answers `rebase-needed`. `packages/session/src/commit.ts:422-424` states the reason for the order. The reverse would leave `HEAD` ahead of the index on a failure, and git would then report the session's own files as staged deletions.
@@ -1554,7 +1554,7 @@ export const vectorCachePathFor = (root: string, space: StoredVectorSpace): stri
 **Consumer(s):**
 
 - `apps/cli/src/store-config.ts:64-93` (`loadStorePolicy`) reads and decodes the file, and `apps/cli/src/store-config.ts:27-36` lists when it's read.
-- `apps/cli/src/v2.ts:654`, `:916`, `:1116`, and `:1635` read it for `session put`, `session exec`, `session commit`, and `curate merge`, and `apps/cli/src/curate-run.ts:565` and `apps/cli/src/curate-collapse.ts:907` read it for the curator.
+- `apps/cli/src/v2.ts:654`, `:916`, `:1116`, and `:1635` read it for `session put`, `session exec`, `session commit`, and `curate merge`, and `apps/cli/src/curate-run.ts:565` and `apps/cli/src/curate-collapse.ts:969` read it for the curator.
 - `apps/cli/src/head-server.ts:1096`, `:1271`, and `:1427` read it per `exec`, `commit`, and `neighbors` request, so an edit applies to the server's next request with no restart.
 - `apps/cli/src/run.ts:1712-1723` reads `v1Doors` before validation for the four record-creating v1 commands, and `apps/cli/src/run.ts:366`, `:396`, `:450`, and `:539` and `apps/mcp/src/handlers.ts:369`, `:437`, and `:689` call `guardV1Door` inside the layer when the mode couldn't be read first.
 - `packages/session/src/validate.ts:133-147` applies the write bar's `refusedTypes` and `requireAnchor` as `write-bar` violations.
@@ -1612,12 +1612,12 @@ export const StoreConfig = Schema.Struct({
 
 `@memhtml/curator` owns the model loop and the tools the model sees, and owns no head, session, or sandbox. It takes those through `CuratorTools`, an interface of five promise-returning methods, and `apps/cli` binds it to the real head, a session on disk, and the `session exec` sandbox. The interface exists because the sandbox lives in `apps/cli` and a package can't import an app (`packages/curator/src/tools.ts:5-13`).
 
-**Producer:** `packages/curator/src/tools.ts:15-220`
+**Producer:** `packages/curator/src/tools.ts:15-225`
 
 **Consumer(s):**
 
 - `packages/curator/src/loop.ts:152-188` registers the five methods as the model's tools, through the AI SDK, and cuts every result at `TOOL_RESULT_CAP`, 30,000 characters (`packages/curator/src/loop.ts:40`).
-- `apps/cli/src/curate-run.ts:357-460` (`bindTools`) is the production binder, called by `curate run` at `apps/cli/src/curate-run.ts:613` and by `curate collapse` at `apps/cli/src/curate-collapse.ts:668`.
+- `apps/cli/src/curate-run.ts:357-460` (`bindTools`) is the production binder, called by `curate run` at `apps/cli/src/curate-run.ts:613` and by `curate collapse` at `apps/cli/src/curate-collapse.ts:714`.
 - `packages/curator/src/tools.ts:2` imports `Violation` from `@memhtml/session`, so the violations a tool returns are the session validator's own type.
 
 **Shape:**
@@ -1649,18 +1649,18 @@ export interface CuratorTools {
 }
 ```
 
-The model doesn't propose `OverlayOp` directly. `ProposedOp` (`packages/curator/src/tools.ts:91-165`) is a Zod union where an `archive` or a `move` names only its source and destination, and `toOverlayOps` (`packages/curator/src/tools.ts:185-220`) reads the source's bytes through `read` to fill the op's `html`, so a model never restates a whole file. A source `read` can't find comes back in `missing` instead of being dropped.
+The model doesn't propose `OverlayOp` directly. `ProposedOp` (`packages/curator/src/tools.ts:91-170`) is a Zod union where an `archive` or a `move` names only its source and destination, and `toOverlayOps` (`packages/curator/src/tools.ts:190-225`) reads the source's bytes through `read` to fill the op's `html`, so a model never restates a whole file. A source `read` can't find comes back in `missing` instead of being dropped.
 
 **Assumptions consumers make:**
 
 - The loop assumes a rejected proposal is a tool result and never the end of the run (`packages/curator/src/loop.ts:31-37`). `propose` returns the violations, and the model reads them and tries again.
 - The binder judges every new op on top of what the overlay already holds, under the `curate` scope and the store's write bar (`apps/cli/src/curate-run.ts:369-391`). Any violation on a path the new ops touch, or the batch cap, refuses them. `apps/cli/src/curate-run.ts:372-375` states why there's no non-blocking kind here. A curator's ref has no rebase that cures a `duplicate` or a `claim-edit`, so one appended op with either would leave the session uncommittable.
 - `exec` runs the script as JavaScript (`apps/cli/src/curate-run.ts:412-414`) and appends its harvest only when the script exited 0 and nothing blocks (`apps/cli/src/curate-run.ts:419-420`). Its result's `violations` field carries everything the validator reported over the whole would-be batch, while `propose` returns only the blocking subset (`apps/cli/src/curate-run.ts:434`, `:447`).
-- A proposed or harvested `move` names only its source and destination. The binder adds the `unlink` and `link` pairs that repoint every edge to the old path (`withRepoints`, `apps/cli/src/curate-run.ts:415-417`, `:441-444`), because the validator refuses a batch that leaves an edge pointing at a path a move vacated (`packages/contracts/src/record.ts:68-80`).
+- A proposed or harvested `move` or `archive` names only its source and destination. The binder adds the `unlink` and `link` pairs that repoint every edge to the old path (`withRepoints`, `apps/cli/src/curate-run.ts:415-417`, `:441-444`), because the validator refuses a batch that leaves an edge pointing at a path a move or an archive vacated (`packages/contracts/src/record.ts:68-80`).
 - `search` ranks the overlaid view with `searchHead` and no vectors (`apps/cli/src/curate-run.ts:394-405`), so the curator searches with the lexical arm alone and recency breaks ties.
 - `status` reports the session's base, ref, and op counts by kind (`packages/curator/src/tools.ts:68-81`), and the loop adds the steps and tokens it has spent.
 
-**Drift risk:** small. The curator's `archivePathFor(path, now, read)` (`packages/curator/src/tools.ts:167-183`) takes its slot from the contracts' `archiveSlotFor` (`packages/contracts/src/paths.ts:249-258`), with the year read from `now` in UTC and each candidate slot probed through `read`, so the curator and the store spell a slot the same way. The session validator still checks every destination with the contracts' inverse and refuses a held or skipped slot (`packages/session/src/validate.ts:303-325`), so a probe that missed a held slot would show up as a refused archive and never as an overwrite.
+**Drift risk:** small. The curator's `archivePathFor(path, now, read)` (`packages/curator/src/tools.ts:172-188`) takes its slot from the contracts' `archiveSlotFor` (`packages/contracts/src/paths.ts:250-259`), with the year read from `now` in UTC and each candidate slot probed through `read`, so the curator and the store spell a slot the same way. The session validator still checks every destination with the contracts' inverse and refuses a held or skipped slot (`packages/session/src/validate.ts:305-327`), so a probe that missed a held slot would show up as a refused archive and never as an overwrite.
 
 ## MCP search and recall against the head server
 
@@ -1716,7 +1716,7 @@ An agent runtime that gives each run one session talks to memhtml through the CL
 **Consumer(s):**
 
 - An agent runtime, which reads `session status` and `session commit` payloads by key and may stat or read the log file. Nothing in this repository is that consumer, and the contract is stated here from the producer's side.
-- `apps/cli/src/commands.ts:1349-1410` documents `session commit`, `--drop-refused`, `--no-server`, and `session rebase` in the command table, so `memhtml manifest` and the generated agent doc publish the same text.
+- `apps/cli/src/commands.ts:1357-1418` documents `session commit`, `--drop-refused`, `--no-server`, and `session rebase` in the command table, so `memhtml manifest` and the generated agent doc publish the same text.
 - `apps/cli/src/run.ts:990-1016` closes the v1 record doors in a process that carries `MEMHTML_SESSION`, under the store's default `v1Doors` mode.
 
 **Shape:**
@@ -1766,14 +1766,14 @@ export type SessionCommitted = CommitResult & {
 - **`IndexerShape` and its reports**: `RebuildReport` and `UpdateReport` carry counted skips so one unparseable file never fails a pass, and `EmbedMissingOptions` distinguishes a whole-store model migration from an incremental pass by the presence of a candidate list (`packages/index/src/indexer.ts:34-146`).
 - **`CONFIG_VARS`**: 25 documented environment variables in one array so `memhtml manifest` can describe the whole environment surface and an agent doesn't have to grep for `process.env` (`apps/cli/src/config.ts:107-275`). A row whose variable another module declares takes its `name` from that module's constant, such as `CURATOR_MODEL_VAR`, `COMMIT_DEADLINE_VAR`, `EXEC_POOL_SIZE_VAR`, and `MCP_BIN_VAR`, so a rename can't disclose a variable nothing reads (`apps/cli/src/config.ts:265-270`). Each row is paired with a read elsewhere. `MEMHTML_ROOT` (`apps/cli/src/config.ts:282`), `MEMHTML_TRACE_ROOT` (`apps/cli/src/config.ts:294`), and `MEMHTML_VECTOR_COVERAGE_FLOOR` (`apps/cli/src/config.ts:307`) are read with `Config.String`, `Config.String`, and `Config.Number`. `MEMHTML_AWS_REGION`, `MEMHTML_OPENAI_PROMPT_CACHE`, and the four proxy variables are `Config.String` inside `LlmConfig` at `packages/llm/src/client.ts:163,170,175,176,179,180`. `MEMHTML_EMBED`, `MEMHTML_EXTRACT_ENTITIES`, and `MEMHTML_LLM` are `Config.String` at `apps/cli/src/api-layer.ts:236,365,369`. The v2 variables are read off the environment directly, as `MEMHTML_MCP_HEAD` is through `MCP_HEAD_VAR` at `apps/cli/src/head-retrieval.ts:72` and `MEMHTML_CURATOR_MODEL` through `CURATOR_MODEL_VAR` at `apps/cli/src/run.ts:2220`, and `memhtml config` reports the three that tune `head serve` with their effective values and sources (`apps/cli/src/config-report.ts:58-75`). The row is what `memhtml manifest` publishes and the read is what the process honors. A row with no read discloses a variable nothing honors, and a read with no row is a variable an agent can't discover.
 - **`REINFORCE_SIGNALS`**: the closed three-value vocabulary `positive`, `negative`, `neutral`, declared once in `@memhtml/domain` (`packages/domain/src/reinforce.ts:31-32`) and published to both agent surfaces the way `MEMORY_RELS` and `WRITABLE_MEMORY_TYPES` are. `apps/cli/src/commands.ts:4,540` makes it the `values` of the `--signal` flag with `neutral` as the default, `apps/cli/src/operations.ts:17,177-184` narrows an untrusted string through `decodeSignal`, failing with an `InvalidMemory` whose reason lists the three values, and `apps/mcp/src/tools.ts:17,906` makes it `Schema.Literals(REINFORCE_SIGNALS)` on `memory_reinforce`. `signalValue` (`:39-48`) is a `switch` over the literal union with no default arm, mapping `neutral` to 0 so a neutral reinforcement bumps access without moving the outcome EWMA, and a fourth signal without an arm there's a compile error.
-- **`COMMANDS`, `GLOBAL_FLAGS`, and `buildManifest`**: the command table is the single source for the `cli.manifest` response and for the generated `AGENTS.md`, both derived by walking it (`apps/cli/src/commands.ts:68,185,1996`, `apps/cli/src/agents-doc.ts:7,174-193`).
+- **`COMMANDS`, `GLOBAL_FLAGS`, and `buildManifest`**: the command table is the single source for the `cli.manifest` response and for the generated `AGENTS.md`, both derived by walking it (`apps/cli/src/commands.ts:68,185,2061`, `apps/cli/src/agents-doc.ts:7,174-193`).
 - **`ToolFailure`**: the MCP wire failure, whose `.message` is the whole agent-visible response; `toToolFailure` passes an already-composed `ToolFailure` through unchanged so a handler-built failure isn't rewritten to its own class name (`apps/mcp/src/failure.ts:34-41,207-224`).
 - **`Chunk` and `chunkIdFor`**: content-derived chunk ids are what let a `git mv` cost zero Bedrock calls, since `chunks` and `embeddings` key on the content hash (`packages/index/src/index.ts:9`, `packages/index/src/git-port.ts:26-30`).
 - **`DisclosureCandidate` and `foldDisclosure`**: the tiered disclosure fold recall packs are built from, budgeted in characters (`packages/index/src/disclosure.ts` via `packages/index/src/index.ts:19-29`, consumed at `packages/index/src/retrieval.ts:6-11` for the import, `:182-190` where `RecallPack` is typed by its return, and `:602-641` where `recall` folds arcs and memories under separate budgets).
 - **`DedupeLookup` and `MoveCallback`**: two injected functions rather than repository methods, because `@memhtml/store` is SQL-free by design and cross-database foreign keys don't exist (`packages/store/src/store.ts:189-209`).
 - **`Edge` and `isWellFormedEdge`**: the edge struct plus a caller-side well-formedness check (`packages/contracts/src/edges.ts:122-149`). The check tests three conditions. The declared class matches the rel, the edge isn't a self-loop, and a derived edge carries the `sleep` provenance value, a stored value only the removed pipeline wrote (`packages/contracts/src/edges.ts:95-96`). Its doc comment names only the first two, the ones the `edges` CHECK constraints enforce, and no non-test code calls it at 0.16.0.
 - **`spec/memhtml.symspec.json`**: a 107-entry EARS requirement ledger keyed by UUID, each entry carrying between 16 and 20 of 22 field names including `key`, `sentence`, `status`, `systemName`, and `verificationMethod`; its one code consumer decodes `key`, `sentence`, `status`, `priority`, `patternType`, `verificationMethod`, and `systemName` as required strings and throws on the file's own path when one is missing (`apps/docs/src/loaders/registry.ts:67,342-358`).
-- **`RECALL_DISCIPLINE`, `RECALL_DISCIPLINE_TEXT`, `RECALL_DISCIPLINE_SHORT`**: five paragraphs of agent guidance stated once in `packages/contracts/src/guidance.ts:17-53` so every surface renders the same words. It has three consumers. `apps/cli/src/commands.ts:2,1985` renders the joined text as the `recall-discipline` guide topic, `packages/integrations/src/render/block.ts:15,59` writes the paragraphs into the fenced instruction block, and `packages/integrations/src/render/skill.ts:13,58` writes them into the installed `SKILL.md`. `RECALL_DISCIPLINE_SHORT` (`packages/contracts/src/guidance.ts:51-53`) is declared for the retrieval tools' descriptions and has no consumer in the tree; `apps/mcp/src/tools.ts` doesn't import from the module.
+- **`RECALL_DISCIPLINE`, `RECALL_DISCIPLINE_TEXT`, `RECALL_DISCIPLINE_SHORT`**: five paragraphs of agent guidance stated once in `packages/contracts/src/guidance.ts:17-53` so every surface renders the same words. It has three consumers. `apps/cli/src/commands.ts:2,2050` renders the joined text as the `recall-discipline` guide topic, `packages/integrations/src/render/block.ts:15,59` writes the paragraphs into the fenced instruction block, and `packages/integrations/src/render/skill.ts:13,58` writes them into the installed `SKILL.md`. `RECALL_DISCIPLINE_SHORT` (`packages/contracts/src/guidance.ts:51-53`) is declared for the retrieval tools' descriptions and has no consumer in the tree; `apps/mcp/src/tools.ts` doesn't import from the module.
 
 ## See also
 

@@ -4,7 +4,7 @@ Describes the source at 0.16.0 (2026-10-18). Citations are `path:line` into that
 
 ## What this repository is
 
-This repository holds the software that manages an agent's long-term memory. It stores no memory of its own. The memory lives in a separate directory called the memhtml root, which is its own git repository. The environment variable `MEMHTML_ROOT` tells every command which root to act on, and it defaults to `~/memhtml` (`apps/cli/src/config.ts:108-117`, `apps/cli/src/config.ts:282-286`, `AGENTS.md:675`). One installed binary serves many roots.
+This repository holds the software that manages an agent's long-term memory. It stores no memory of its own. The memory lives in a separate directory called the memhtml root, which is its own git repository. The environment variable `MEMHTML_ROOT` tells every command which root to act on, and it defaults to `~/memhtml` (`apps/cli/src/config.ts:108-117`, `apps/cli/src/config.ts:282-286`, `AGENTS.md:688`). One installed binary serves many roots.
 
 Inside a root, one fact is one semantic HTML5 file, and the root's git tree is the system of record. `.memhtml/index.db` is a SQLite projection of that tree, so it can be deleted and rebuilt without loss (`packages/store/src/layout.ts:24-25`, `packages/index/src/indexer.ts:19`).
 
@@ -20,7 +20,7 @@ Every CLI call writes one JSON envelope carrying `apiVersion`, a `type` discrimi
 
 Failures carry a stable `code` from the append-only `ERROR_CODES` list plus `suggestions`, so an agent branches on the code instead of the prose (`apps/cli/src/envelope.ts:98-110`). Exit codes are fixed at 0 for success, 2 for usage, and 1 for runtime (`apps/cli/src/envelope.ts:165-168`).
 
-`memhtml manifest` returns the whole command surface without building the app layer, so it answers on a machine with no root, no database, and no credentials (`apps/cli/src/run.ts:1728-1743`). At 0.16.0 it lists 57 commands, the 53 response types they answer, 25 error codes, and 25 environment variables (`buildManifest` at `apps/cli/src/commands.ts:1996-2024`). `--dense` drops nulls and indentation to save context tokens (`apps/cli/src/envelope.ts:218-235`).
+`memhtml manifest` returns the whole command surface without building the app layer, so it answers on a machine with no root, no database, and no credentials (`apps/cli/src/run.ts:1728-1743`). At 0.16.0 it lists 57 commands, the 53 response types they answer, 25 error codes, and 25 environment variables (`buildManifest` at `apps/cli/src/commands.ts:2061-2089`). `--dense` drops nulls and indentation to save context tokens (`apps/cli/src/envelope.ts:218-235`).
 
 `AGENTS.md` is generated from the same `COMMANDS` array that drives argument parsing, so the doc stays in step with the binary (`apps/cli/src/agents-doc.ts:11-16`).
 

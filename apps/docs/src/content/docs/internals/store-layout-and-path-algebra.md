@@ -51,11 +51,11 @@ Rule 1 reads "an explicit **valid** path", and the validity clause is where a ca
 
 ## 3. The archive mapping can be inverted
 
-`archivePathFor` (`packages/contracts/src/paths.ts:236`) mirrors the whole original path beneath `archive/<YYYY>/`, and `originalPathFor` (`packages/contracts/src/paths.ts:266`) strips exactly one such prefix. Stripping one rather than all of them keeps it a left inverse even for a memory archived twice. `git log --follow` reads through the move, and `diff -M` reports `R100` instead of a delete plus an add. No memory is removed from the repository.
+`archivePathFor` (`packages/contracts/src/paths.ts:237`) mirrors the whole original path beneath `archive/<YYYY>/`, and `originalPathFor` (`packages/contracts/src/paths.ts:267`) strips exactly one such prefix. Stripping one rather than all of them keeps it a left inverse even for a memory archived twice. `git log --follow` reads through the move, and `diff -M` reports `R100` instead of a delete plus an add. No memory is removed from the repository.
 
 A test pins the property: `originalPathFor(archivePathFor(p, y)) === p` for every generated path. That invertibility is what lets `memhtml doctor --fix` derive an archived target's new href rather than searching for it, and no rename-similarity score is consulted anywhere in the system.
 
-A path archived again while its year's slot is held takes the next generation of that year, `archive/<YYYY>.2/<original-path>`, then `.3`, and so on, so an archive never writes over an earlier one. `archiveSlotFor` (`packages/contracts/src/paths.ts:249`) names the first free generation. Every writer that archives takes that slot, and the session validator refuses any other. `originalPathFor` reads a generation slot back to the same original path, so the property holds for every generation: `originalPathFor(archivePathFor(p, y, n)) === p`.
+A path archived again while its year's slot is held takes the next generation of that year, `archive/<YYYY>.2/<original-path>`, then `.3`, and so on, so an archive never writes over an earlier one. `archiveSlotFor` (`packages/contracts/src/paths.ts:250`) names the first free generation. Every writer that archives takes that slot, and the session validator refuses any other. `originalPathFor` reads a generation slot back to the same original path, so the property holds for every generation: `originalPathFor(archivePathFor(p, y, n)) === p`.
 
 Figure 1 draws the mapping as a ladder rather than as a round trip. From a twice-evicted path the inverse climbs one rung, reaching the once-evicted path, which is what "exactly one prefix" means.
 
@@ -82,6 +82,6 @@ Forward resolution cannot answer one thing, and it says so: a correction whose t
 
 ## 6. `memhtml init` converges on one end state
 
-`memhtml init` (`packages/store/src/layout.ts:183`) is the only code path that creates the root. Each step asks the repository what is already true, so the command reaches the same end state from an empty directory, from a live repository, and from one an interrupted run left half-staged.
+`memhtml init` (`packages/store/src/layout.ts:246`) is the only code path that creates the root. Each step asks the repository what is already true, so the command reaches the same end state from an empty directory, from a live repository, and from one an interrupted run left half-staged.
 
-It re-sets `merge.ours.driver` on every run (`packages/store/src/layout.ts:197`), because that config is per-clone and the `.gitattributes` a fresh clone inherits does nothing without it. Those two together are what make the generated artifacts, the per-directory `index.html` and the root `sitemap.xml`, resolvable by regenerating them instead of by editing them.
+It re-sets `merge.ours.driver` on every run (`packages/store/src/layout.ts:261`), because that config is per-clone and the `.gitattributes` a fresh clone inherits does nothing without it. It sets `merge.directoryRenames=false` beside it, so a merge never reads an archive move that took a directory's last file as that directory's rename and carries another clone's new record there into `archive/`. Those two together are what make the generated artifacts, the per-directory `index.html` and the root `sitemap.xml`, resolvable by regenerating them instead of by editing them.

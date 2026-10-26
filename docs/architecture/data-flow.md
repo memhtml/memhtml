@@ -2,7 +2,7 @@
 
 Describes the source at 0.16.0 (2026-10-18). Citations are `path:line` into that tree.
 
-This repository is the software that manages a separate memory tree, the `memhtml root`, located by `$MEMHTML_ROOT` (`AGENTS.md:675`). No memory lives in this repository.
+This repository is the software that manages a separate memory tree, the `memhtml root`, located by `$MEMHTML_ROOT` (`AGENTS.md:688`). No memory lives in this repository.
 
 Every flow below acts on whichever root the process resolves. `--repo` wins over `MEMHTML_ROOT`, so the same binary serves many roots without the caller changing its environment (`apps/cli/src/api-layer.ts:96-109`).
 
@@ -32,7 +32,7 @@ An agent runs `memhtml write --title … --claim … --type semantic`. The proce
 16. The format check follows. `renderChecked` renders the article and rejects it with `InvalidMemory` on any `checkMemory` violation, before the file is written, staged, or committed `packages/store/src/store.ts:742`, `packages/store/src/store.ts:691-698`.
 17. The duplicate check follows the format check. The store hashes the rendered bytes and asks the injected `dedupeLookup`, and an existing active path is returned with `deduped: true` and no commit `packages/store/src/store.ts:743-759`.
 18. The lookup is the index recorder's `activePathForHash`, one query for a live, non-archived, non-task row with that content hash `apps/cli/src/api-layer.ts:196`, `packages/index/src/traces-persist.ts:196-203`.
-19. The store picks a free path, then writes the file, stages it with `git add`, and makes one commit with provenance trailers, all under a journal that compensates a failure `packages/store/src/store.ts:761-788`. `Git.commit` takes the checkout lock too, and the lock is reentrant within one fiber, so the nested take runs at once `packages/store/src/git.ts:403-422`, `packages/contracts/src/checkout-lock.ts:88-97`.
+19. The store picks a free path, then writes the file, stages it with `git add`, and makes one commit with provenance trailers, all under a journal that compensates a failure `packages/store/src/store.ts:761-788`. `Git.commit` takes the checkout lock too, and the lock is reentrant within one fiber, so the nested take runs at once `packages/store/src/git.ts:470-489`, `packages/contracts/src/checkout-lock.ts:88-97`.
 20. Back in the operation, only a created file triggers `reindex`, because a dedupe changed nothing `apps/cli/src/operations.ts:350`.
 21. `reindex` calls `indexer.update({ embed: true })` over the whole commit rather than a list of paths, because a rename is only expressible as a diff and the watermark is what makes freshness answerable `apps/cli/src/operations.ts:248-271`.
 22. `update` falls through to a full reprojection when no watermark row exists, and refuses with `IndexStale` when a rebuild died before writing one `packages/index/src/indexer.ts:808-846`.

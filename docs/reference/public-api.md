@@ -2,7 +2,7 @@
 
 Describes the source at 0.16.0 (2026-10-18). Citations are `path:line` into that tree.
 
-This repository is the software that manages a memory tree. It stores no memories itself. The tree it manages is the `memhtml root`, which `$MEMHTML_ROOT` locates and which defaults to `~/memhtml` (`AGENTS.md:675`). A command that opens a repo takes it from `--repo` when that flag is given and from `$MEMHTML_ROOT` otherwise (`AGENTS.md:94`). When `MEMHTML_REFUSE_ENV_ROOT` is on, `memhtml` takes the repo from `--repo` alone and refuses a call that opens a repo without it (`AGENTS.md:676`). The root's git history is the system of record. The file `.memhtml/index.db` inside the root is a projection of it that can be deleted and rebuilt without loss (`README.md:58`, under "The design in three sentences").
+This repository is the software that manages a memory tree. It stores no memories itself. The tree it manages is the `memhtml root`, which `$MEMHTML_ROOT` locates and which defaults to `~/memhtml` (`AGENTS.md:688`). A command that opens a repo takes it from `--repo` when that flag is given and from `$MEMHTML_ROOT` otherwise (`AGENTS.md:94`). When `MEMHTML_REFUSE_ENV_ROOT` is on, `memhtml` takes the repo from `--repo` alone and refuses a call that opens a repo without it (`AGENTS.md:689`). The root's git history is the system of record. The file `.memhtml/index.db` inside the root is a projection of it that can be deleted and rebuilt without loss (`README.md:58`, under "The design in three sentences").
 
 An agent reaches this software through two binaries, and package manifests declare both. `apps/cli/package.json:21-23` maps `memhtml` to `./dist/bin.js`, and `apps/mcp/package.json:20-22` maps `memhtml-mcp` to the same relative entry inside its own package. The published `memhtml` package ships the same two binaries as `./dist/memhtml.mjs` and `./dist/memhtml-mcp.mjs`. It declares no `exports` map, so nothing on this page can be imported from the published package (`scripts/package-manifest.mjs:107-112`). The CLI is built for an agent to call. Every command writes exactly one JSON envelope to stdout and sends logs to stderr. The one exception is `memhtml help` on a terminal, which writes Markdown (`AGENTS.md:5-7`). `memhtml manifest` answers with every command, argument, flag, response type, and error code the binary accepts. It works on a machine with no repo, no database, and no credentials, so it serves as the liveness check as well as the discovery call (`AGENTS.md:29-31`). `docs/reference/cli.md` documents that command surface. This page documents the TypeScript library surface underneath it, which the workspace packages import from one another.
 
@@ -127,7 +127,7 @@ export const contentHash = (input: HashableArticle | Node | string): string => {
 }
 ```
 
-Computes `sha256:<64 hex>` over an article's canonical text (`canonicalText`). In that text, runs of ASCII whitespace collapse to one space, and text inside `<pre>` is kept byte for byte (`packages/html/src/hash.ts:101-125`). It accepts a parsed document, an article node, or a string. A string that contains an `<article>` element is hashed on the first one, and a string without one is hashed as bare article markup. It never fails, because rejecting malformed input is left to `parseMemory` (`packages/html/src/hash.ts:163-185`). The hash is the dedupe key. A record's `contentHash` comes from it (`packages/head/src/record.ts:43`), and `validateOps` reports a put whose hash an active record or an earlier put already holds as a `duplicate` (`packages/session/src/validate.ts:275-281`).
+Computes `sha256:<64 hex>` over an article's canonical text (`canonicalText`). In that text, runs of ASCII whitespace collapse to one space, and text inside `<pre>` is kept byte for byte (`packages/html/src/hash.ts:101-125`). It accepts a parsed document, an article node, or a string. A string that contains an `<article>` element is hashed on the first one, and a string without one is hashed as bare article markup. It never fails, because rejecting malformed input is left to `parseMemory` (`packages/html/src/hash.ts:163-185`). The hash is the dedupe key. A record's `contentHash` comes from it (`packages/head/src/record.ts:43`), and `validateOps` reports a put whose hash an active record or an earlier put already holds as a `duplicate` (`packages/session/src/validate.ts:277-283`).
 
 `packages/html/src/hash.ts:156-161`, 20 importer files
 
@@ -154,9 +154,9 @@ One entry in a session's overlay log. There are seven kinds. A `put` writes a ne
 export const makeGit = (root: string): GitShape => ({
 ```
 
-Builds the `GitShape` service over the `git` binary. It runs every call as `git -C <root>` through `execFile` (`packages/store/src/git.ts:222-257`). Each spawn sets `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`, and `LC_ALL=C`, and removes the repository-selecting variables such as `GIT_DIR`, so a call made from inside a git hook still targets `root` (`packages/store/src/git.ts:174-207`). The user's own git config is still read, which is why every parsed call states its output format with explicit flags. `layerGit` wraps it as a layer (`packages/store/src/git.ts:493`). The CLI's v2 code calls it directly when it needs git for a root it already holds, as `loadVersion` does to load a head version (`apps/cli/src/head-cache.ts:177-183`). Tests use it to drive the real binary against a temporary repository.
+Builds the `GitShape` service over the `git` binary. It runs every call as `git -C <root>` through `execFile` (`packages/store/src/git.ts:262-298`). Each spawn sets `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`, and `LC_ALL=C`, sets `GIT_LITERAL_PATHSPECS`, `GIT_NOGLOB_PATHSPECS`, `GIT_GLOB_PATHSPECS`, and `GIT_ICASE_PATHSPECS` to `0` so a pathspec matches as git's default does whatever the calling shell exports, and removes the repository-selecting variables such as `GIT_DIR`, so a call made from inside a git hook still targets `root` (`packages/store/src/git.ts:184-221`). The user's own git config is still read, which is why every parsed call states its output format with explicit flags. `layerGit` wraps it as a layer (`packages/store/src/git.ts:560`). The CLI's v2 code calls it directly when it needs git for a root it already holds, as `loadVersion` does to load a head version (`apps/cli/src/head-cache.ts:177-183`). Tests use it to drive the real binary against a temporary repository.
 
-`packages/store/src/git.ts:292-467`, 16 importer files
+`packages/store/src/git.ts:356-534`, 16 importer files
 
 ### parseMemory
 
@@ -275,7 +275,7 @@ export const normalizePath = (path: string): string => {
 }
 ```
 
-Reduces a caller-supplied path to the git-tree form. It drops leading slashes, collapses runs of slashes to one, and removes a trailing slash. It never fails and does no validation, so `.` and `..` segments pass through unchanged. `memoryPathViolation` is the check that refuses a path outside the four PARA buckets, one that doesn't end in `.html`, or one carrying a blank, `.`, or `..` segment (`packages/contracts/src/paths.ts:83-100`). A session put whose path fails that check is a `format` violation (`packages/session/src/validate.ts:268-273`).
+Reduces a caller-supplied path to the git-tree form. It drops leading slashes, collapses runs of slashes to one, and removes a trailing slash. It never fails and does no validation, so `.` and `..` segments pass through unchanged. `memoryPathViolation` is the check that refuses a path outside the four PARA buckets, one that doesn't end in `.html`, or one carrying a blank, `.`, or `..` segment (`packages/contracts/src/paths.ts:83-100`). A session put whose path fails that check is a `format` violation (`packages/session/src/validate.ts:270-275`).
 
 `packages/contracts/src/paths.ts:57-60`, 10 importer files
 
@@ -400,16 +400,7 @@ The path of one session's log, `.memhtml/sessions/<id>.json` under the root (`pa
 
 ```ts
 export const slugify = (title: string): string => {
-  const folded = title
-    .normalize("NFKD")
-    .replace(/\p{Mn}+/gu, "")
-    .toLowerCase()
-
-  const kebab = folded
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+/, "")
-    .replace(/-+$/, "")
-
+  const kebab = kebabOf(title)
   if (kebab === "") return SLUG_FALLBACK
 
   return kebab.length <= SLUG_MAX_LENGTH
@@ -418,9 +409,23 @@ export const slugify = (title: string): string => {
 }
 ```
 
-Kebab-cases a title into `[a-z0-9-]`. It applies NFKD, strips combining marks so diacritics fold to base letters, and lowercases. Then it replaces each run of other characters with one hyphen and trims hyphens from both ends. A title that reduces to nothing returns `SLUG_FALLBACK`, which is `untitled`. A result longer than `SLUG_MAX_LENGTH` (80) is cut there, and any exposed trailing hyphen is trimmed (`packages/contracts/src/slug.ts:7-15`). A slug fed back in comes out unchanged.
+Kebab-cases a title into `[a-z0-9-]`. `kebabOf` applies NFKD, strips combining marks so diacritics fold to base letters, and lowercases. Then it replaces each run of other characters with one hyphen and trims hyphens from both ends (`packages/contracts/src/slug.ts:36-44`). A title that reduces to nothing returns `SLUG_FALLBACK`, which is `untitled`. A result longer than `SLUG_MAX_LENGTH` (80) is cut there, and any exposed trailing hyphen is trimmed (`packages/contracts/src/slug.ts:7-22`). A slug fed back in comes out unchanged. This is the slug of every name that is recomputed each time it's used, such as a workspace's `projects/<slug>/` folder and a tag's `resources/<slug>/`, so its cut never changes and a long workspace or tag stays one folder. A new record's filename stem is `slugifyStem`'s.
 
-`packages/contracts/src/slug.ts:28-44`, 7 importer files
+`packages/contracts/src/slug.ts:62-69`, 5 importer files
+
+### slugifyStem
+
+```ts
+export const slugifyStem = (title: string): string => {
+  const kebab = kebabOf(title)
+  if (kebab === "") return SLUG_FALLBACK
+  return cutAtWord(kebab, SLUG_MAX_LENGTH) || SLUG_FALLBACK
+}
+```
+
+The filename stem a new record takes from its title, which `memoryPathFor` and both collision loops use (`packages/contracts/src/paths.ts:200`, `packages/store/src/store.ts:460`, `apps/cli/src/v2.ts:341`). It kebab-cases as `slugify` does, and a result longer than 80 is cut at its last hyphen at or before 80 when that leaves at least `SLUG_MIN_WORD_CUT` (60) characters, so it ends on a whole word, and at 80 otherwise (`cutAtWord` at `packages/contracts/src/slug.ts:24-34`). It equals `slugify` for every title whose slug fits the budget. `withCollisionOrdinal` cuts its stem by the same rule to make room for a `-N` suffix. A stem is computed only when a record is minted, and the path is the record's id from then on, so the rule decides new filenames and never moves an existing file.
+
+`packages/contracts/src/slug.ts:82-86`, 2 importer files
 
 ### DirtyTree
 
@@ -474,7 +479,7 @@ export type Violation =
   | { readonly kind: "write-bar"; readonly path: string; readonly reasons: ReadonlyArray<string> }
 ```
 
-One mechanical refusal from `validateOps`, the check a session commit runs before it writes anything. The check reads only the view and the ops, with no model call and no I/O (`packages/session/src/validate.ts:21-24`). There are six kinds. A batch over `BATCH_CAP`, which is 200 ops, gets a single `batch-cap` violation, and nothing else is judged (`packages/session/src/validate.ts:47`, `packages/session/src/validate.ts:183-191`). For a put, a path or format problem is `format`. A content hash that an active record or an earlier put in the batch holds is `duplicate`, and a different article at an active path is `claim-edit` (`packages/session/src/validate.ts:266-281`). `reserved-path` covers `.memhtml/`, the policy file, `index.html`, and `sitemap.xml` under every scope, plus the arcs and people prefixes outside the `curate` scope (`packages/session/src/validate.ts:88-99`). `write-bar` carries the store policy's reasons for a new record. A commit refuses the whole batch on any violation and writes nothing (`packages/session/src/commit.ts:495-500`). `session put` and `session exec` refuse a call only for `batch-cap` or for a blocking kind on a path the call touches. The blocking kinds are `format`, `reserved-path`, `batch-cap`, and `write-bar`, plus `duplicate` and `claim-edit` in a session bound by `MEMHTML_SESSION` (`apps/cli/src/v2.ts:333-354`).
+One mechanical refusal from `validateOps`, the check a session commit runs before it writes anything. The check reads only the view and the ops, with no model call and no I/O (`packages/session/src/validate.ts:21-24`). There are six kinds. A batch over `BATCH_CAP`, which is 200 ops, gets a single `batch-cap` violation, and nothing else is judged (`packages/session/src/validate.ts:47`, `packages/session/src/validate.ts:183-191`). For a put, a path or format problem is `format`. A content hash that an active record or an earlier put in the batch holds is `duplicate`, and a different article at an active path is `claim-edit` (`packages/session/src/validate.ts:268-283`). `reserved-path` covers `.memhtml/`, the policy file, `index.html`, and `sitemap.xml` under every scope, plus the arcs and people prefixes outside the `curate` scope (`packages/session/src/validate.ts:88-99`). `write-bar` carries the store policy's reasons for a new record. A commit refuses the whole batch on any violation and writes nothing (`packages/session/src/commit.ts:495-500`). `session put` and `session exec` refuse a call only for `batch-cap` or for a blocking kind on a path the call touches. The blocking kinds are `format`, `reserved-path`, `batch-cap`, and `write-bar`, plus `duplicate` and `claim-edit` in a session bound by `MEMHTML_SESSION` (`apps/cli/src/v2.ts:333-354`).
 
 `packages/session/src/validate.ts:26-44`, 6 importer files
 
@@ -519,9 +524,9 @@ export const originalPathFor = (archivePath: string): string | undefined =>
   ARCHIVE_SLOT.exec(normalizePath(archivePath))?.[3]
 ```
 
-The inverse of `archivePathFor` (`packages/contracts/src/paths.ts:236-237`). It normalizes the path, strips exactly one `archive/<year>/` or `archive/<year>.<n>/` prefix whose year has four or more digits and whose generation n is 2 or more with no leading zero (`ARCHIVE_SLOT` at `packages/contracts/src/paths.ts:221`), and returns the rest. It returns `undefined` for a path without such a prefix, and `isArchivePath` asks the same question as a boolean (`packages/contracts/src/paths.ts:270`). A memory archived twice gives back its first archive path. An archive op whose destination doesn't map back to its source through `originalPathFor` is a format violation (`packages/session/src/validate.ts:303-305`).
+The inverse of `archivePathFor` (`packages/contracts/src/paths.ts:237-238`). It normalizes the path, strips exactly one `archive/<year>/` or `archive/<year>.<n>/` prefix whose year has four or more digits and whose generation n is 2 or more with no leading zero (`ARCHIVE_SLOT` at `packages/contracts/src/paths.ts:222`), and returns the rest. It returns `undefined` for a path without such a prefix, and `isArchivePath` asks the same question as a boolean (`packages/contracts/src/paths.ts:271`). A memory archived twice gives back its first archive path. An archive op whose destination doesn't map back to its source through `originalPathFor` is a format violation (`packages/session/src/validate.ts:305-307`).
 
-`packages/contracts/src/paths.ts:266-267`, 6 importer files
+`packages/contracts/src/paths.ts:267-268`, 6 importer files
 
 ### setMeta
 

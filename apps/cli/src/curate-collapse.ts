@@ -29,14 +29,15 @@ import {
   runCurator,
   type StoppedBy
 } from "@memhtml/curator"
-import { advanceHead, type HeadVersion, recordFrom } from "@memhtml/head"
+import { advanceHead, type HeadVersion, recordFrom, withOverlay } from "@memhtml/head"
 import {
   appendOps,
   BATCH_CAP,
   type Session,
   startSession,
   type Violation,
-  validateOps
+  validateOps,
+  withRepoints
 } from "@memhtml/session"
 import { type GitFailure, makeGit } from "@memhtml/store"
 import { Effect, Semaphore } from "effect"
@@ -76,18 +77,22 @@ import { type HeadStats, headStats, type LoadedHead, qualifyRef, revParse } from
  *
  * No model. Members are archived in chunks of {@link ARCHIVE_CHUNK}, one session per chunk, each
  * validated against the tip the chunk starts from; a member already archived is skipped and named.
- * Every archive takes the year's free slot, `archive/<YYYY>.<n>/` past one an older record holds.
+ * Every archive takes the year's free slot, `archive/<YYYY>.<n>/` past one an older record holds,
+ * and carries the repoints of the edges live records hold to the member's path (`withRepoints`: an
+ * `unlink` and a `link` to that slot per edge). A chunk closes early when they would take it past
+ * `BATCH_CAP`, and a member whose archive and repoints exceed the cap by themselves is skipped
+ * with a warning, because no one session can land it.
  *
  * ## Fold clusters
  *
  * One curator session each under the collapse charter, briefed by code with the members' paths,
  * claims, excerpts, rulings, and one member's whole HTML. The model writes the canonical `put`; the
- * driver then completes what the model left: an `archive` for every member still active and a
- * `supersedes` link the canonical lacks for each, inside the same session while `BATCH_CAP` allows
- * and in follow-up sessions after, so every member ends archived and reached from the canonical.
- * Over `largeGroup` members the briefing tells the model to write the put alone and the driver does
- * all of the bookkeeping, which is the rule that let the 77-member fold land in 81 seconds after the
- * first pass had truncated every proposal.
+ * driver then completes what the model left: an `archive` for every member still active, with its
+ * repoints, and a `supersedes` link the canonical lacks for each, inside the same session while
+ * `BATCH_CAP` allows and in follow-up sessions after, so every member ends archived and reached from
+ * the canonical. Over `largeGroup` members the briefing tells the model to write the put alone and
+ * the driver does all of the bookkeeping, which is the rule that let the 77-member fold land in 81
+ * seconds after the first pass had truncated every proposal.
  *
  * ## The head is held once
  *
@@ -151,11 +156,12 @@ export interface ClusterOutcome {
   /** The canonical the fold wrote, or `null` for an archive cluster or a fold that wrote none. */
   readonly canonical: string | null
   /**
-   * Every op the cluster landed by kind; `unlink`, `label`, and `unlabel` count what the model did,
-   * because the driver only archives and links.
+   * Every op the cluster landed by kind. The driver archives, links each archived member from the
+   * canonical, and repoints the edges live records carry to an archived member's path (an `unlink`
+   * and a `link` per edge); every other `unlink`, and every `label` and `unlabel`, is the model's.
    */
   readonly ops: OpsByKind
-  /** Archives and links the driver added beside the model's own. */
+  /** Archives and links the driver added beside the model's own, its repoint links included. */
   readonly driver: { readonly archive: number; readonly link: number }
   readonly steps: number
   readonly tokens: { readonly input: number; readonly output: number }
@@ -260,6 +266,13 @@ const archiveSlotIn = (view: HeadView, path: string, year: string): string =>
 /** Each archived source in `ops` mapped to the slot its archive op writes. */
 const archiveDestinationsOf = (ops: ReadonlyArray<OverlayOp>): ReadonlyMap<string, string> =>
   new Map(ops.flatMap((op) => (op.kind === "archive" ? [[op.path, op.to] as const] : [])))
+
+/**
+ * Why a member was left active: its archive and the repoints of every edge live records carry to it
+ * (`withRepoints`) come to `count` ops, more than one session carries, so no chunk can land it.
+ */
+const overCap = (path: string, count: number): string =>
+  `${path} left active: its archive and the repoints of the edges live records carry to it are ${String(count)} ops, over the cap of ${String(BATCH_CAP)} one session carries`
 
 const isActive = (view: HeadView, path: string): boolean => {
   const record = view.get(path)
@@ -449,37 +462,52 @@ const landOps = (
   })
 
 /**
- * An archive cluster: chunks of {@link ARCHIVE_CHUNK}, each judged against the tip it starts from.
- * A chunk with a violation is reported and skipped rather than failing the cluster, because the
- * next chunk is independent of it.
+ * An archive cluster: chunks of at most {@link ARCHIVE_CHUNK} members, each judged against the tip
+ * it starts from. A member's archive goes in with its repoints (`withRepoints`), and a chunk closes
+ * before the member that would take it past `BATCH_CAP`, which then opens the next chunk. A chunk
+ * with a violation is reported and skipped rather than failing the cluster, because the next chunk
+ * is independent of it.
  */
 const archiveCluster = (driver: Driver, cluster: CollapseCluster): Effect.Effect<ClusterOutcome> =>
   Effect.gen(function* () {
     const started = Date.now()
-    const paths = archivable(cluster)
+    const work = [...archivable(cluster)]
     const commits: Array<string> = []
     const skipped: Array<string> = []
     const warnings: Array<string> = []
-    let archived = 0
+    const landedOps: Array<OverlayOp> = []
     let rebases = 0
     let error: string | null = null
-    for (let at = 0, chunk = 1; at < paths.length; at += ARCHIVE_CHUNK, chunk += 1) {
-      const slice = paths.slice(at, at + ARCHIVE_CHUNK)
+    for (let chunk = 1; work.length > 0; chunk += 1) {
       const result = yield* Effect.result(
         Effect.gen(function* () {
           const loaded = yield* driver.heads.at(yield* tipOf(driver.root, driver.ref))
-          const ops: Array<OverlayOp> = []
-          for (const path of slice) {
-            const record = loaded.view.get(path)
+          const view = loaded.view
+          const archives: Array<OverlayOp> = []
+          let ops: ReadonlyArray<OverlayOp> = []
+          while (work.length > 0 && archives.length < ARCHIVE_CHUNK) {
+            const path = work[0] as string
+            const record = view.get(path)
             if (record === undefined || record.archived) {
+              skipped.push(path)
+              work.shift()
+              continue
+            }
+            const to = archiveSlotIn(view, path, driver.plan.archiveYear)
+            const archive: OverlayOp = { kind: "archive", path, to, html: record.html }
+            const next = withRepoints(view, [...archives, archive], CURATE_SCOPE)
+            if (next.length > BATCH_CAP && archives.length > 0) break
+            work.shift()
+            if (next.length > BATCH_CAP) {
+              warnings.push(overCap(path, next.length))
               skipped.push(path)
               continue
             }
-            const to = archiveSlotIn(loaded.view, path, driver.plan.archiveYear)
-            ops.push({ kind: "archive", path, to, html: record.html })
+            archives.push(archive)
+            ops = next
           }
           if (ops.length === 0) return
-          const violations = validateOps(loaded.view, ops, {
+          const violations = validateOps(view, ops, {
             scope: CURATE_SCOPE,
             writeBar: driver.writeBar
           })
@@ -487,7 +515,7 @@ const archiveCluster = (driver: Driver, cluster: CollapseCluster): Effect.Effect
             warnings.push(
               `chunk ${String(chunk)} refused: ${violations.slice(0, 5).map(describeViolation).join(" | ")}`
             )
-            skipped.push(...ops.map((op) => op.path))
+            skipped.push(...archives.map((op) => op.path))
             return
           }
           const landed = yield* landOps(
@@ -495,11 +523,11 @@ const archiveCluster = (driver: Driver, cluster: CollapseCluster): Effect.Effect
             collapseSessionId(cluster.id, `-${String(chunk)}`),
             loaded,
             ops,
-            `archive ${String(ops.length)} records: ${cluster.id}`
+            `archive ${String(archives.length)} records: ${cluster.id}`
           )
           commits.push(landed.sha)
           rebases += landed.rebases
-          archived += ops.length
+          landedOps.push(...ops)
         })
       )
       if (result._tag === "Failure") {
@@ -507,12 +535,13 @@ const archiveCluster = (driver: Driver, cluster: CollapseCluster): Effect.Effect
         break
       }
     }
+    const landed = opsByKind(landedOps)
     return {
       ...emptyOutcome(cluster, "committed", started),
       outcome: error !== null ? "failed" : commits.length === 0 ? "skipped" : "committed",
       commits,
-      ops: { ...NO_OPS, archive: archived },
-      driver: { archive: archived, link: 0 },
+      ops: landed,
+      driver: { archive: landed.archive, link: landed.link },
       rebases,
       skipped,
       warnings,
@@ -538,9 +567,10 @@ const supersedesInPut = (put: OverlayOp): Effect.Effect<ReadonlySet<string>> =>
 /**
  * Archive-plus-link sessions for the members a fold still owes after its model session landed: the
  * rest of a large cluster, and whatever `BATCH_CAP` pushed out of the first session. Each member
- * costs an archive to its free slot and a link to that slot; a member the first session archived
- * costs the link alone, to the slot `archivedTo` says it took. A member that left its path some
- * other way has no slot this fold knows, so it is named under `skipped` and gets no link.
+ * costs an archive to its free slot, its repoints (`withRepoints`), and a link to that slot; a
+ * member the first session archived costs the link alone, to the slot `archivedTo` says it took. A
+ * member that left its path some other way has no slot this fold knows, so it is named under
+ * `skipped` and gets no link. A round closes before the member that would take it past the cap.
  */
 const followUp = (
   driver: Driver,
@@ -551,7 +581,10 @@ const followUp = (
   results: {
     commits: Array<string>
     driver: { archive: number; link: number }
+    /** The `unlink` half of the repoints the follow-up sessions landed. */
+    unlinked: number
     skipped: Array<string>
+    warnings: Array<string>
     rebases: number
   }
 ): Effect.Effect<void, GitFailure | StorageFailure | InvalidMemory | DirtyTree> =>
@@ -570,24 +603,35 @@ const followUp = (
         )
       }
       const linked = supersedesOf(view, canonical)
-      const ops: Array<OverlayOp> = []
-      while (work.length > 0 && ops.length + 2 <= BATCH_CAP) {
-        const path = work.shift() as string
+      const taken: Array<OverlayOp> = []
+      let ops: ReadonlyArray<OverlayOp> = []
+      while (work.length > 0) {
+        const path = work[0] as string
         const record = view.get(path)
-        const active = record !== undefined && !record.archived
+        const live = record !== undefined && !record.archived
         // The link needs a target: the archive this batch writes, or the one already in the tree.
-        const to = active
-          ? archiveSlotIn(view, path, driver.plan.archiveYear)
-          : archivedTo.get(path)
-        if (to === undefined || (!active && view.get(to) === undefined)) {
+        const to = live ? archiveSlotIn(view, path, driver.plan.archiveYear) : archivedTo.get(path)
+        if (to === undefined || (!live && view.get(to) === undefined)) {
+          results.skipped.push(path)
+          work.shift()
+          continue
+        }
+        const unit: Array<OverlayOp> = []
+        if (live) unit.push({ kind: "archive", path, to, html: record.html })
+        const href = `/${to}`
+        if (!linked.has(href)) {
+          unit.push({ kind: "link", path: canonical, rel: "supersedes", href })
+        }
+        const next = withRepoints(view, [...taken, ...unit], CURATE_SCOPE)
+        if (next.length > BATCH_CAP && taken.length > 0) break
+        work.shift()
+        if (next.length > BATCH_CAP) {
+          results.warnings.push(overCap(path, next.length))
           results.skipped.push(path)
           continue
         }
-        if (active) ops.push({ kind: "archive", path, to, html: record.html })
-        const href = `/${to}`
-        if (!linked.has(href)) {
-          ops.push({ kind: "link", path: canonical, rel: "supersedes", href })
-        }
+        taken.push(...unit)
+        ops = next
       }
       if (ops.length === 0) continue
       const violations = validateOps(view, ops, {
@@ -612,6 +656,7 @@ const followUp = (
       results.rebases += landed.rebases
       results.driver.archive += ops.filter((op) => op.kind === "archive").length
       results.driver.link += ops.filter((op) => op.kind === "link").length
+      results.unlinked += ops.filter((op) => op.kind === "unlink").length
     }
   })
 
@@ -630,6 +675,7 @@ const foldCluster = (
     const results = {
       commits: [] as Array<string>,
       driver: { archive: 0, link: 0 },
+      unlinked: 0,
       skipped: [] as Array<string>,
       warnings: [] as Array<string>,
       rebases: 0
@@ -709,25 +755,35 @@ const foldCluster = (
       if (foreign.length > 0) {
         results.warnings.push(`the model archived non-members: ${foreign.slice(0, 5).join(", ")}`)
       }
+      // The slots a canonical already points at: its own supersedes edges, and the links the model
+      // added from a canonical. A link from any other path is a repoint of a live record's edge to
+      // a member, which leaves the member unreached from the canonical.
+      const putPaths = new Set(puts.map((one) => one.path))
       const linkedByPut = new Set<string>()
       for (const one of puts) for (const href of yield* supersedesInPut(one)) linkedByPut.add(href)
-      for (const op of ops)
-        if (op.kind === "link" && op.rel === "supersedes") linkedByPut.add(op.href)
+      for (const op of ops) {
+        if (op.kind === "link" && op.rel === "supersedes" && putPaths.has(op.path)) {
+          linkedByPut.add(op.href)
+        }
+      }
 
-      // Completion inside the same session while the cap allows: archives the model left, then the
-      // supersedes links the canonical lacks. A link on a put path in the same batch is valid.
+      // Completion inside the same session while the cap allows: archives the model left, each with
+      // its repoints computed over the view the model's ops left (`withRepoints`, which leaves the
+      // members the model archived and the edges it already repointed alone), then the supersedes
+      // links the canonical lacks. A link on a put path in the same batch is valid.
+      const overlaid = yield* withOverlay(view, ops)
       const completion: Array<OverlayOp> = []
+      let repointed: ReadonlyArray<OverlayOp> = []
       for (const path of first) {
         if (archivedByModel.has(path)) continue
-        if (ops.length + completion.length >= BATCH_CAP) break
         const record = view.get(path)
         if (record === undefined) continue
-        completion.push({
-          kind: "archive",
-          path,
-          to: archiveSlotIn(view, path, driver.plan.archiveYear),
-          html: record.html
-        })
+        const to = archiveSlotIn(view, path, driver.plan.archiveYear)
+        const archive: OverlayOp = { kind: "archive", path, to, html: record.html }
+        const next = withRepoints(overlaid, [...completion, archive], CURATE_SCOPE)
+        if (ops.length + next.length > BATCH_CAP) break
+        completion.push(archive)
+        repointed = next
       }
       // Each member's link names the slot its archive takes, the model's or the driver's.
       const willArchiveTo = archiveDestinationsOf([...ops, ...completion])
@@ -737,10 +793,10 @@ const foldCluster = (
         if (to === undefined) continue
         const href = `/${to}`
         if (linkedByPut.has(href)) continue
-        if (ops.length + completion.length + links.length >= BATCH_CAP) break
+        if (ops.length + repointed.length + links.length >= BATCH_CAP) break
         links.push({ kind: "link", path: canonical, rel: "supersedes", href })
       }
-      const extra = [...completion, ...links]
+      const extra = [...repointed, ...links]
       if (extra.length > 0) {
         const violations = validateOps(view, [...ops, ...extra], {
           scope: CURATE_SCOPE,
@@ -752,7 +808,10 @@ const foldCluster = (
           )
         } else {
           yield* overlay.append(extra)
-          completed = { archive: completion.length, link: links.length }
+          completed = {
+            archive: completion.length,
+            link: extra.filter((op) => op.kind === "link").length
+          }
         }
       }
       const finalOps = overlay.ops()
@@ -785,11 +844,14 @@ const foldCluster = (
       results.rebases += landed.rebases
 
       // Whatever the first session did not settle: the rest of a large cluster, the members the cap
-      // pushed out, and any archived member the canonical does not yet point at.
+      // pushed out, and any archived member the canonical does not yet point at. A repoint names an
+      // archive slot from some other holder, so only the canonical's own supersedes links count.
       const landedArchives = archiveDestinationsOf(finalOps)
       const landedLinks = new Set([
         ...linkedByPut,
-        ...finalOps.flatMap((op) => (op.kind === "link" ? [op.href] : []))
+        ...finalOps.flatMap((op) =>
+          op.kind === "link" && op.path === canonical && op.rel === "supersedes" ? [op.href] : []
+        )
       ])
       const owed = active.filter((path) => {
         const to = landedArchives.get(path)
@@ -809,7 +871,7 @@ const foldCluster = (
           put: puts.length,
           archive: finalOps.filter((op) => op.kind === "archive").length + results.driver.archive,
           link: finalOps.filter((op) => op.kind === "link").length + results.driver.link,
-          unlink: finalOps.filter((op) => op.kind === "unlink").length,
+          unlink: finalOps.filter((op) => op.kind === "unlink").length + results.unlinked,
           label: finalOps.filter((op) => op.kind === "label").length,
           unlabel: finalOps.filter((op) => op.kind === "unlabel").length,
           move: finalOps.filter((op) => op.kind === "move").length
