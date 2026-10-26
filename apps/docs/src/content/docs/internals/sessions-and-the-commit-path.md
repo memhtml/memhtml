@@ -33,16 +33,16 @@ Every writer of a log reads it, works for a while, and then writes. A `session e
 
 ## 3. Validation is one pure function
 
-`validateOps` (`packages/session/src/validate.ts:181`) judges a log against a version and returns violations. It has no side effects, so `session put`, `session exec`, the curator's tools, the head server, and the commit all call the same function and agree.
+`validateOps` (`packages/session/src/validate.ts:206`) judges a log against a version and returns violations. It has no side effects, so `session put`, `session exec`, the curator's tools, the head server, and the commit all call the same function and agree.
 
-| Violation       | Raised when                                                                                                                                                            |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `format`        | The file doesn't parse as a memory, or a `move` or an `archive` leaves a live record linking to the old path.                                                          |
-| `duplicate`     | A put's article is already held by an active record at another path.                                                                                                   |
-| `claim-edit`    | A put lands on an active path with a different article.                                                                                                                |
-| `reserved-path` | The path is under `.memhtml/`, is `memhtml.config.json`, or is an `index.html` or `sitemap.xml`. Under the `session` scope, `areas/arcs/` and `resources/people/` too. |
-| `batch-cap`     | The log holds more than 200 operations (`BATCH_CAP`, `packages/session/src/validate.ts:45`).                                                                           |
-| `write-bar`     | The store's policy refuses the record's type, or requires an anchor the record lacks (`writeBarReasons`, `packages/session/src/validate.ts:131`).                      |
+| Violation       | Raised when                                                                                                                                                                                                        |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `format`        | The file doesn't parse as a memory, a put's `<p>` or `<mark>` text holds a block tag such as `<p>` or `<ul>` as characters outside code, or a `move` or an `archive` leaves a live record linking to the old path. |
+| `duplicate`     | A put's article is already held by an active record at another path.                                                                                                                                               |
+| `claim-edit`    | A put lands on an active path with a different article.                                                                                                                                                            |
+| `reserved-path` | The path is under `.memhtml/`, is `memhtml.config.json`, or is an `index.html` or `sitemap.xml`. Under the `session` scope, `areas/arcs/` and `resources/people/` too.                                             |
+| `batch-cap`     | The log holds more than 200 operations (`BATCH_CAP`, `packages/session/src/validate.ts:52`).                                                                                                                       |
+| `write-bar`     | The store's policy refuses the record's type, or requires an anchor the record lacks (`writeBarReasons`, `packages/session/src/validate.ts:156`).                                                                  |
 
 The scope is `curate` for a session whose ref sits under `refs/heads/curate/` and `session` for every other ref, `main` included. The write bar's policy arrives as an argument, read from the store's `memhtml.config.json` at the moment of the call, and its library default refuses nothing (`packages/contracts/src/store-config.ts`).
 
