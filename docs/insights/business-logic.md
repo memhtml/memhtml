@@ -329,7 +329,7 @@ The defaults are 10 neighbors, a cosine floor of 0.35, a large group at 30 membe
 - **Inbox depth thresholds 20 memories and 10 tasks:** the two crowds mean different things. An unplaced memory is a placement rule that stopped matching what agents write; an unplaced task is work with no project, and a task inbox is meant to be drained rather than accumulated. `apps/cli/src/doctor.ts:94-104`.
 - **Bounded embed concurrency at 6:** every caller on the deployment draws on the same Bedrock token's tokens-per-minute quota, so an unbounded fan-out would spend the whole store's budget in one burst and throttle every other consumer. `packages/llm/src/constants.ts:13-27`.
 - **Write batch 500 rows:** one batch is one transaction, so the bound caps how much work a single failure discards and how long one write holds the WAL write lock against a concurrent reader. `packages/index/src/schema-const.ts:79-87`.
-- **The trace index stores no session content:** only pointers and capped heads, 500 characters for a session's first prompt and 200 per prompt. `packages/traces/src/extract.ts:47-51`, `apps/mcp/src/tools.ts:945`.
+- **The trace index stores no session content:** only pointers and capped heads, 500 characters for a session's first prompt and 200 per prompt. `packages/traces/src/extract.ts:47-51`, `apps/mcp/src/tools.ts:953`.
 - **`MEMHTML_TRACE_ROOT` is read-only and never written.** `apps/cli/src/config.ts:136-140`.
 - **Error codes and response types are append-only, and agents branch on the code:** once shipped a code's meaning never changes and a code is never removed, while the human `error` string changes freely as wording improves. `apps/cli/src/envelope.ts:8-11`, `:105-161`.
 - **`--dense` drops nulls and indentation:** an agent pasting CLI output into a prompt spends tokens on content rather than decoration. `apps/cli/src/envelope.ts:218-235`.
@@ -369,7 +369,7 @@ The v1 doors that create a record are `write`, `apply`, `correct`, and `task add
 - **`closed` closes every process:** records go in through sessions only, and a refusal with no session set names that mode. `apps/cli/src/store-config.ts:117`, `apps/cli/src/envelope.ts:153-156`.
 - **Reads and edits of existing records stay open in every mode:** `link`, `archive`, `task status`, and `reinforce` create no record. `packages/contracts/src/store-config.ts:34-35`.
 - **Refused before anything opens:** when `run()` knows the store, the CLI refuses a closed door as a usage error at exit 2, with the session command that does the same job as the suggestion. With an injected layer and no `--repo`, the record arm's own `guardV1Door` answers inside the layer. `apps/cli/src/run.ts:990-1016`, `apps/cli/src/store-config.ts:125-133`.
-- **MCP reads the variable from its own environment:** MCP has no per-call session binding, so a server an agent runtime starts inside a run is closed under `closed-in-session`, and a shared server started outside any run is open. `apps/cli/src/store-config.ts:100-109`, `apps/mcp/src/handlers.ts:338`, `:406`, `:658`.
+- **MCP reads the variable from its own environment:** MCP has no per-call session binding, so a server an agent runtime starts inside a run is closed under `closed-in-session`, and a shared server started outside any run is open. `apps/cli/src/store-config.ts:100-109`, `apps/mcp/src/handlers.ts:369`, `:437`, `:689`.
 
 ### Sessions: commit order and the checkout lock
 
@@ -414,7 +414,7 @@ A session is a log of overlay ops on a base commit, kept at `.memhtml/sessions/<
 
 ### Head search on the MCP surface
 
-`memory_search` and `memory_recall` ask the head server first, so a record committed a moment ago is searchable before the index is updated (`apps/cli/src/config.ts:224-228`, `apps/mcp/src/handlers.ts:581`, `:619`). The index answers instead when `MEMHTML_MCP_HEAD` is `off`, the call names `include_archived` or `as_of`, the query holds a double quote, or it holds no term the head indexes. The index also answers when the socket gives no answer within 2 s (`apps/cli/src/head-retrieval.ts:42-80`). The head reports its arms as `fts`, `vector`, and `recency`, and has no salience arm and no MMR (`apps/cli/src/head-retrieval.ts:19-33`).
+`memory_search` and `memory_recall` ask the head server first, so a record committed a moment ago is searchable before the index is updated (`apps/cli/src/config.ts:224-228`, `apps/mcp/src/handlers.ts:612`, `:650`). The index answers instead when `MEMHTML_MCP_HEAD` is `off`, the call names `include_archived` or `as_of`, the query holds a double quote, or it holds no term the head indexes. The index also answers when the socket gives no answer within 2 s (`apps/cli/src/head-retrieval.ts:42-80`). The head reports its arms as `fts`, `vector`, and `recency`, and has no salience arm and no MMR (`apps/cli/src/head-retrieval.ts:19-33`).
 
 ### The curator: budget, charter, and merge
 
