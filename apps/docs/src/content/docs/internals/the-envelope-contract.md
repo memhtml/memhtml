@@ -39,10 +39,10 @@ The MCP tools are built with `Tool.make` and collected by `Toolkit.make` (`apps/
 
 Curation stays off the tool surface, because it is an operator action that produces a branch for a human to review.
 
-Two things about the server come from the transport and the SDK rather than from a preference:
+Two things about the server explain how it is written:
 
 - `Logger.LogToStderr` is mandatory (`apps/mcp/src/server.ts::layerServer`). The default logger writes to stdout, and stdout here is the newline-delimited JSON-RPC stream, so one log line corrupts the frame a client is mid-parse on.
-- Tool descriptions are the only server-level channel for guidance (`apps/mcp/src/server.ts::layerServer`). MCP defines an `instructions` field on the initialize response and the SDK's handler does not emit it, so `BATCH_GUIDANCE` and `ARTICLE_HTML_CONTRACT` are shared constants appended to every description they apply to (`apps/mcp/src/tools.ts::BATCH_GUIDANCE`, `apps/mcp/src/tools.ts::ARTICLE_HTML_CONTRACT`). That is why they read as prose addressed to an agent rather than as notes to a maintainer.
+- Tool descriptions are the only server-level channel for guidance today (`apps/mcp/src/server.ts::layerServer`). MCP defines an `instructions` field on the initialize response, and the SDK's `McpServer.layerStdio` takes an `instructions` option and returns it from initialize, but the server passes none. So `BATCH_GUIDANCE` and `ARTICLE_HTML_CONTRACT` are shared constants appended to every description they apply to (`apps/mcp/src/tools.ts::BATCH_GUIDANCE`, `apps/mcp/src/tools.ts::ARTICLE_HTML_CONTRACT`). That is why they read as prose addressed to an agent rather than as notes to a maintainer.
 
 ## 5. A declared failure schema is what lets prose through
 
