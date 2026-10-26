@@ -182,7 +182,8 @@ export interface VacateFollower {
  * live record, which the curator archives later as it does any superseded record, rather than a
  * file that was never written. A held destination keeps the edges aimed at it, which name the
  * record that holds it; a record that is not live (an archive of a record the batch put, dropped
- * with the put) leaves them as they are.
+ * with the put) leaves them as they are, and so does a chain through a path two dropped ops aim at
+ * or two leave, which names no one record.
  *
  * `removed` lists the ops taken, `retargeted` each edge aimed back, and `returned` each op made at
  * the record's path, all with the vacate they followed; `homes` maps each dropped move's
@@ -209,26 +210,42 @@ export const afterDroppedVacates = (
     )
   )
   // Where each dropped vacate's destination came from, so a chain of them is followed back to the
-  // path the record still has.
+  // path the record still has. A path two dropped ops aim at, or two leave, names no one record:
+  // which one reached it depends on an order the refused log never settled, so nothing is
+  // rewritten through it and the edges to it stay as written.
   const cameFrom = new Map<string, string>()
+  const aimedAt = new Map<string, number>()
+  const leftFrom = new Map<string, number>()
   for (const op of dropped) {
-    if (op.kind === "archive" || op.kind === "move") {
-      cameFrom.set(normalizePath(op.to), normalizePath(op.path))
-    }
+    if (op.kind !== "archive" && op.kind !== "move") continue
+    const from = normalizePath(op.path)
+    const to = normalizePath(op.to)
+    cameFrom.set(to, from)
+    aimedAt.set(to, (aimedAt.get(to) ?? 0) + 1)
+    leftFrom.set(from, (leftFrom.get(from) ?? 0) + 1)
   }
+  const tangled = (path: string) => (aimedAt.get(path) ?? 0) > 1 || (leftFrom.get(path) ?? 0) > 1
   const liveAt = (path: string): string | undefined => {
     const seen = new Set<string>()
     for (let at: string | undefined = path; at !== undefined; at = cameFrom.get(at)) {
+      if (tangled(at)) return undefined
       const record = view.get(at)
       if (record !== undefined) return record.archived ? undefined : record.path
+      // Two dropped moves into each other, neither path in the view.
       if (seen.has(at)) return undefined
       seen.add(at)
     }
     return undefined
   }
   let ops: Array<OverlayOp> = [...keep]
-  // The op each rewritten op was in the log, and the ops made at the record's path, by the op made.
+  // The op each rewritten copy was in the log, and the ops made at the record's path, keyed by the
+  // op in the log, so every report names the op as the log held it.
   const original = new Map<OverlayOp, OverlayOp>()
+  const inLog = (op: OverlayOp) => original.get(op) ?? op
+  const copy = <A extends OverlayOp>(op: OverlayOp, made: A): A => {
+    original.set(made, inLog(op))
+    return made
+  }
   const returnedBy = new Map<OverlayOp, VacateFollower>()
   const removed: Array<VacateFollower> = []
   const retargeted: Array<VacateFollower> = []
@@ -254,19 +271,15 @@ export const afterDroppedVacates = (
       taken.add(unlink)
       taken.add(op)
     }
-    const home = view.get(to) !== undefined || held.has(to) ? undefined : liveAt(from)
+    const home =
+      view.get(to) !== undefined || held.has(to) || tangled(to) ? undefined : liveAt(from)
     const rewrite = home === undefined ? undefined : { path: home, href: pathToHref(home) }
     if (rewrite !== undefined && vacate.kind === "move") homes.set(to, rewrite.path)
     const next: Array<OverlayOp> = []
     for (const op of ops) {
       if (taken.has(op) && (op.kind === "link" || op.kind === "unlink")) {
-        returnedBy.delete(op)
-        removed.push({
-          kind: op.kind,
-          path: (original.get(op) ?? op).path,
-          detail: op.rel,
-          vacate
-        })
+        returnedBy.delete(inLog(op))
+        removed.push({ kind: op.kind, path: inLog(op).path, detail: op.rel, vacate })
         continue
       }
       if (rewrite === undefined) {
@@ -280,28 +293,25 @@ export const afterDroppedVacates = (
         op.kind !== "move" &&
         normalizePath(op.path) === to
       ) {
-        const made = { ...op, path: rewrite.path }
-        original.set(made, original.get(op) ?? op)
-        returnedBy.delete(op)
-        returnedBy.set(made, {
+        returnedBy.set(inLog(op), {
           kind: op.kind,
-          path: (original.get(op) ?? op).path,
+          path: inLog(op).path,
           detail: op.kind === "link" || op.kind === "unlink" ? op.rel : op.entity,
           vacate,
           home: rewrite.path
         })
-        next.push(made)
+        next.push(copy(op, { ...op, path: rewrite.path }))
         continue
       }
       if (op.kind === "link" && op.href === toHref) {
-        next.push({ ...op, href: rewrite.href })
         retargeted.push({
           kind: op.kind,
-          path: op.path,
+          path: inLog(op).path,
           detail: op.rel,
           vacate,
           home: rewrite.path
         })
+        next.push(copy(op, { ...op, href: rewrite.href }))
         continue
       }
       if (op.kind === "put") {
@@ -312,13 +322,13 @@ export const afterDroppedVacates = (
             html = addLink(removeLink(html, link.rel, toHref), link.rel, rewrite.href)
             retargeted.push({
               kind: op.kind,
-              path: op.path,
+              path: inLog(op).path,
               detail: link.rel,
               vacate,
               home: rewrite.path
             })
           }
-          next.push({ ...op, html })
+          next.push(copy(op, { ...op, html }))
           continue
         }
       }

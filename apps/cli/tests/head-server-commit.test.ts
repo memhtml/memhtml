@@ -81,7 +81,9 @@ import { writeStoreConfig } from "./strict-store.js"
  *   the four "takes ... pairs" cases under "when its destination is held, its record is not live,
  *   or the round drops a chain" (a note lands citing the record at the held path, or loses its
  *   label); the chain stopped at the vacate's own source -> the two "aims ..." cases there (the
- *   edge names a path nothing wrote).
+ *   edge names a path nothing wrote); `tangled` answering false -> "leaves an edge to the end of a
+ *   chain through a path two dropped moves aim at as written" (the note lands citing the second
+ *   record moved there).
  * - `v2.ts` `commitOverHead` (2026-10-26): a dropped pair keyed by its own path -> "does not list a
  *   pair the round took at a dropped move's destination that comes back where the holder stays".
  */
@@ -1443,6 +1445,34 @@ describe("a --drop-refused round that drops an archive or a move", () => {
       const links = await linksAt(repo, succ)
       expect(links).toContain(edge("supersedes", harbor))
       expect(links).not.toContain(edge("supersedes", placedSlot))
+    }, 120_000)
+
+    // Mutation: let a path two dropped moves aim at count as one record's in `afterDroppedVacates`
+    // and the note lands citing the second record moved there, a wrong edge nothing reports.
+    it("leaves an edge to the end of a chain through a path two dropped moves aim at as written", async () => {
+      const repo = await corpus()
+      const shared = "areas/inbox/x.html"
+      const further = "areas/inbox/y.html"
+      const p = "resources/acme-widget/p.html"
+      await writeLog(repo.root, 3, [
+        { kind: "put", ...cites(p, "Note p", further) },
+        { kind: "move", path: glacier, to: shared, html: await htmlAt(repo, glacier) },
+        { kind: "move", path: orchard, to: shared, html: await htmlAt(repo, orchard) },
+        { kind: "move", path: shared, to: further, html: await htmlAt(repo, glacier) }
+      ])
+      const dropped = await dropRefused(repo)
+      expect(kindsOf(dropped)).toEqual([`move ${glacier}`, `move ${orchard}`, `move ${shared}`])
+      for (const op of dropped) {
+        expect(op.reasons.some((reason) => reason.startsWith("the edges kept ops"))).toBe(false)
+      }
+      expect(await linksAt(repo, p)).toEqual([edge("relates-to", further)])
+      // The edge names a path nothing wrote, so doctor reports it.
+      await run_(repo.git.run(["reset", "-q", "--hard", "main"]))
+      expect((await cli(repo.root, ["index", "update"])).exitCode).toBe(0)
+      const doctor = dataOf((await cli(repo.root, ["doctor"])).body)
+      expect(doctor.dangling).toEqual([
+        expect.objectContaining({ srcPath: p, rel: "relates_to", dstPath: further })
+      ])
     }, 120_000)
 
     // Mutation: key a dropped pair by its own path in the drop loop and `dropped` lists the pair

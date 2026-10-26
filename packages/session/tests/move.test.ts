@@ -72,7 +72,10 @@ import {
  *   checks pass -> the same case (the pairs stay); the ops at a dropped move's destination left
  *   there -> "makes the ops kept at a dropped move's destination at its source"; `liveAt` stopped at
  *   the vacate's own source -> "follows a chain the round dropped whole back to the path the
- *   record still has". The rest of it is pinned through `session
+ *   record still has"; `tangled` answering false -> "names no record through a path two dropped
+ *   ops aim at or two leave, and leaves the edges as written"; `removed` or `retargeted`
+ *   reporting the op's current path rather than the log's -> "reports a kept op it moved and then
+ *   took or aimed back at the path the log held it at". The rest of it is pinned through `session
  *   commit --drop-refused` in `apps/cli/tests/head-server-commit.test.ts`.
  */
 
@@ -856,6 +859,78 @@ describe("afterDroppedVacates settles the ops a drop round keeps", () => {
     expect(validateOps(head, settled.keep)).toEqual([])
     // So the archive's repoint stands where the note stays, and nothing is added for it.
     expect(missingRepoints(head, settled.keep)).toEqual({ ops: [], overflow: [] })
+  })
+
+  // Reported as the log held them: the note's pair the commit appended at the path the move takes
+  // it to, made at the note's path for the move and then taken with the archive.
+  it("reports a kept op it moved and then took or aimed back at the path the log held it at", async () => {
+    const head = await headOf()
+    const placed = "resources/acme-gadget/c.html"
+    const moved = move(NOTE, placed, NOTE_HTML)
+    const archived = retire(RETIRED, RETIRED_HTML)
+    const pairThere = [
+      unlink(placed, "relates_to", `/${RETIRED}`),
+      link(placed, "relates_to", `/${SLOT}`)
+    ]
+    const taken = afterDroppedVacates(head, pairThere, [moved, archived])
+    expect(taken).toEqual({
+      keep: [],
+      removed: [
+        { kind: "unlink", path: placed, detail: "relates_to", vacate: archived },
+        { kind: "link", path: placed, detail: "relates_to", vacate: archived }
+      ],
+      retargeted: [],
+      returned: [],
+      homes: new Map([[placed, NOTE]])
+    })
+    // A link at the move's destination to the archive's slot, not a pair: made at the note's path
+    // for the move, then aimed back at the record for the archive.
+    const cites = link(placed, "supersedes", `/${SLOT}`)
+    const aimed = afterDroppedVacates(head, [cites], [moved, archived])
+    expect(aimed.keep).toEqual([link(NOTE, "supersedes", `/${RETIRED}`)])
+    expect(aimed.returned).toEqual([
+      { kind: "link", path: placed, detail: "supersedes", vacate: moved, home: NOTE }
+    ])
+    expect(aimed.retargeted).toEqual([
+      { kind: "link", path: placed, detail: "supersedes", vacate: archived, home: RETIRED }
+    ])
+  })
+
+  it("names no record through a path two dropped ops aim at or two leave, and leaves the edges as written", async () => {
+    const head = await headOf()
+    const shared = "resources/acme-gadget/x.html"
+    const further = "resources/acme-gadget/y.html"
+    const citesFurther: OverlayOp = {
+      kind: "put",
+      path: SUCCESSOR,
+      html: addLink(
+        memory("Widget note", "Widget records end up in the gadget area."),
+        "relates_to",
+        `/${further}`
+      )
+    }
+    const labelFurther: OverlayOp = { kind: "label", path: further, entity: "system:gadget" }
+    const none = { removed: [], retargeted: [], returned: [], homes: new Map() }
+    // Two records moved to one path, then that path moved on: which one went on is not known.
+    const intoOne = [
+      move(RETIRED, shared, RETIRED_HTML),
+      move(OTHER, shared, OTHER_HTML),
+      move(shared, further, RETIRED_HTML)
+    ]
+    expect(afterDroppedVacates(head, [citesFurther, labelFurther], intoOne)).toEqual({
+      ...none,
+      keep: [citesFurther, labelFurther]
+    })
+    // One path left twice: the record there moved away, another moved in and moved on.
+    const leftTwice = [
+      move(OTHER, "resources/acme-gadget/d.html", OTHER_HTML),
+      move(RETIRED, OTHER, RETIRED_HTML),
+      move(OTHER, further, RETIRED_HTML)
+    ]
+    expect(afterDroppedVacates(head, [citesFurther, labelFurther], leftTwice)).toEqual({
+      ...none,
+      keep: [citesFurther, labelFurther]
+    })
   })
 })
 
