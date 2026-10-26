@@ -33,7 +33,7 @@ Four decimals is the export's own rounding (`packages/index/src/sidecar.ts::roun
 
 ## 3. Cross-database references are explicit
 
-SQLite has no cross-database foreign keys, so a path move is mirrored by an explicit `onMove` hook that the store calls when it archives a path (`packages/store/src/store.ts::MoveCallback`, `packages/store/src/store.ts::makeStore::stageArchive`, `apps/cli/src/api-layer.ts::layerStore::onMove`). A session commit moves and archives paths without calling it (`packages/session/src/commit.ts::stage`), so `memhtml doctor` reports the rows no hook re-keyed, and `doctor --fix` deletes them (`apps/cli/src/doctor.ts::orphanAccess`).
+SQLite has no cross-database foreign keys, so a path move is mirrored by an explicit `onMove` hook that the store calls when it archives a path (`packages/store/src/store.ts::MoveCallback`, `packages/store/src/store.ts::makeStore::stageArchive`, `apps/cli/src/api-layer.ts::layerStore`). A session commit moves and archives paths without calling it (`packages/session/src/commit.ts::stage`), so `memhtml doctor` reports the rows no hook re-keyed, and `doctor --fix` deletes them (`apps/cli/src/doctor.ts::orphanAccess`).
 
 The alternative would be to key the state plane on something other than the path, which means inventing a second identity for a memory. The path is the id (`packages/contracts/src/types.ts::MemoryPath`).
 

@@ -76,14 +76,14 @@ Defined at `apps/cli/src/commands.ts::COMMANDS`, dispatched at `apps/cli/src/run
 
 All three are **report-only**: `--fix` repairs dangling hrefs and orphan `state.access` rows and nothing else (`apps/cli/src/doctor.ts::doctor`). Clearing a stale blocker is an authoring decision — the blocked task may be genuinely ready, or the blocker archived early — and it is the one task-graph state no single file reveals, since each file is individually valid and only the pair is wrong (`apps/cli/src/doctor.ts::staleBlockers`).
 
-The first two do not affect `healthy` (`apps/cli/src/doctor.ts::doctor::healthy`): they are facts about the work, not defects in the corpus, and folding them in would make `healthy: false` normal. The task inbox does count, at ten — half the memory inbox's twenty, because an unplaced memory is a routing rule that stopped matching while an unplaced task is work nobody owns (`apps/cli/src/doctor.ts::INBOX_TASK_WARN_DEPTH`). Doctor is the only surface that reports a _passed_ deadline; `--due-before` reads `due_at` only against a caller-supplied bound.
+The first two do not affect `healthy` (`apps/cli/src/doctor.ts::doctor`): they are facts about the work, not defects in the corpus, and folding them in would make `healthy: false` normal. The task inbox does count, at ten — half the memory inbox's twenty, because an unplaced memory is a routing rule that stopped matching while an unplaced task is work nobody owns (`apps/cli/src/doctor.ts::INBOX_TASK_WARN_DEPTH`). Doctor is the only surface that reports a _passed_ deadline; `--due-before` reads `due_at` only against a caller-supplied bound.
 
 ## MCP status: read and create, never advance
 
 The toolkit is fifteen tools and none is a task tool (`apps/mcp/src/tools.ts`).
 
 - `memory_write` takes `memory_type: "task"` — the enum derives from `WRITABLE_MEMORY_TYPES` (`apps/mcp/src/tools.ts::WritableType`). There is no `status` or `due` field in the write parameters (`apps/mcp/src/tools.ts::writeFields`), so a task authored over MCP opens in `todo` with no deadline.
-- `memory_list` filters `memory_type: "task"` and `memory_search` opts in through `memory_types: ["task"]` (`apps/mcp/src/tools.ts::MemoryList::parameters::memory_type`, `apps/mcp/src/tools.ts::MemorySearch::memory_types`). `memory_recall` takes no type parameter at all (`apps/mcp/src/tools.ts::MemoryRecall`), so over MCP a task is unreachable through recall with no opt-in available.
+- `memory_list` filters `memory_type: "task"` and `memory_search` opts in through `memory_types: ["task"]` (`apps/mcp/src/tools.ts::MemoryList::parameters::memory_type`, `apps/mcp/src/tools.ts::MemorySearch::parameters::memory_types`). `memory_recall` takes no type parameter at all (`apps/mcp/src/tools.ts::MemoryRecall`), so over MCP a task is unreachable through recall with no opt-in available.
 - `memory_link`'s `rel` is `MemoryRelSchema`, the nine memory rels, so a task rel is refused at **decode** (`apps/mcp/src/tools.ts::MemoryLink::parameters::rel`). The task graph is authored from the CLI: asserting `blocks` is planning.
 - **No status transition and no archive-on-done.** `memory_archive` moves a task into the archive without touching `task_status`, leaving a `todo` file under `archive/`.
 
