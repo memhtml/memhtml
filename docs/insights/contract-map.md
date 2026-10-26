@@ -192,20 +192,21 @@ export const Edge = Schema.Struct({
 
 This module provides placement, archival, and normalization as pure total functions over repo-root-relative paths. It has 16 non-test importers across 4 packages and 2 apps, and it's the only module that decides where a memory lands in the root.
 
-**Producer:** `packages/contracts/src/paths.ts:10-279`
+**Producer:** `packages/contracts/src/paths.ts:10-305`
 
 **Consumer(s):**
 
-- `packages/store/src/store.ts:12-19` imports six names: `archivePathFor`, `isValidMemoryPath`, `memoryPathFor`, `memoryPathViolation`, `normalizePath`, and `PlacementInput`. `memoryPathViolation` (`packages/store/src/store.ts:16`) is the one the `strictPath` refusal quotes at `packages/store/src/store.ts:722-735`.
+- `packages/store/src/store.ts:12-19` imports six names: `archiveSlotFor`, `isValidMemoryPath`, `memoryPathFor`, `memoryPathViolation`, `normalizePath`, and `PlacementInput`. `memoryPathViolation` (`packages/store/src/store.ts:16`) is the one the `strictPath` refusal quotes at `packages/store/src/store.ts:722-735`.
 - `packages/store/src/layout.ts:5` imports `ARCS_DIR`, `INBOX_DIR`, `PEOPLE_DIR` and puts all three in `SCAFFOLD_DIRS` (`packages/store/src/layout.ts:41-48`).
 - `packages/index/src/indexer.ts:6` imports `MEMORY_EXTENSION` and `normalizePath`.
-- `packages/index/src/project.ts:2` imports `normalizePath` and `paraBucketOf`; `packages/index/src/project.ts:360` normalizes a link's `href` before storing it as `dst_path`.
+- `packages/index/src/project.ts:2` imports `normalizePath`, `originalPathFor`, and `paraBucketOf`; `packages/index/src/project.ts:375` derives `files.origin_path` with `originalPathFor`, and `packages/index/src/project.ts:360` normalizes a link's `href` before storing it as `dst_path`.
 - `packages/head/src/record.ts:4` imports `ARCHIVE_BUCKET`, which decides a record's `archived` flag, and `packages/head/src/version.ts:3` imports `MEMORY_EXTENSION` for `isCandidatePath`.
-- `packages/session/src/validate.ts:2-17` reads `isArchivePath`, `memoryPathViolation`, `normalizePath`, `originalPathFor`, `pathToHref`, and `hrefToPath` through the root barrel, so a session's archive op is judged by the same inverse the store's archive writes.
+- `packages/session/src/validate.ts:2-17` reads `archiveSlotFor`, `archiveYearOf`, `isArchivePath`, `memoryPathViolation`, `normalizePath`, `originalPathFor`, `pathToHref`, and `hrefToPath` through the root barrel, so a session's archive op is judged by the same inverse the store's archive writes, and its destination by the same first-free-slot rule.
 - `packages/eval/src/corpus.ts:1` imports `PEOPLE_DIR`.
 - `apps/cli/src/session-exec.ts:6` imports `memoryPathViolation` and `originalPathFor` to turn a sandbox's file moves into `archive` and `move` ops; `apps/cli/src/replay.ts:2` imports `originalPathFor` to rebuild a curator branch's archives; `apps/cli/src/v2.ts:12` imports `isValidMemoryPath` and `memoryPathFor` for `session put`; `apps/cli/src/detected-tasks.ts:3` imports `placementFor`.
 - `apps/cli/src/doctor.ts:5` imports `INBOX_DIR`, `normalizePath`, and `TASKS_SUBDIR`.
-- `apps/cli/src/repair.ts:3` imports `archivePathFor` and `normalizePath`, and `apps/cli/src/operations.ts:3` and `apps/cli/src/head-scope.ts:2` import `normalizePath`.
+- `apps/cli/src/repair.ts:3-8` imports `archiveYearOf`, `compareArchivings`, `normalizePath`, and `originalPathFor`, `apps/cli/src/operations.ts:3` imports `compareArchivings` and `normalizePath`, and `apps/cli/src/head-scope.ts:2` imports `normalizePath`.
+- `packages/curator/src/tools.ts:1` and `packages/curator/src/collapse-briefing.ts:1` read `archiveSlotFor` through the root barrel, as `apps/cli/src/curate-collapse.ts:3-8` does, so the curator's binder, the collapse briefing, and the collapse driver name the slot the store would. `packages/curator/src/briefing.ts:1-8` reads `compareArchivings` and `originalPathFor`.
 - `apps/mcp/src/resources.ts:2` imports `isValidMemoryPath` and `normalizePath`.
 
 **Shape:**
@@ -247,13 +248,29 @@ export const placementFor = (input: PlacementInput): string => {
   return INBOX_DIR
 }
 
-export const archivePathFor = (path: string, year: number): string =>
-  `${ARCHIVE_BUCKET}/${yearSegment(year)}/${normalizePath(path)}`
+const ARCHIVE_SLOT = /^archive\/(\d{4,})(?:\.([2-9]|[1-9]\d+))?\/(.+)$/
 
-export const originalPathFor = (archivePath: string): string | undefined => {
-  const normalized = normalizePath(archivePath)
-  const match = /^archive\/(\d{4,})\/(.+)$/.exec(normalized)
-  return match?.[2]
+export const archivePathFor = (path: string, year: number, generation = 1): string =>
+  `${ARCHIVE_BUCKET}/${yearSegment(year, generation)}/${normalizePath(path)}`
+
+export const archiveSlotFor = (
+  path: string,
+  year: number,
+  isHeld: (slot: string) => boolean
+): string => {
+  for (let generation = 1; ; generation += 1) {
+    const slot = archivePathFor(path, year, generation)
+    if (!isHeld(slot)) return slot
+  }
+}
+
+export const originalPathFor = (archivePath: string): string | undefined =>
+  ARCHIVE_SLOT.exec(normalizePath(archivePath))?.[3]
+
+export const compareArchivings = (a: string, b: string): number => {
+  const year = (archiveYearOf(a) ?? -1) - (archiveYearOf(b) ?? -1)
+  if (year !== 0) return year
+  return (archiveGenerationOf(a) ?? 0) - (archiveGenerationOf(b) ?? 0)
 }
 ```
 
@@ -264,7 +281,8 @@ export const originalPathFor = (archivePath: string): string | undefined => {
 - `packages/store/src/layout.ts:35-48` assumes the three directory constants `placementFor` can return already exist on disk, so `memhtml init` creates all of them and an agent's first write lands somewhere real.
 - `packages/index/src/project.ts:344-347` assumes the leading slash in a link's `href` must be stripped before it becomes a `dst_path`, because the `edges` table stores the git-tree form and a slashed value would fail to join `files.path` while looking exactly like a corpus with no edges.
 - A caller that wants an invalid path rejected instead of re-derived asks the store for it, with `strictPath` on a `WriteInput` (`packages/store/src/store.ts`, `strictPathRefusal`).
-- `packages/index/src/project.ts:371-375` re-implements the archive-path inverse as a local `originOf` instead of importing `originalPathFor`, so two copies of the same regex exist. Both match `^archive\/\d{4,}\/(.+)$`.
+- `packages/index/src/project.ts:371-375` derives `files.origin_path` with `originalPathFor` itself rather than a copy of its regex, so the index's origin and the session's inverse agree on every archive path, generation slots included.
+- Every reader that picks a path's latest archiving orders its archive paths with `compareArchivings`, by year and then generation as numbers, never by string order, which puts `archive/<YYYY>.2/` before `archive/<YYYY>/` (`packages/contracts/src/paths.ts:292-305`).
 - `PlacementInput` allows `| undefined` on every optional field. `packages/contracts/src/paths.ts:115-121` states that under `exactOptionalPropertyTypes` a bare `path?: string` would force every tool adapter to strip absent fields by hand, so the contract accepts the shape the MCP and CLI layers already hold.
 
 **Drift risk:** Adding a routing rule to `placementFor` changes where new memories land without moving anything already in the root, so the same logical memory can sit in two directories depending on when it was written. Mitigation: treat a rule change as needing a migration pass over the root, and check inbox depth through `memhtml doctor`, which already reports it as a health signal (`packages/contracts/src/paths.ts:18-21`).
