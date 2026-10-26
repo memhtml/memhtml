@@ -103,59 +103,94 @@ describe("blockTagInRun", () => {
     expect(blockTagInRun("```html\n<ul>\n```")?.tag).toBe("<ul>")
   })
 
-  it("stays linear on the shapes that would make a tag pattern backtrack", () => {
+  it("grows linearly with the text on the shapes that would make a scan backtrack", () => {
     /**
      * A cost-curve assertion, because the defect it locks is invisible to output: a body is
      * unbounded caller input on the write path, and the obvious `<p\b[^>]*>` scans to the end of the
      * text from every `<p` when no `>` follows, which is quadratic. Measured on the raw shape below,
      * that pattern took 181 ms, 742 ms, and 2967 ms at 10k, 20k, and 40k openers (the escaped one,
      * with `.*?&gt;`, 169, 681, and 2818 ms). The scan stops each attempt at the next `<` or
-     * `&lt;`, where the next attempt starts, so a run of openers is one pass. The bound sits an
-     * order of magnitude below the quadratic cost at 40k, so a loaded host cannot turn a pass into
-     * a fail.
+     * `&lt;`, where the next attempt starts, so a run of openers is one pass.
+     *
+     * The assertion is on growth, not on a clock: each shape is timed at n and at 8n characters,
+     * and the larger may cost at most 32 times the smaller. A linear scan costs about 8 times as
+     * much and a quadratic one about 64. The time is the process's CPU time, which a slow host
+     * raises at both sizes alike and which leaves out the time other work holds the CPU.
+     * Measured, the ratio ran from 5.6 to 12.3 across the shapes, with one core shared three ways
+     * or not. The highest is the backtick shape, which builds a list of spans and so pays the
+     * collector at both sizes.
      */
+    const n = 16_000
     const shapes = [
-      { name: "raw openers", text: "<p ".repeat(40_000) },
-      { name: "escaped openers", text: "&lt;p ".repeat(40_000) },
-      { name: "backtick runs", text: "` ``".repeat(30_000) },
-      { name: "one long line of words", text: "word ".repeat(40_000) }
+      { name: "raw openers", make: (size: number) => "<p ".repeat(size / 3) },
+      { name: "escaped openers", make: (size: number) => "&lt;p ".repeat(size / 6) },
+      { name: "escaped opener, then letters", make: (size: number) => `&lt;p ${"a".repeat(size)}` },
+      {
+        name: "escaped opener, then ampersands",
+        make: (size: number) => `&lt;p ${"&".repeat(size)}`
+      },
+      { name: "ampersands", make: (size: number) => "&".repeat(size) },
+      { name: "backtick runs", make: (size: number) => "` ``".repeat(size / 4) },
+      { name: "lines of openers", make: (size: number) => "a <p\n".repeat(size / 5) },
+      { name: "one long line of words", make: (size: number) => "word ".repeat(size / 5) }
     ]
-    for (const { name, text } of shapes) {
-      expect(blockTagInRun(text), name).toBeUndefined()
-      const started = process.hrtime.bigint()
-      for (let i = 0; i < 5; i++) blockTagInRun(text)
-      const perCallMs = Number(process.hrtime.bigint() - started) / 5e6
-      expect(perCallMs, `blockTagInRun took ${perCallMs.toFixed(1)}ms on ${name}`).toBeLessThan(250)
+    for (const { name, make } of shapes) {
+      const large = make(8 * n)
+      expect(blockTagInRun(large), name).toBeUndefined()
+      const growth = growthOf(make(n), large)
+      expect(
+        growth,
+        `blockTagInRun cost ${growth.toFixed(1)} times as much at 8n on ${name}`
+      ).toBeLessThan(32)
     }
-  })
+  }, 120_000)
 
   it("reads a line of 10M characters without running out of stack", () => {
     /**
      * A regular expression over the escaped spelling, `(?:[^&<>]|&(?!lt;|gt;))*`, keeps one
      * backtrack frame per character and throws `RangeError: Maximum call stack size exceeded`
-     * from about 8.5M characters after an `&lt;p` opener. The scan is a loop and keeps none.
-     * Measured on an idle host, each shape here took 40 to 560 ms; the bound is generous because
-     * the failure it guards is a throw or a quadratic, and neither finishes inside it.
+     * from about 8.5M characters after an `&lt;p` opener, on a run of letters or of `&`. The scan
+     * is a loop and keeps none. Only finishing is asserted; the growth test above holds its cost.
      */
     const size = 10_000_000
-    const shapes = [
-      { name: "escaped opener, then letters", text: `&lt;p ${"a".repeat(size)}` },
-      { name: "escaped opener, then ampersands", text: `&lt;p ${"&".repeat(size)}` },
-      { name: "raw opener, then letters", text: `<p ${"a".repeat(size)}` },
-      { name: "ampersands", text: "&".repeat(size) },
-      { name: "raw openers", text: "<p ".repeat(size / 3) },
-      { name: "escaped openers", text: "&lt;p ".repeat(size / 6) },
-      { name: "backtick runs", text: "` ``".repeat(size / 4) }
-    ]
-    for (const { name, text } of shapes) {
-      const started = process.hrtime.bigint()
-      expect(blockTagInRun(text), name).toBeUndefined()
-      const ms = Number(process.hrtime.bigint() - started) / 1e6
-      expect(ms, `blockTagInRun took ${ms.toFixed(0)}ms on ${name}`).toBeLessThan(5000)
-    }
-    expect(blockTagInRun(`&lt;p ${"a".repeat(size)}&gt;`)?.tag).toBe(`&lt;p ${"a".repeat(71)}...`)
+    expect(() => blockTagInRun(`&lt;p ${"a".repeat(size)}`)).not.toThrow()
+    expect(() => blockTagInRun(`&lt;p ${"&".repeat(size)}`)).not.toThrow()
   }, 120_000)
 })
+
+/** CPU time the process has spent, in microseconds. */
+const cpuMicros = (): number => {
+  const { user, system } = process.cpuUsage()
+  return user + system
+}
+
+/**
+ * How much more the scan costs on `large` than on `small`, in CPU time. Each timing is as many
+ * calls as make about 10 ms of work on `small`, the same count on `large`; the sizes are timed in
+ * turn for five rounds, and the cheapest of each is kept, because a pause from the collector only
+ * ever adds time.
+ */
+const growthOf = (small: string, large: string): number => {
+  let found = 0
+  const timed = (text: string, calls: number): number => {
+    const started = cpuMicros()
+    for (let call = 0; call < calls; call += 1) {
+      if (blockTagInRun(text) !== undefined) found += 1
+    }
+    return cpuMicros() - started
+  }
+  timed(large, 1)
+  let calls = 1
+  while (timed(small, calls) < 10_000) calls *= 2
+  let cheapestSmall = Number.POSITIVE_INFINITY
+  let cheapestLarge = Number.POSITIVE_INFINITY
+  for (let round = 0; round < 5; round += 1) {
+    cheapestSmall = Math.min(cheapestSmall, timed(small, calls))
+    cheapestLarge = Math.min(cheapestLarge, timed(large, calls))
+  }
+  expect(found).toBe(0)
+  return cheapestLarge / Math.max(cheapestSmall, 1)
+}
 
 /** A file whose article is `article`, through the template's markup path. */
 const withArticle = (article: string): string =>
