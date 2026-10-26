@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 
@@ -10,7 +10,13 @@ import { frameKeyOf } from "@memhtml/domain"
 import { versionFromRecords } from "@memhtml/head"
 import { contentHash, parseMemory, renderTemplate } from "@memhtml/html"
 import { PROXY_BASE_URL_VAR } from "@memhtml/llm"
-import { appendOps, startSession, UNANCHORED_REASON, validateOps } from "@memhtml/session"
+import {
+  appendOps,
+  sessionStateFile,
+  startSession,
+  UNANCHORED_REASON,
+  validateOps
+} from "@memhtml/session"
 import { makeGit } from "@memhtml/store"
 import { configureIdentity } from "@memhtml/store/testing"
 import { Effect, Logger } from "effect"
@@ -70,7 +76,10 @@ import { STRICT_POLICY } from "./strict-store.js"
  * - `curate-run.ts` `land` (2026-10-26): the rebase round without its completion -> "repoints an
  *   edge the ref gained to the archived path while the curator ran" (the commit is refused naming
  *   the new record, and `land` fails); the completion before the first attempt dropped -> "completes
- *   a log written without repoints before its first attempt" (the same refusal on attempt 1).
+ *   a log written without repoints before its first attempt" (the same refusal on attempt 1); the
+ *   completion's `overflow` ignored -> "fails naming the archive and the cap when the repoints a
+ *   rebase brings would pass it" (the commit goes on to the refusal naming the new record's edge,
+ *   with no word of the cap).
  */
 
 const parse = (stdout: string): Record<string, unknown> =>
@@ -865,6 +874,49 @@ describe("land completes an archive's repoints against the version it commits ov
     )
     expect(landed.rebases).toBe(0)
     await landedCites(root, landed.sha)
+  }, 120_000)
+
+  it("fails naming the archive and the cap when the repoints a rebase brings would pass it", async () => {
+    const root = await repo()
+    const base = await commitFiles(root, { [retired]: retiredHtml }, "one claim")
+    const head = await Effect.runPromise(loadHeadAt(root, base))
+    // 199 puts and the archive: the log is at the cap, and nothing cites the record at the base.
+    const fillers = Array.from({ length: 199 }, (_, at) => ({
+      kind: "put" as const,
+      path: `resources/acme-widget/filler-${String(at)}.html`,
+      html: renderTemplate({
+        title: `Widget filler ${String(at)}`,
+        claim: `Widget filler ${String(at)} weighs ${String(at + 3)} grams.`,
+        memoryType: "semantic",
+        entities: ["project:acme-widget"],
+        at: "2031-03-01T12:00:00Z"
+      })
+    }))
+    const session = await Effect.runPromise(
+      startSession({ root, id: "curate-land", base: head.view }).pipe(
+        Effect.flatMap((started) =>
+          appendOps(started, [
+            ...fillers,
+            { kind: "archive", path: retired, to: slot, html: retiredHtml }
+          ])
+        )
+      )
+    )
+    const tip = await commitFiles(root, { [later]: laterHtml }, "another writer")
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        land({ root, session, head, message: "retire one claim", writeBar: DEFAULT_WRITE_BAR })
+      )
+    )
+    expect(failure._tag).toBe("InvalidMemory")
+    expect(failure._tag === "InvalidMemory" ? failure.reason : "").toBe(
+      `curate run: the session's ops were refused at commit, so nothing landed and the log stays for --resume: ${retired}: archived to ${slot}, and repointing the 1 edge live records carry to /${retired} that the log does not repoint would take it to 202 ops, over the cap of 200: archive it in a session of its own`
+    )
+    expect(await Effect.runPromise(revParse(root, "refs/heads/main"))).toBe(tip)
+    const log = JSON.parse(await readFile(sessionStateFile(root, "curate-land"), "utf8")) as {
+      readonly ops: ReadonlyArray<unknown>
+    }
+    expect(log.ops).toHaveLength(200)
   }, 120_000)
 })
 
