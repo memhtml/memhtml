@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto"
 import { join, win32 } from "node:path"
 
-import { HEAD_SOCKET, OverlayOpSchema } from "@memhtml/session"
-import { Schema } from "effect"
+import { HEAD_SOCKET, OverlayOpSchema, RESTATEMENT_REASONS } from "@memhtml/session"
+import { Effect, Schema } from "effect"
 
 /**
  * The head server's wire contract (`docs/design.md` §22): JSON over HTTP on a Unix domain
@@ -737,6 +737,19 @@ const DroppedOpSchema = Schema.Struct({
   reasons: Schema.Array(Schema.String)
 })
 
+/**
+ * The frame-key rivals a commit left unlinked (`restatements` in `CommitOutcome`, `commit.ts`): a
+ * rival that agrees with the put, one the put supersedes, or one the batch archives. Absent from an
+ * older server, which links every rival, so its answer decodes as none.
+ */
+const RestatementsSchema = Schema.Array(
+  Schema.Struct({
+    path: Schema.String,
+    against: Schema.String,
+    reason: Schema.Literals(RESTATEMENT_REASONS)
+  })
+).pipe(Schema.withDecodingDefaultKey(Effect.succeed([])))
+
 /** The fields every commit outcome carries before its kind's own, and after them. */
 const commitHead = { id: Schema.String, ref: Schema.String, baseSha: Schema.String }
 const commitTail = {
@@ -759,6 +772,7 @@ export const CommitResult = Schema.Union([
     sha: Schema.String,
     paths: Schema.Array(Schema.String),
     contradictions: Schema.Array(Schema.Struct({ path: Schema.String, against: Schema.String })),
+    restatements: RestatementsSchema,
     worktreeSynced: Schema.Boolean,
     recovered: Schema.Boolean,
     ...commitTail

@@ -2,8 +2,15 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { CheckoutLockOptions, HeadView, OverlayOp, WriteBarPolicy } from "@memhtml/contracts"
-import { CHECKOUT_LOCKED, isEdgeRel, pathToHref, StorageFailure } from "@memhtml/contracts"
-import { frameKeyOf } from "@memhtml/domain"
+import {
+  CHECKOUT_LOCKED,
+  hrefToPath,
+  isEdgeRel,
+  normalizePath,
+  pathToHref,
+  StorageFailure
+} from "@memhtml/contracts"
+import { frameGroupAgrees, frameKeyOf } from "@memhtml/domain"
 import {
   addLink,
   addMeta,
@@ -30,12 +37,31 @@ export type { CommitScope } from "./validate.js"
  * checkout and compare-and-swap the ref under the checkout lock.
  */
 
+/**
+ * Why step 3 left a frame-key rival unlinked: it agrees with the put (`same-value`: one value or
+ * one claim, and for two verdicts one ruling), the put carries a `supersedes` edge to it or to
+ * where the batch archives it (`superseded`), or the batch archives it (`archived`). A pair that
+ * meets more than one is reported with the first, in that order.
+ */
+export const RESTATEMENT_REASONS = ["same-value", "superseded", "archived"] as const
+export type RestatementReason = (typeof RESTATEMENT_REASONS)[number]
+
 export type CommitOutcome =
   | {
       readonly kind: "committed"
       readonly sha: string
       readonly paths: ReadonlyArray<string>
+      /** Each put step 3 linked to a frame-key rival (`against`, its destination when moved). */
       readonly contradictions: ReadonlyArray<{ readonly path: string; readonly against: string }>
+      /**
+       * Each frame-key rival step 3 left unlinked, named the way `contradictions` names one, with
+       * the reason ({@link RestatementReason}).
+       */
+      readonly restatements: ReadonlyArray<{
+        readonly path: string
+        readonly against: string
+        readonly reason: RestatementReason
+      }>
       /**
        * True when `HEAD` is the session's ref, so the shared index and working tree were moved to
        * the new commit before the ref was. False when the ref is not checked out and nothing
@@ -45,7 +71,8 @@ export type CommitOutcome =
       /**
        * True when this call found the commit an earlier call had landed before it was killed (the
        * log still carried it as `pending`) and reports that commit instead of building one. The
-       * contradictions of a recovered commit are not re-derived and come back empty.
+       * contradictions and restatements of a recovered commit are not re-derived and come back
+       * empty.
        */
       readonly recovered: boolean
     }
@@ -224,21 +251,37 @@ const stage = (head: HeadView, ops: ReadonlyArray<OverlayOp>, archivedAt: string
 /**
  * Step 3: a put whose claim shares a frame key with a different active path gets a
  * `memhtml-contradicts` link to that path. Both stay live; nothing is auto-archived.
+ *
+ * A rival is left unlinked, and reported as a restatement instead, when the edge would assert a
+ * disagreement the batch does not hold. The checks run in the order of {@link RestatementReason}:
+ * the rival agrees with the put by `frameGroupAgrees`, the rule the curator's planner reads before
+ * it folds a frame-key group (one value or one claim, and two verdicts agree only under one title,
+ * which carries the ruling); the put, as the batch left it, carries a `supersedes` edge to the
+ * rival where the commit leaves it (its path, or its destination when the batch moves it) or to
+ * the archive path the batch moves it to (a successor does not contradict what it replaces); or
+ * the batch archives the rival (the edge would name a path the commit empties). An edge to the old
+ * path of a moved rival names what the batch puts there, if anything (`validateOps` refuses it
+ * otherwise). A `supersedes` edge to any other archive path names an earlier record, even one
+ * archived from the rival's path, and the rival is still linked.
  */
 const markContradictions = (
   head: HeadView,
   ops: ReadonlyArray<OverlayOp>,
   writes: Map<string, string>
-): Effect.Effect<ReadonlyArray<{ path: string; against: string }>> =>
+): Effect.Effect<{
+  readonly contradictions: ReadonlyArray<{ path: string; against: string }>
+  readonly restatements: ReadonlyArray<{ path: string; against: string; reason: RestatementReason }>
+}> =>
   Effect.gen(function* () {
     const contradictions: Array<{ path: string; against: string }> = []
+    const restatements: Array<{ path: string; against: string; reason: RestatementReason }> = []
     // A rival this batch moves is linked at its destination, so the edge never names a path the
     // commit empties; one it archives is not linked at all.
     const movedTo = new Map<string, string>()
-    const archiving = new Set<string>()
+    const archivedTo = new Map<string, string>()
     for (const op of ops) {
       if (op.kind === "move") movedTo.set(op.path, op.to)
-      else if (op.kind === "archive") archiving.add(op.path)
+      else if (op.kind === "archive") archivedTo.set(op.path, normalizePath(op.to))
     }
     for (const op of ops) {
       if (op.kind !== "put") continue
@@ -248,19 +291,37 @@ const markContradictions = (
       const doc = yield* parseMemory(html).pipe(Effect.orDie)
       const key = frameKeyOf(doc.article.gist)
       if (key === null) continue
+      const put = { memoryType: doc.metas.memoryType, title: doc.title, claim: doc.article.gist }
+      // The paths the put's `supersedes` edges name, as written.
+      const superseded = new Set(
+        doc.links
+          .filter((link) => link.rel === "supersedes")
+          .map((link) => normalizePath(hrefToPath(link.href)))
+      )
       let linked = html
       for (const other of head.byFrameKey(key)) {
         if (other === op.path) continue
         const record = head.get(other)
         if (record === undefined || record.archived) continue
         const against = movedTo.get(other) ?? other
-        if (archiving.has(other)) continue
+        const archivedAs = archivedTo.get(other)
+        const reason: RestatementReason | null = frameGroupAgrees([put, record])
+          ? "same-value"
+          : superseded.has(against) || (archivedAs !== undefined && superseded.has(archivedAs))
+            ? "superseded"
+            : archivedAs !== undefined
+              ? "archived"
+              : null
+        if (reason !== null) {
+          restatements.push({ path: op.path, against, reason })
+          continue
+        }
         linked = addLink(linked, "contradicts", pathToHref(against))
         contradictions.push({ path: op.path, against })
       }
       writes.set(op.path, linked)
     }
-    return contradictions
+    return { contradictions, restatements }
   })
 
 const utf8 = new TextEncoder()
@@ -419,7 +480,9 @@ const overlappingPaths = (
  * 3. Stage the ops over the head. A head op the validator passed as a change whose editor hands
  *    back its file unchanged ({@link changedNothing}) is `refused` as a `format` violation and
  *    writes nothing, so an editor that disagrees with the reader cannot land an empty commit. Then
- *    frame-key contradictions, marked on the new file's head before hashing.
+ *    frame-key contradictions, marked on the new file's head before hashing. A rival that agrees
+ *    with the put, that the put supersedes, or that the batch archives is reported under
+ *    `restatements` and left unlinked.
  * 4. Blobs, index, tree, commit object, through a temporary index file removed on every outcome.
  * 5. Write `pending: commit` to the log, BEFORE anything shared is touched: from here on a process
  *    killed at any instant leaves a log the next call settles in step 0.
@@ -490,6 +553,7 @@ export const commitSession = (input: {
             sha: pending,
             paths,
             contradictions: [],
+            restatements: [],
             worktreeSynced: settled.worktreeSynced,
             recovered: true
           } as const
@@ -522,7 +586,11 @@ export const commitSession = (input: {
       if (staged.unchanged.length > 0) {
         return { kind: "refused", violations: staged.unchanged } as const
       }
-      const contradictions = yield* markContradictions(head, session.ops, staged.writes)
+      const { contradictions, restatements } = yield* markContradictions(
+        head,
+        session.ops,
+        staged.writes
+      )
 
       // 4. Blobs, index, tree, commit, staged through a temporary index file. One child per step
       //    where git allows.
@@ -588,6 +656,7 @@ export const commitSession = (input: {
         sha: commit,
         paths,
         contradictions,
+        restatements,
         worktreeSynced: landing.worktreeSynced,
         recovered: false
       } as const
