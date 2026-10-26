@@ -1109,8 +1109,8 @@ export const linkMemories = (srcPath: string, rel: string, dstPath: string) =>
   })
 
 /**
- * Soft-evict: `git mv` into `archive/<YYYY>/` (`archive/<YYYY>.<n>/` when an earlier archiving holds
- * that slot) with the archive stamps. Never a delete.
+ * Soft-evict: `git mv` into `archive/<YYYY>/` (`archive/<YYYY>.<n>/` when an earlier archiving
+ * holds that slot) with the archive stamps. Never a delete.
  */
 export const archiveMemory = (path: string, reason: string) =>
   Effect.gen(function* () {
@@ -1488,11 +1488,11 @@ export interface ResolveResult {
  *
  * `archived` is the archive mapping read backwards, served by `files_origin`
  * (`0012_origin_path.sql`). It returns every archive row of the path: one path evicted, rewritten,
- * and evicted again carries two, the case a UNIQUE index would have had to refuse, and the NEWEST is
- * the occupant a citation of that path most recently named. {@link newestArchiving} picks it in code
- * rather than by `ORDER BY`, because the stamps are whole seconds: two archivings in one second tie,
- * and so do two missing stamps, and the tie-break has to read the slot's year and generation as
- * numbers, where string order puts `archive/<YYYY>/` above `archive/<YYYY>.2/` and `.9` above `.10`.
+ * and evicted again carries two, the case a UNIQUE index would have had to refuse. The NEWEST is
+ * the occupant a citation most recently named. {@link newestArchiving} picks it by slot year and
+ * generation as numbers, as doctor and the curator briefing do, so the three name one record.
+ * String order would put `archive/<YYYY>/` above `archive/<YYYY>.2/`. The stamp breaks a tie only:
+ * it is whole seconds, can be missing, and on an earlier year's free slot can be the later one.
  */
 export const resolveQueries = {
   successor: `SELECT e.src_path AS path FROM edges e
@@ -1516,17 +1516,17 @@ const archivedStampOf = (row: ArchiveRow): number | undefined => {
 }
 
 /**
- * The newest of a path's archive rows: the latest stamp first, with a row that has none last, then
- * the later slot by year and generation (`compareArchivings`), then the path, so the answer does
- * not depend on the order SQLite returns the rows in.
+ * The newest of a path's archive rows: the later slot by year and generation
+ * (`compareArchivings`), then the later stamp with a row that has none last, then the path, so the
+ * answer does not depend on the order SQLite returns the rows in.
  */
 const newestArchiving = (rows: ReadonlyArray<ArchiveRow>): ArchiveRow | undefined => {
   const isNewer = (row: ArchiveRow, than: ArchiveRow): boolean => {
+    const slot = compareArchivings(row.path, than.path)
+    if (slot !== 0) return slot > 0
     const a = archivedStampOf(row)
     const b = archivedStampOf(than)
-    if (a !== b) return b === undefined || (a !== undefined && a > b)
-    const slot = compareArchivings(row.path, than.path)
-    return slot !== 0 ? slot > 0 : row.path > than.path
+    return a !== b ? b === undefined || (a !== undefined && a > b) : row.path > than.path
   }
   let newest: ArchiveRow | undefined
   for (const row of rows) if (newest === undefined || isNewer(row, newest)) newest = row

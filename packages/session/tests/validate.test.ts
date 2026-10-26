@@ -27,10 +27,10 @@ import { mapHead, memory, recordFrom, STRICT_BAR } from "./helpers.js"
  * - format: skip `checkMemory` -> "collects format violations".
  * - archive hash: drop the `contentHash(op.html) !== sourceHash` reason -> "refuses an archive op
  *   whose article is not the source's".
- * - archive slot twice: drop the `archiveDestinations.has(...)` reason -> "never archives over a held
- *   slot: it names the free generation, which it then takes" (the doubled archive passes).
- * - archive slot held: drop the `view.get(to)` reason -> the same case and "refuses an archive onto a
- *   slot another record's history holds" (both archives onto a held slot pass).
+ * - archive slot twice: drop the `archiveDestinations.has(...)` reason -> "never archives over a
+ *   held slot: it names the free generation, which it then takes" (the doubled archive passes).
+ * - archive slot held: drop the `view.get(to)` reason -> the same case and "refuses an archive onto
+ *   a slot another record's history holds" (both archives onto a held slot pass).
  * - archive slot gap: drop the `to !== free` reason -> "takes the year's first free generation, and
  *   archives one source once per batch" (the `.2` past a free bare year passes).
  * - archive source twice: drop the `archived.has(...)` source reason -> the same case (the second

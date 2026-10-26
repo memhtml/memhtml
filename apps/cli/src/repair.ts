@@ -55,8 +55,8 @@ export const applyHeadEdits = (html: string, edits: ReadonlyArray<HeadEdit>): st
 export const ARCHIVE_LOOKBACK_YEARS = 10
 
 /**
- * Every archive path in a `known` set, grouped by the path it was archived from. Built once per set
- * and kept beside it, because doctor asks {@link archivedFormOf} once per dangling edge over one set.
+ * Every archive path in a `known` set, grouped by the path it was archived from. Built once per
+ * set and kept beside it, since doctor asks {@link archivedFormOf} once per edge over one set.
  */
 const archivesByOrigin = new WeakMap<ReadonlySet<string>, ReadonlyMap<string, Array<string>>>()
 
@@ -80,11 +80,11 @@ const archivesIn = (known: ReadonlySet<string>): ReadonlyMap<string, Array<strin
  *
  * The latest archiving wins among the target's archive paths from the given year back over
  * {@link ARCHIVE_LOOKBACK_YEARS}: the latest year, then that year's highest generation
- * (`compareArchivings`). That is the one a live edge means, since an earlier archiving was
- * superseded by a later restore. Every slot `known` holds is a candidate, with no walk from the bare
- * year that would stop at the first one missing: a year's slots can have a gap, since a writer that
- * judges "held" by the parsed head does not see a file that fails to parse, and the index skips
- * such a file too.
+ * (`compareArchivings`), the order `resolve` and the curator briefing use, so the three name one
+ * record. That is the one a live edge means, since an earlier archiving was superseded by a later
+ * restore. Every slot `known` holds is a candidate, with no walk from the bare year that would stop
+ * at the first one missing: a year's slots can have a gap, since a writer that judges "held" by the
+ * parsed head does not see a file that fails to parse, and the index skips such a file too.
  */
 export const archivedFormOf = (
   target: string,

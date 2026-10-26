@@ -651,7 +651,7 @@ describe("a fold whose member's archive slot an older record holds", () => {
     expect(fold?.ops.archive).toBe(count)
     expect(fold?.commits).toHaveLength(2)
 
-    // Every older record keeps its slot byte for byte, and every member sits in the next generation.
+    // Every older record keeps its slot byte for byte, and every member is in the next generation.
     expect(await blobs(QUALIFIED, `archive/${YEAR}/`)).toEqual(older)
     const tree = new Set(
       (await gitIn("ls-tree", "-r", "--name-only", QUALIFIED)).split("\n").filter((l) => l !== "")

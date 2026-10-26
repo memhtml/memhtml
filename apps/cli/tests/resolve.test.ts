@@ -3,6 +3,7 @@ import { Effect } from "effect"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import { RESOLVE_MAX_HOPS, type ResolveResult, resolveQueries } from "../src/operations.js"
+import { archivedFormOf } from "../src/repair.js"
 import { type Cli, makeCli } from "./harness.js"
 
 /**
@@ -228,7 +229,7 @@ describe("memhtml resolve", () => {
     expect(answer.title).toBe("The old build box ran on a spinning disk")
   })
 
-  /** Seed archive rows of one origin straight into the index, as the hop-bound test seeds a chain. */
+  /** Seed archive rows of one origin into the index, as the hop-bound test seeds its chain. */
   const seedArchives = (
     origin: string,
     rows: ReadonlyArray<{ readonly path: string; readonly archivedAt: string | null }>
@@ -238,8 +239,9 @@ describe("memhtml resolve", () => {
         const db = yield* DatabaseService
         for (const [at, row] of rows.entries()) {
           yield* db.run(
-            `INSERT INTO files (path, blob_sha, content_hash, memory_type, title, body_text, para,
-                                archived, origin_path, archived_at, created_at, updated_at, indexed_at)
+            `INSERT INTO files (path, blob_sha, content_hash, memory_type, title, body_text,
+                                para, archived, origin_path, archived_at, created_at,
+                                updated_at, indexed_at)
              VALUES (?, ?, ?, 'semantic', ?, 'b', 'archive', 1, ?, ?, ?, ?, ?)`,
             [
               row.path,
@@ -287,6 +289,36 @@ describe("memhtml resolve", () => {
       { path: `archive/2031.10/${path}`, archivedAt: "2031-03-01T09:30:00Z" }
     ])
     expect((await resolve(cli, path)).path).toBe(`archive/2031.10/${path}`)
+  })
+
+  it("orders archivings by slot as doctor does, with the stamp only breaking a tie", async () => {
+    /**
+     * The stamp can disagree with the slots. The validator accepts an archive into an earlier
+     * year's free slot while a later year's slot is held, and that archive carries the later stamp;
+     * and a stamp can be missing on the later generation. Resolve, doctor's repair and the curator
+     * briefing must still name one record, the later slot.
+     */
+    const earlierYear = "areas/inbox/earlier-year.html"
+    const earlierSlots = [`archive/2031/${earlierYear}`, `archive/2030/${earlierYear}`]
+    await seedArchives(earlierYear, [
+      { path: `archive/2031/${earlierYear}`, archivedAt: "2031-03-01T09:30:00Z" },
+      { path: `archive/2030/${earlierYear}`, archivedAt: "2031-05-01T09:30:00Z" }
+    ])
+    const stampedBare = "areas/inbox/stamped-bare.html"
+    const stampedSlots = [`archive/2031/${stampedBare}`, `archive/2031.2/${stampedBare}`]
+    await seedArchives(stampedBare, [
+      { path: `archive/2031/${stampedBare}`, archivedAt: "2031-03-01T09:30:00Z" },
+      { path: `archive/2031.2/${stampedBare}`, archivedAt: null }
+    ])
+
+    expect((await resolve(cli, earlierYear)).path).toBe(`archive/2031/${earlierYear}`)
+    expect((await resolve(cli, stampedBare)).path).toBe(`archive/2031.2/${stampedBare}`)
+    expect(archivedFormOf(earlierYear, new Set(earlierSlots), 2031)).toBe(
+      `archive/2031/${earlierYear}`
+    )
+    expect(archivedFormOf(stampedBare, new Set(stampedSlots), 2031)).toBe(
+      `archive/2031.2/${stampedBare}`
+    )
   })
 
   it("says `unindexed` for a path the corpus never held, without inventing a hop", async () => {

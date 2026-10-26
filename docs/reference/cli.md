@@ -548,7 +548,7 @@ Failure: `neighbors` writes nothing, and its one statement is one consistent rea
 memhtml resolve <path>
 ```
 
-Follows a possibly moved path forward to the memory that holds the fact now (`resolveMemory` at `apps/cli/src/operations.ts:1574-1639`). At each hop, a path with no `files` row follows the newest archive row whose `origin_path` matches it: the latest `memhtml-archived` stamp, then the later slot by year and generation, since stamps are whole seconds. A path with a `files` row, live or archived, follows the newest authored `supersedes` edge pointing at it (`resolveQueries` at `apps/cli/src/operations.ts:1497-1504`). The walk stops after `RESOLVE_MAX_HOPS`, 16 hops (`apps/cli/src/operations.ts:1397`).
+Follows a possibly moved path forward to the memory that holds the fact now (`resolveMemory` at `apps/cli/src/operations.ts:1574-1639`). At each hop, a path with no `files` row follows the newest archive row whose `origin_path` matches it: the later slot by year and then generation, the order `doctor` and the curator briefing use, with the `memhtml-archived` stamp breaking a tie. A path with a `files` row, live or archived, follows the newest authored `supersedes` edge pointing at it (`resolveQueries` at `apps/cli/src/operations.ts:1497-1504`). The walk stops after `RESOLVE_MAX_HOPS`, 16 hops (`apps/cli/src/operations.ts:1397`).
 
 Arguments:
 
