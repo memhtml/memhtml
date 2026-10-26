@@ -1291,8 +1291,9 @@ const opsToDrop = (
 
 /**
  * The reasons a dropped archive or move gains for the kept ops {@link afterDroppedVacates} rewrote
- * for it: the ops at a move's destination now made at its source, and the edges aimed back at its
- * source. Its own pairs are listed in `dropped` under its reasons.
+ * for it: the ops at a move's destination now made at the record's path, and the edges aimed back
+ * at the record's path, which is the op's source or, for a chain the round dropped whole, where the
+ * chain began. Its own pairs are listed in `dropped` under its reasons.
  */
 const followed = (
   vacate: Extract<OverlayOp, { readonly kind: "archive" | "move" }>,
