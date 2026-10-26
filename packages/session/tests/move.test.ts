@@ -66,10 +66,13 @@ import {
  *   the kind and order -> "repoints a live holder's edge to a path the batch puts and then
  *   archives, and not one it puts at after the archive" (the archive comes back alone); only a
  *   move's source skipped -> the same case (the archive before the claim edit gains a pair).
- * - afterDroppedVacates (2026-10-26): the `held.has(to)` check dropped, or the check that the source
- *   is live -> "leaves the kept ops alone when the destination is held or the source is not live"
- *   (the pairs are taken and the edges aimed at the slot); the ops at a dropped move's destination
- *   left there -> "makes the ops kept at a dropped move's destination at its source". The rest of it is pinned through `session
+ * - afterDroppedVacates (2026-10-26): the `held.has(to)` check dropped, or the check that the record
+ *   is live -> "takes the pairs and leaves the other kept ops alone when the destination is held or
+ *   the record is not live" (the edges are aimed at the slot); the pairs taken only when those
+ *   checks pass -> the same case (the pairs stay); the ops at a dropped move's destination left
+ *   there -> "makes the ops kept at a dropped move's destination at its source"; `liveAt` stopped at
+ *   the vacate's own source -> "follows a chain the round dropped whole back to the path the
+ *   record still has". The rest of it is pinned through `session
  *   commit --drop-refused` in `apps/cli/tests/head-server-commit.test.ts`.
  */
 
@@ -721,29 +724,104 @@ describe("afterDroppedVacates settles the ops a drop round keeps", () => {
         { kind: "link", path: NOTE, detail: "relates_to", vacate: archived }
       ],
       retargeted: [
-        { kind: "put", path: SUCCESSOR, detail: "supersedes", vacate: archived },
-        { kind: "link", path: OTHER, detail: "part_of", vacate: archived }
+        { kind: "put", path: SUCCESSOR, detail: "supersedes", vacate: archived, home: RETIRED },
+        { kind: "link", path: OTHER, detail: "part_of", vacate: archived, home: RETIRED }
       ],
-      returned: []
+      returned: [],
+      homes: new Map()
     })
     expect(validateOps(head, settled.keep)).toEqual([])
   })
 
-  it("leaves the kept ops alone when the destination is held or the source is not live", async () => {
+  it("takes the pairs and leaves the other kept ops alone when the destination is held or the record is not live", async () => {
     const head = await headOf()
     const kept = [successor, ...pair, cites]
-    const none = { keep: kept, removed: [], retargeted: [], returned: [] }
-    // A kept op writes the slot, so the edges to it resolve.
+    const archived = retire(RETIRED, RETIRED_HTML)
+    const taken = (vacate: OverlayOp) => [
+      { kind: "unlink", path: NOTE, detail: "relates_to", vacate },
+      { kind: "link", path: NOTE, detail: "relates_to", vacate }
+    ]
+    const pairOnly = { keep: [successor, cites], retargeted: [], returned: [], homes: new Map() }
+    // A kept op writes the slot, so the edges to it resolve there.
     const held: OverlayOp = { kind: "put", path: SLOT, html: RETIRED_HTML }
-    expect(afterDroppedVacates(head, [...kept, held], [retire(RETIRED, RETIRED_HTML)])).toEqual({
-      ...none,
-      keep: [...kept, held]
+    expect(afterDroppedVacates(head, [...kept, held], [archived])).toEqual({
+      ...pairOnly,
+      keep: [successor, cites, held],
+      removed: taken(archived)
+    })
+    // The version already holds the slot, an older copy of the path: the edges to it name that.
+    const older = mapHead(SHA, [
+      await recordFrom(RETIRED, RETIRED_HTML),
+      await recordFrom(NOTE, NOTE_HTML),
+      await recordFrom(OTHER, OTHER_HTML),
+      await recordFrom(
+        SLOT,
+        memory("Widget batch size, earlier", "The acme widget shipped in sixes.")
+      )
+    ])
+    expect(afterDroppedVacates(older, kept, [archived])).toEqual({
+      ...pairOnly,
+      removed: taken(archived)
     })
     // The record is not in the view, so there is nowhere to aim the edges back to.
     const elsewhere = mapHead(SHA, [await recordFrom(NOTE, NOTE_HTML)])
-    expect(afterDroppedVacates(elsewhere, kept, [retire(RETIRED, RETIRED_HTML)])).toEqual(none)
+    expect(afterDroppedVacates(elsewhere, kept, [archived])).toEqual({
+      ...pairOnly,
+      removed: taken(archived)
+    })
     // Only an archive or a move vacates a path.
-    expect(afterDroppedVacates(head, kept, [link(OTHER, "part_of", `/${SLOT}`)])).toEqual(none)
+    expect(afterDroppedVacates(head, kept, [link(OTHER, "part_of", `/${SLOT}`)])).toEqual({
+      ...pairOnly,
+      keep: kept,
+      removed: []
+    })
+  })
+
+  it("follows a chain the round dropped whole back to the path the record still has", async () => {
+    const head = await headOf()
+    const placed = "resources/acme-gadget/b.html"
+    const further = "resources/acme-gadget/old/b.html"
+    const slotted = archivePathFor(placed, 2031)
+    const first = move(RETIRED, placed, RETIRED_HTML)
+    // A put citing where a second move would take the record, and one superseding the slot an
+    // archive of it there would fill.
+    const cites: OverlayOp = {
+      kind: "put",
+      path: SUCCESSOR,
+      html: addLink(
+        memory("Widget note", "Widget batches end up in the gadget area."),
+        "relates_to",
+        `/${further}`
+      )
+    }
+    const moved = afterDroppedVacates(head, [cites], [first, move(placed, further, RETIRED_HTML)])
+    expect(moved.keep).toEqual([
+      {
+        ...cites,
+        html: addLink(
+          memory("Widget note", "Widget batches end up in the gadget area."),
+          "relates_to",
+          `/${RETIRED}`
+        )
+      }
+    ])
+    expect(moved.homes).toEqual(
+      new Map([
+        [placed, RETIRED],
+        [further, RETIRED]
+      ])
+    )
+    const supersedes: OverlayOp = {
+      ...successor,
+      html: successor.html.replace(`/${SLOT}`, `/${slotted}`)
+    }
+    const archived = afterDroppedVacates(head, [supersedes], [first, retire(placed, RETIRED_HTML)])
+    expect(archived.keep).toEqual([
+      { ...successor, html: successor.html.replace(`/${SLOT}`, `/${RETIRED}`) }
+    ])
+    expect(archived.retargeted.map((edge) => [edge.path, edge.detail])).toEqual([
+      [SUCCESSOR, "supersedes"]
+    ])
   })
 
   it("makes the ops kept at a dropped move's destination at its source", async () => {
@@ -769,10 +847,11 @@ describe("afterDroppedVacates settles the ops a drop round keeps", () => {
       removed: [],
       retargeted: [],
       returned: [
-        { kind: "unlink", path: placed, detail: "relates_to", vacate: moved },
-        { kind: "link", path: placed, detail: "relates_to", vacate: moved },
-        { kind: "label", path: placed, detail: "system:packing", vacate: moved }
-      ]
+        { kind: "unlink", path: placed, detail: "relates_to", vacate: moved, home: NOTE },
+        { kind: "link", path: placed, detail: "relates_to", vacate: moved, home: NOTE },
+        { kind: "label", path: placed, detail: "system:packing", vacate: moved, home: NOTE }
+      ],
+      homes: new Map([[placed, NOTE]])
     })
     expect(validateOps(head, settled.keep)).toEqual([])
     // So the archive's repoint stands where the note stays, and nothing is added for it.

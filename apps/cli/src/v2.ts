@@ -1011,13 +1011,13 @@ export const commitOverHead = (input: {
     // Each round drops what the refusal names and commits again. An op that only failed because
     // an op it depended on was dropped (a link from a dropped put) is named by the next round, so
     // the loop ends at a clean log, an empty one, or a refusal no op carries (the batch cap). A
-    // dropped archive or move takes its own repoint pairs with it, and the edges kept ops aim at
-    // where it was going are aimed back at the record where it still is, as are the ops kept at a
-    // dropped move's destination (`afterDroppedVacates`), so no holder loses its other ops for a
-    // link to a path nothing writes and no op is left on one. A drop on a holder's path takes the
-    // holder's repoint with its other ops, so the kept ops are completed again from `base` and the
-    // pairs that come back are not reported as dropped; a round that would leave the log as it was
-    // ends the loop.
+    // dropped archive or move always takes its own repoint pairs with it, so no holder loses its
+    // other ops to them; when nothing holds its destination and the record is still live, the ops
+    // kept at a dropped move's destination are made at the record's path and the edges kept ops
+    // aim at the destination are aimed back at it (`afterDroppedVacates`). A drop on a holder's
+    // path takes the holder's repoint with its other ops, so the kept ops are completed again from
+    // `base` and the pairs that come back are not reported as dropped; a round that would leave the
+    // log as it was ends the loop.
     while (input.dropRefused === true && outcome.kind === "refused") {
       const round = opsToDrop(session.ops, outcome.violations)
       if (round.drop.length === 0) break
@@ -1288,18 +1288,20 @@ const followed = (
   }
 ): ReadonlyArray<string> => {
   const mine = (list: ReadonlyArray<VacateFollower>) => list.filter((one) => one.vacate === vacate)
+  // The record's path: the vacate's source, or where a chain of dropped ops on it began.
+  const home = [...mine(settled.returned), ...mine(settled.retargeted)][0]?.home ?? vacate.path
   const returned = mine(settled.returned).map((one) => `${one.kind} ${one.detail}`)
   const aimed = mine(settled.retargeted).map((one) => `${one.path} ${one.detail}`)
   return [
     ...(returned.length === 0
       ? []
       : [
-          `the ops kept at ${vacate.to} are made at ${vacate.path}, where the record still is: ${returned.join(", ")}`
+          `the ops kept at ${vacate.to} are made at ${home}, where the record still is: ${returned.join(", ")}`
         ]),
     ...(aimed.length === 0
       ? []
       : [
-          `the edges kept ops aimed at ${pathToHref(vacate.to)} now name ${pathToHref(vacate.path)}, where the record still is: ${aimed.join(", ")}`
+          `the edges kept ops aimed at ${pathToHref(vacate.to)} now name ${pathToHref(home)}, where the record still is: ${aimed.join(", ")}`
         ])
   ]
 }

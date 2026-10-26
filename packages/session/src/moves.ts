@@ -160,23 +160,33 @@ export interface VacateFollower {
   /** The edge's rel, or the entity a `label` or `unlabel` names. */
   readonly detail: string
   readonly vacate: OverlayOp
+  /** The path the record still has, for an op made there or an edge aimed back at it. */
+  readonly home?: string
 }
 
 /**
  * What a log keeps once `session commit --drop-refused` has taken `dropped` out of it, for each
- * `archive` or `move` among them whose destination neither `view` nor a kept op holds and whose
- * source is still live in `view`. Each kept head op at a dropped move's destination is made at its
- * source instead, where the record still is: a repoint the commit appended after the move, for a
- * holder the move took, then repoints the holder where it stays. The vacate's own repoint pairs go
- * with it: each `link` to its destination and the `unlink` of the same holder and rel from its
- * source, so the holder keeps its edge to the record where it is and no other op on the holder is
- * refused for it. Every other edge a kept `put` or `link` aims at its destination is aimed back at
- * its source: a successor's `supersedes` edge to the slot of a record whose archive was dropped
- * then names the live record, which the curator archives later as it does any superseded record,
- * rather than a file that was never written.
+ * `archive` or `move` among them.
+ *
+ * Its own repoint pairs always go with it: each `link` to its destination and the `unlink` of the
+ * same holder and rel from its source, so the holder keeps its edge to the record where it is,
+ * whatever holds the destination, and no other op on the holder is refused for it.
+ *
+ * Two rewrites follow only when neither `view` nor a kept op holds the destination and the record
+ * is still live in `view`, at the vacate's source or, for a chain the round dropped whole (a move
+ * and a second move or an archive of the same record), at the source the chain began from. Each
+ * kept head op at a dropped move's destination is made there instead: a repoint the commit
+ * appended after the move, for a holder the move took, then repoints the holder where it stays.
+ * Every other edge a kept `put` or `link` aims at the destination is aimed back there too: a
+ * successor's `supersedes` edge to the slot of a record whose archive was dropped then names the
+ * live record, which the curator archives later as it does any superseded record, rather than a
+ * file that was never written. A held destination keeps the edges aimed at it, which name the
+ * record that holds it; a record that is not live (an archive of a record the batch put, dropped
+ * with the put) leaves them as they are.
  *
  * `removed` lists the ops taken, `retargeted` each edge aimed back, and `returned` each op made at
- * the source, all with the vacate they followed.
+ * the record's path, all with the vacate they followed; `homes` maps each dropped move's
+ * destination that got the rewrites to that path.
  */
 export const afterDroppedVacates = (
   view: HeadView,
@@ -187,6 +197,7 @@ export const afterDroppedVacates = (
   readonly removed: ReadonlyArray<VacateFollower>
   readonly retargeted: ReadonlyArray<VacateFollower>
   readonly returned: ReadonlyArray<VacateFollower>
+  readonly homes: ReadonlyMap<string, string>
 } => {
   const held = new Set(
     keep.flatMap((op) =>
@@ -197,27 +208,35 @@ export const afterDroppedVacates = (
           : []
     )
   )
+  // Where each dropped vacate's destination came from, so a chain of them is followed back to the
+  // path the record still has.
+  const cameFrom = new Map<string, string>()
+  for (const op of dropped) {
+    if (op.kind === "archive" || op.kind === "move") {
+      cameFrom.set(normalizePath(op.to), normalizePath(op.path))
+    }
+  }
+  const liveAt = (path: string): string | undefined => {
+    const seen = new Set<string>()
+    for (let at: string | undefined = path; at !== undefined; at = cameFrom.get(at)) {
+      const record = view.get(at)
+      if (record !== undefined) return record.archived ? undefined : record.path
+      if (seen.has(at)) return undefined
+      seen.add(at)
+    }
+    return undefined
+  }
   let ops: Array<OverlayOp> = [...keep]
+  // The op each rewritten op was in the log, and the ops made at the record's path, by the op made.
+  const original = new Map<OverlayOp, OverlayOp>()
+  const returnedBy = new Map<OverlayOp, VacateFollower>()
   const removed: Array<VacateFollower> = []
   const retargeted: Array<VacateFollower> = []
-  const returned: Array<VacateFollower> = []
+  const homes = new Map<string, string>()
   for (const vacate of dropped) {
     if (vacate.kind !== "archive" && vacate.kind !== "move") continue
     const from = normalizePath(vacate.path)
     const to = normalizePath(vacate.to)
-    const source = view.get(from)
-    if (view.get(to) !== undefined || held.has(to) || source === undefined || source.archived) {
-      continue
-    }
-    if (vacate.kind === "move") {
-      ops = ops.map((op) => {
-        if (op.kind === "put" || op.kind === "archive" || op.kind === "move") return op
-        if (normalizePath(op.path) !== to) return op
-        const detail = op.kind === "link" || op.kind === "unlink" ? op.rel : op.entity
-        returned.push({ kind: op.kind, path: op.path, detail, vacate })
-        return { ...op, path: source.path }
-      })
-    }
     const fromHref = pathToHref(from)
     const toHref = pathToHref(to)
     const taken = new Set<OverlayOp>()
@@ -235,15 +254,54 @@ export const afterDroppedVacates = (
       taken.add(unlink)
       taken.add(op)
     }
+    const home = view.get(to) !== undefined || held.has(to) ? undefined : liveAt(from)
+    const rewrite = home === undefined ? undefined : { path: home, href: pathToHref(home) }
+    if (rewrite !== undefined && vacate.kind === "move") homes.set(to, rewrite.path)
     const next: Array<OverlayOp> = []
     for (const op of ops) {
       if (taken.has(op) && (op.kind === "link" || op.kind === "unlink")) {
-        removed.push({ kind: op.kind, path: op.path, detail: op.rel, vacate })
+        returnedBy.delete(op)
+        removed.push({
+          kind: op.kind,
+          path: (original.get(op) ?? op).path,
+          detail: op.rel,
+          vacate
+        })
+        continue
+      }
+      if (rewrite === undefined) {
+        next.push(op)
+        continue
+      }
+      if (
+        vacate.kind === "move" &&
+        op.kind !== "put" &&
+        op.kind !== "archive" &&
+        op.kind !== "move" &&
+        normalizePath(op.path) === to
+      ) {
+        const made = { ...op, path: rewrite.path }
+        original.set(made, original.get(op) ?? op)
+        returnedBy.delete(op)
+        returnedBy.set(made, {
+          kind: op.kind,
+          path: (original.get(op) ?? op).path,
+          detail: op.kind === "link" || op.kind === "unlink" ? op.rel : op.entity,
+          vacate,
+          home: rewrite.path
+        })
+        next.push(made)
         continue
       }
       if (op.kind === "link" && op.href === toHref) {
-        next.push({ ...op, href: fromHref })
-        retargeted.push({ kind: op.kind, path: op.path, detail: op.rel, vacate })
+        next.push({ ...op, href: rewrite.href })
+        retargeted.push({
+          kind: op.kind,
+          path: op.path,
+          detail: op.rel,
+          vacate,
+          home: rewrite.path
+        })
         continue
       }
       if (op.kind === "put") {
@@ -251,8 +309,14 @@ export const afterDroppedVacates = (
         if (aimed.length > 0) {
           let html = op.html
           for (const link of aimed) {
-            html = addLink(removeLink(html, link.rel, toHref), link.rel, fromHref)
-            retargeted.push({ kind: op.kind, path: op.path, detail: link.rel, vacate })
+            html = addLink(removeLink(html, link.rel, toHref), link.rel, rewrite.href)
+            retargeted.push({
+              kind: op.kind,
+              path: op.path,
+              detail: link.rel,
+              vacate,
+              home: rewrite.path
+            })
           }
           next.push({ ...op, html })
           continue
@@ -262,5 +326,5 @@ export const afterDroppedVacates = (
     }
     ops = next
   }
-  return { keep: ops, removed, retargeted, returned }
+  return { keep: ops, removed, retargeted, returned: [...returnedBy.values()], homes }
 }
