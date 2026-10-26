@@ -11,7 +11,7 @@ The terms are alphabetical, and each entry names the page that develops it. Seve
 
 ### Archive path
 
-`archive/<YYYY>/<original-path>`, the destination of an eviction. It mirrors the original path whole, so the mapping is injective and `originalPathFor` recovers the source path exactly. See [Store layout and path algebra](/internals/store-layout-and-path-algebra/).
+`archive/<YYYY>/<original-path>`, the destination of an eviction. It mirrors the original path whole, so the mapping is injective and `originalPathFor` recovers the source path exactly. A path archived again while its year's slot is held goes to `archive/<YYYY>.<n>/<original-path>`, the year's first free generation, so an archive never writes over an earlier one. See [Store layout and path algebra](/internals/store-layout-and-path-algebra/).
 
 ### Checkout lock
 

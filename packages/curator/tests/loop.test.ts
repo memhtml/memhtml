@@ -116,6 +116,49 @@ describe("the happy path", () => {
       ]
     ])
   })
+
+  it("derives the year's next generation when an earlier archiving holds the slot", async () => {
+    const tools = fakeTools({
+      record: {
+        path: "areas/inbox/a-fact.html",
+        title: "A fact",
+        claim: "The acme widget ships on Thursdays.",
+        memoryType: "semantic",
+        status: "active",
+        frameKey: null,
+        confidence: null,
+        importance: null,
+        tags: [],
+        entities: ["project:acme-widget"],
+        links: [],
+        archived: false,
+        html: "<!doctype html><html>a fact</html>"
+      },
+      held: ["archive/2031/areas/inbox/a-fact.html", "archive/2031.2/areas/inbox/a-fact.html"]
+    })
+    const model = scriptedModel([
+      { tool: "propose", args: { ops: [{ kind: "archive", path: "areas/inbox/a-fact.html" }] } },
+      { tool: "finish", args: { report: "done" } }
+    ])
+    const result = await run({
+      tools,
+      model,
+      briefing: emptyBriefing,
+      charter: CHARTER,
+      now: () => new Date("2031-04-01T00:00:00Z")
+    })
+    expect(result.stoppedBy).toBe("finish")
+    expect(tools.proposed).toEqual([
+      [
+        {
+          kind: "archive",
+          path: "areas/inbox/a-fact.html",
+          to: "archive/2031.3/areas/inbox/a-fact.html",
+          html: "<!doctype html><html>a fact</html>"
+        }
+      ]
+    ])
+  })
 })
 
 describe("a proposed move", () => {

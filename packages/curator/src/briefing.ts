@@ -1,4 +1,5 @@
 import {
+  compareArchivings,
   type HeadView,
   hrefToPath,
   type MemoryRecord,
@@ -132,8 +133,9 @@ export interface SupersededRecord {
 
 /**
  * One edge from an active record whose target is no record. `archived` is the target's newest
- * `archive/<YYYY>/` form when one exists, and `successor` the active record that supersedes that
- * form, the better home for the edge; both `null` when absent.
+ * archived form when one exists (the latest year, then that year's latest generation), and
+ * `successor` the active record that supersedes that form, the better home for the edge; both
+ * `null` when absent.
  */
 export interface DanglingEdge {
   readonly path: string
@@ -341,7 +343,9 @@ export const briefingFromView = (
       const original = originalPathFor(record.path)
       if (original !== undefined) {
         const known = archivedForm.get(original)
-        if (known === undefined || known < record.path) archivedForm.set(original, record.path)
+        if (known === undefined || compareArchivings(record.path, known) > 0) {
+          archivedForm.set(original, record.path)
+        }
       }
       continue
     }

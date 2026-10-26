@@ -885,7 +885,7 @@ const MemoryResolve = Tool.make("memory_resolve", {
 
 const MemoryArchive = Tool.make("memory_archive", {
   description:
-    "Soft-evict a memory: `git mv` into archive/<YYYY>/ with the archive stamps. Nothing is ever deleted, and `git log --follow` reads straight through. " +
+    "Soft-evict a memory: `git mv` into archive/<YYYY>/ (archive/<YYYY>.<n>/ when an earlier archiving holds that slot) with the archive stamps. Nothing is ever deleted, and `git log --follow` reads straight through. " +
     "A path already under archive/, or one that is not a usable memory path, is REFUSED with ERR_INVALID_MEMORY and nothing moves.",
   dependencies: [Store, Indexer],
   parameters: Schema.Struct({

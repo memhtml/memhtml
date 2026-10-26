@@ -38,7 +38,7 @@ The HTML `rel` token is the rel with a `memhtml-` prefix and its underscores tur
 
 ## 4. The store checks the endpoint types SQL cannot
 
-SQL cannot check the type of the files at either end of an edge, so the store refuses an edge whose class disagrees with its endpoints (`packages/store/src/store.ts:842-874`). Both directions are refusals, with a distinct failure behind each:
+SQL cannot check the type of the files at either end of an edge, so the store refuses an edge whose class disagrees with its endpoints (`packages/store/src/store.ts:881-913`). Both directions are refusals, with a distinct failure behind each:
 
 - a memory rel with a task endpoint would let a to-do list reweight the retention of knowledge;
 - a task rel with a memory endpoint claims a memory `blocks` something that nothing can close.

@@ -20,7 +20,7 @@ The log has seven operation kinds:
 | Operation | What it does                                                                                                    |
 | --------- | --------------------------------------------------------------------------------------------------------------- |
 | `put`     | Write a new record at a path.                                                                                   |
-| `archive` | Move a record to `archive/<YYYY>/<path>` with the archive stamps.                                               |
+| `archive` | Move a record to `archive/<YYYY>[.<n>]/<path>`, its year's free slot, with the archive stamps.                  |
 | `move`    | Move a live record to a new live path with its bytes unchanged, so its content hash and history travel with it. |
 | `link`    | Add one `<link rel="memhtml-...">` edge to a record's head.                                                     |
 | `unlink`  | Remove one edge from a record's head.                                                                           |
@@ -33,7 +33,7 @@ Every writer of a log reads it, works for a while, and then writes. A `session e
 
 ## 3. Validation is one pure function
 
-`validateOps` (`packages/session/src/validate.ts:206`) judges a log against a version and returns violations. It has no side effects, so `session put`, `session exec`, the curator's tools, the head server, and the commit all call the same function and agree.
+`validateOps` (`packages/session/src/validate.ts:209`) judges a log against a version and returns violations. It has no side effects, so `session put`, `session exec`, the curator's tools, the head server, and the commit all call the same function and agree.
 
 | Violation       | Raised when                                                                                                                                                                                                        |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -41,8 +41,8 @@ Every writer of a log reads it, works for a while, and then writes. A `session e
 | `duplicate`     | A put's article is already held by an active record at another path.                                                                                                                                               |
 | `claim-edit`    | A put lands on an active path with a different article.                                                                                                                                                            |
 | `reserved-path` | The path is under `.memhtml/`, is `memhtml.config.json`, or is an `index.html` or `sitemap.xml`. Under the `session` scope, `areas/arcs/` and `resources/people/` too.                                             |
-| `batch-cap`     | The log holds more than 200 operations (`BATCH_CAP`, `packages/session/src/validate.ts:52`).                                                                                                                       |
-| `write-bar`     | The store's policy refuses the record's type, or requires an anchor the record lacks (`writeBarReasons`, `packages/session/src/validate.ts:156`).                                                                  |
+| `batch-cap`     | The log holds more than 200 operations (`BATCH_CAP`, `packages/session/src/validate.ts:55`).                                                                                                                       |
+| `write-bar`     | The store's policy refuses the record's type, or requires an anchor the record lacks (`writeBarReasons`, `packages/session/src/validate.ts:159`).                                                                  |
 
 The scope is `curate` for a session whose ref sits under `refs/heads/curate/` and `session` for every other ref, `main` included. The write bar's policy arrives as an argument, read from the store's `memhtml.config.json` at the moment of the call, and its library default refuses nothing (`packages/contracts/src/store-config.ts`).
 
@@ -74,7 +74,7 @@ One checkout is shared by every writer: the v1 store commands in any process, ev
 | A waiter retries for | 15 s, pausing 10 ms at first and doubling up to 250 ms  |
 | Then                 | `ERR_STORAGE` (`checkout.locked`), with nothing written |
 
-The lock is reentrant within one fiber. A v1 write takes it through `StoreShape.exclusive` (`packages/store/src/store.ts:236`) from its first stage to its commit, and `init`, `task status`, `publish`, `state export`, and `doctor --fix` take it as well.
+The lock is reentrant within one fiber. A v1 write takes it through `StoreShape.exclusive` (`packages/store/src/store.ts:237`) from its first stage to its commit, and `init`, `task status`, `publish`, `state export`, and `doctor --fix` take it as well.
 
 One crash window remains. A process killed with SIGKILL in the few milliseconds a commit holds the lock leaves the lock behind, and it goes stale after 10 seconds. After that, a v1 write can sweep the dead commit's staged file into its own commit. The file lands on `main` and isn't lost: recovery keeps it, and the session answers `rebase-needed`. A test covers that sequence.
 

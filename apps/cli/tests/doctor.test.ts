@@ -297,4 +297,17 @@ describe("doctor reports a record archived inside the archive", () => {
     expect(report.embedModelMatches).toBe(true)
     expect(report.vectorCoverageLow).toBe(false)
   })
+
+  it("names a nested path under a generation slot as well", async () => {
+    // A record moved by hand into `archive/<YYYY>.2/archive/...` is archived a second time too.
+    const nested = archivePathFor(kept, archiveYearOf(kept) ?? new Date().getUTCFullYear(), 2)
+    await mkdir(dirname(join(cli.root, nested)), { recursive: true })
+    await git("git", ["-C", cli.root, "mv", kept, nested])
+    await git("git", ["-C", cli.root, "commit", "--quiet", "-m", "nest an archived record"])
+    await cli.json(["index", "update"])
+
+    const report = await cli.json<DoctorReport>(["doctor"])
+    expect(report.nestedArchivePaths).toContain(nested)
+    expect(report.healthy).toBe(false)
+  })
 })

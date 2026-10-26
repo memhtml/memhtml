@@ -380,7 +380,7 @@ const describeViolation = (violation: Violation): string => {
     case "duplicate":
       return `${violation.path}: duplicate of ${violation.existing}, which already holds this article; search before writing and skip it, or link to ${violation.existing}`
     case "claim-edit":
-      return `${violation.path}: an active record already holds this path with a different article; a record's claim is never edited in place, so write the new fact under its own title (and link it with memhtml-supersedes when it replaces the old one: to the old path, or to /archive/<YYYY>/<the old path> when the same batch archives it)`
+      return `${violation.path}: an active record already holds this path with a different article; a record's claim is never edited in place, so write the new fact under its own title (and link it with memhtml-supersedes when it replaces the old one: to the old path, or to its archive slot when the same batch archives it: /archive/<YYYY>/<the old path>, or /archive/<YYYY>.<n>/<the old path> when an earlier archiving holds that one)`
     case "write-bar":
       return `${violation.path}: below the write bar: ${violation.reasons.join("; ")}`
   }

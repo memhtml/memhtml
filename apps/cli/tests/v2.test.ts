@@ -270,6 +270,73 @@ describe("sessionScopeOf names the scope a session is judged under from its ref"
   })
 })
 
+describe("a put beside a held archive slot", () => {
+  it("keeps the put's derived path, and its later archive takes the next generation of the year", async () => {
+    // The head holds an archived record at the slot `areas/inbox/a-fact.html` mirrors, and nothing
+    // live at that path. The put lands there, and archiving it later writes `archive/<YYYY>.2/`,
+    // leaving the older record in its slot. Mutation: `stageArchive` back to `archivePathFor` ->
+    // the archive fails with ERR_GIT (`destination exists`) and the record stays live.
+    const repo = await Effect.runPromise(makeFixtureRepo())
+    const root = repo.root
+    roots.push(root)
+    const year = String(new Date().getUTCFullYear())
+    const path = "areas/inbox/a-fact.html"
+    const heldSlot = `archive/${year}/${path}`
+    const older = renderTemplate({
+      title: "A fact",
+      claim: "The acme widget build caches to a shared directory.",
+      memoryType: "semantic",
+      at: "2031-03-01T12:00:00Z",
+      entities: ["system:memhtml"]
+    }).replace('content="active"', 'content="archived"')
+    await mkdir(dirname(join(root, heldSlot)), { recursive: true })
+    await writeFile(join(root, heldSlot), older, "utf8")
+    await Effect.runPromise(repo.git.run(["add", "-A"]))
+    await Effect.runPromise(repo.git.run(["commit", "-q", "-m", "held slot"]))
+
+    const cli = async (argv: ReadonlyArray<string>) => {
+      const result = await run([...argv, "--repo", root], undefined, undefined, false)
+      const body = parse(result.stdout)
+      expect(result.exitCode, result.stdout).toBe(0)
+      return body.data as Record<string, unknown>
+    }
+    const ops = join(await scratch(), "ops.jsonl")
+    await writeFile(
+      ops,
+      `${JSON.stringify({
+        op: "write",
+        title: "A fact",
+        type: "semantic",
+        body: "The acme widget build caches to a per-user directory.",
+        entity: "system:memhtml"
+      })}\n`,
+      "utf8"
+    )
+    await cli(["session", "start", "--id", "held-slot"])
+    await cli(["session", "put", "--id", "held-slot", "--file", ops, "--no-server"])
+    const landed = await cli([
+      "session",
+      "commit",
+      "--id",
+      "held-slot",
+      "--message",
+      "a fact",
+      "--no-server"
+    ])
+    expect(landed.kind).toBe("committed")
+    expect(landed.paths).toEqual([path])
+
+    const archived = await cli(["archive", path, "--reason", "evicted"])
+    expect(archived.archivePath).toBe(`archive/${year}.2/${path}`)
+    const tree = await Effect.runPromise(repo.git.run(["ls-tree", "-r", "--name-only", "HEAD"]))
+    const files = tree.split("\n").filter((line) => line.endsWith(".html"))
+    expect(files).toContain(heldSlot)
+    expect(files).toContain(`archive/${year}.2/${path}`)
+    expect(files).not.toContain(path)
+    expect(await Effect.runPromise(repo.git.run(["show", `HEAD:${heldSlot}`]))).toBe(older)
+  })
+})
+
 /**
  * The two read-only answers to "where would this write land": `memhtml path` over the version at
  * HEAD, and `session put --dry-run` over a session's view. Both run the placement a put runs

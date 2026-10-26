@@ -39,7 +39,7 @@ Both the size and the modification time have to match before the scan skips a fi
 
 `filesFailed` counts the files the scan planned to read and could not: an absent file, a permission rejection, a transient IO error (`packages/traces/src/scan.ts:65`). The four together account for the whole plan — `skipped + tailed + rescanned + filesFailed` equals `filesSeen` — which is what lets you tell an unreadable transcript from an unchanged one instead of reading both as a quiet skip. Each failed file keeps its stored watermark, so the next run retries it, and a first-ever read that fails stores an all-zero watermark that no later stat can match, which is also a retry.
 
-`sessionsWritten` counts the files a `traces` ROW was written for, which is narrower than the files that were read. Three outcomes read as no session written: a skip, a failed read, and a transcript carrying only `file-history-*` entries with no session to be about. The action cannot answer this on its own, because a failed read keeps the action the plan named — the watermark logic needs to know what was attempted — so a report that read `tailed` as the write would claim a session for a transcript that errored (`apps/cli/src/operations.ts:1760`).
+`sessionsWritten` counts the files a `traces` ROW was written for, which is narrower than the files that were read. Three outcomes read as no session written: a skip, a failed read, and a transcript carrying only `file-history-*` entries with no session to be about. The action cannot answer this on its own, because a failed read keeps the action the plan named — the watermark logic needs to know what was attempted — so a report that read `tailed` as the write would claim a session for a transcript that errored (`apps/cli/src/operations.ts:1800`).
 
 `$MEMHTML_TRACE_ROOT` is read-only. Nothing in this system modifies a transcript.
 
@@ -72,7 +72,7 @@ memhtml trace links --path resources/infra/one-writer.html   # every session tha
 
 Both directions come from one command. A link carries its `link_kind`, so you can tell a memory a session wrote from one it only read. Provenance reads both ways because `memhtml write --session-id` stamps the session into the file's head and also indexes it as a link, and `memhtml read --session-id` records a `read` link.
 
-Calling `trace links` with neither `--session-id` nor `--path` is a refusal rather than a scan of the whole table (`apps/cli/src/operations.ts:1415`):
+Calling `trace links` with neither `--session-id` nor `--path` is a refusal rather than a scan of the whole table (`apps/cli/src/operations.ts:1423`):
 
 ```json
 {

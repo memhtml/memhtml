@@ -2,7 +2,7 @@
 
 Describes the source at 0.16.0 (2026-10-18). Citations are `path:line` into that tree.
 
-This repository is the software that manages a separate memory tree, the `memhtml root`, located by `$MEMHTML_ROOT` (`AGENTS.md:675`). No memory lives in this repository.
+This repository is the software that manages a separate memory tree, the `memhtml root`, located by `$MEMHTML_ROOT` (`AGENTS.md:688`). No memory lives in this repository.
 
 Every flow below acts on whichever root the process resolves. `--repo` wins over `MEMHTML_ROOT`, so the same binary serves many roots without the caller changing its environment (`apps/cli/src/api-layer.ts:96-109`).
 
@@ -25,21 +25,21 @@ An agent runs `memhtml write --title … --claim … --type semantic`. The proce
 9. `run` provides `layerApp(--repo)`, the one production composition, then the tracer, and routes every log to stderr `apps/cli/src/run.ts:2414-2446`, `apps/cli/src/api-layer.ts:409-419`.
 10. Building the layer opens `$MEMHTML_ROOT/.memhtml/index.db` with `state.db` attached on the same connection `apps/cli/src/api-layer.ts:119-129`.
 11. The `write` dispatch arm runs `guardV1Door`, then calls `ops.writeMemory` with the decoded flags and names the response type `memory.written` `apps/cli/src/run.ts:364-386`. The guard reads the policy again at the layer's root, which covers the case `run` couldn't read before validating `apps/cli/src/store-config.ts:120-133`.
-12. `writeMemory` decodes the parameters into the store's `WriteInput` and calls `store.writeMemory` `apps/cli/src/operations.ts:344-353`.
-13. `toWriteInput` decodes the type through the operator vocabulary, which admits `arc` on the CLI write doors while the MCP schemas refuse it (issue #88). It also decodes a task's status and due date before any file is rendered `apps/cli/src/operations.ts:287-336`.
-14. The store takes its one in-process write permit and then the cross-process checkout lock `.memhtml/checkout.lock`, so a second process or a session commit on the same checkout waits its turn, up to 15 s `packages/store/src/store.ts:1397-1429`, `packages/contracts/src/checkout-lock.ts:47-54`.
-15. The first gate is `strictPathRefusal`, which refuses an unusable explicit path when the caller asked for strict placement `packages/store/src/store.ts:724`, `packages/store/src/store.ts:707-720`.
-16. The format check follows. `renderChecked` renders the article and rejects it with `InvalidMemory` on any `checkMemory` violation, before the file is written, staged, or committed `packages/store/src/store.ts:727`, `packages/store/src/store.ts:676-683`.
-17. The duplicate check follows the format check. The store hashes the rendered bytes and asks the injected `dedupeLookup`, and an existing active path is returned with `deduped: true` and no commit `packages/store/src/store.ts:728-744`.
+12. `writeMemory` decodes the parameters into the store's `WriteInput` and calls `store.writeMemory` `apps/cli/src/operations.ts:349-358`.
+13. `toWriteInput` decodes the type through the operator vocabulary, which admits `arc` on the CLI write doors while the MCP schemas refuse it (issue #88). It also decodes a task's status and due date before any file is rendered `apps/cli/src/operations.ts:292-341`.
+14. The store takes its one in-process write permit and then the cross-process checkout lock `.memhtml/checkout.lock`, so a second process or a session commit on the same checkout waits its turn, up to 15 s `packages/store/src/store.ts:1442-1474`, `packages/contracts/src/checkout-lock.ts:47-54`.
+15. The first gate is `strictPathRefusal`, which refuses an unusable explicit path when the caller asked for strict placement `packages/store/src/store.ts:763`, `packages/store/src/store.ts:746-759`.
+16. The format check follows. `renderChecked` renders the article and rejects it with `InvalidMemory` on any `checkMemory` violation, before the file is written, staged, or committed `packages/store/src/store.ts:766`, `packages/store/src/store.ts:715-722`.
+17. The duplicate check follows the format check. The store hashes the rendered bytes and asks the injected `dedupeLookup`, and an existing active path is returned with `deduped: true` and no commit `packages/store/src/store.ts:767-783`.
 18. The lookup is the index recorder's `activePathForHash`, one query for a live, non-archived, non-task row with that content hash `apps/cli/src/api-layer.ts:196`, `packages/index/src/traces-persist.ts:196-203`.
-19. The store picks a free path, then writes the file, stages it with `git add`, and makes one commit with provenance trailers, all under a journal that compensates a failure `packages/store/src/store.ts:746-773`. `Git.commit` takes the checkout lock too, and the lock is reentrant within one fiber, so the nested take runs at once `packages/store/src/git.ts:517-536`, `packages/contracts/src/checkout-lock.ts:88-97`.
-20. Back in the operation, only a created file triggers `reindex`, because a dedupe changed nothing `apps/cli/src/operations.ts:350`.
-21. `reindex` calls `indexer.update({ embed: true })` over the whole commit rather than a list of paths, because a rename is only expressible as a diff and the watermark is what makes freshness answerable `apps/cli/src/operations.ts:248-271`.
+19. The store picks a free path, then writes the file, stages it with `git add`, and makes one commit with provenance trailers, all under a journal that compensates a failure `packages/store/src/store.ts:785-812`. `Git.commit` takes the checkout lock too, and the lock is reentrant within one fiber, so the nested take runs at once `packages/store/src/git.ts:517-536`, `packages/contracts/src/checkout-lock.ts:88-97`.
+20. Back in the operation, only a created file triggers `reindex`, because a dedupe changed nothing `apps/cli/src/operations.ts:355`.
+21. `reindex` calls `indexer.update({ embed: true })` over the whole commit rather than a list of paths, because a rename is only expressible as a diff and the watermark is what makes freshness answerable `apps/cli/src/operations.ts:253-276`.
 22. `update` falls through to a full reprojection when no watermark row exists, and refuses with `IndexStale` when a rebuild died before writing one `packages/index/src/indexer.ts:808-846`.
 23. Otherwise `update` diffs the watermark against HEAD, adds uncommitted working-tree changes, and reads every changed blob in two subprocesses `packages/index/src/indexer.ts:854-887`.
 24. It applies the projection writes, records the new watermark, and embeds the chunks this pass projected `packages/index/src/indexer.ts:994-1002`.
 25. `embedMissing` returns 0 when no document embedder is bound. It embeds in slices, and a failed slice stops the pass while keeping every vector already written, so an embedder outage never fails the write `packages/index/src/indexer.ts:542-610`.
-26. The operation records a `wrote` session link when the call carries a session id. A failed link is logged and never costs the caller the memory `apps/cli/src/operations.ts:351`, `apps/cli/src/operations.ts:201-218`.
+26. The operation records a `wrote` session link when the call carries a session id. A failed link is logged and never costs the caller the memory `apps/cli/src/operations.ts:356`, `apps/cli/src/operations.ts:206-223`.
 27. The result becomes a `memory.written` envelope. A typed failure becomes a failure envelope through `failureFor` at exit 1, and a closed door raised inside the layer exits 2 `apps/cli/src/run.ts:2414-2422`, `apps/cli/src/errors.ts:277-279`, `apps/cli/src/envelope.ts:176-180`.
 
 ```mermaid
@@ -72,7 +72,7 @@ sequenceDiagram
 An agent runs `memhtml search "<prose>"`. This command reads the SQLite index. The process reads vector coverage and embeds the query when coverage and a credential allow it. It then sanitizes the query, folds up to four reciprocal-rank-fusion arms into one SQL statement, hydrates the fused pool, demotes negation-flipped twins, and reorders the pool with MMR for diversity. One more statement fetches the winning snippet per final path.
 
 1. The `search` dispatch arm calls `ops.searchMemories` with the query, the limit, and the shared retrieval scope, then names the response type `memory.hits` `apps/cli/src/run.ts:428-436`. The scope is one helper, so `search` and `recall` can't diverge `apps/cli/src/run.ts:302-313`.
-2. `searchMemories` delegates to the retrieval service and records no access bump, so a ranked hit doesn't feed back into salience `apps/cli/src/operations.ts:982-998`.
+2. `searchMemories` delegates to the retrieval service and records no access bump, so a ranked hit doesn't feed back into salience `apps/cli/src/operations.ts:987-1003`.
 3. The retrieval service is built over the query embedder and the configured vector coverage floor `apps/cli/src/api-layer.ts:320-336`.
 4. `search` defaults the limit to 10 and asks fusion for three times that many candidates, the pool MMR later chooses from `packages/index/src/retrieval.ts:47`, `packages/index/src/retrieval.ts:53`, `packages/index/src/retrieval.ts:506-516`.
 5. `gatedQueryVector` reads vector coverage first. Below the floor (default 0.95) the query is never embedded and the vector arm is dropped on purpose (issue #141) `packages/index/src/retrieval.ts:308-320`, `packages/index/src/vector-coverage.ts:43`.
@@ -119,8 +119,8 @@ An MCP client runs `memhtml serve mcp`, which spawns the `memhtml-mcp` server as
 4. It spawns the entry point with `stdio: "inherit"` and `MEMHTML_ROOT` set to the resolved root, so the client talks to the child directly and a `--repo` override reaches it `apps/cli/src/serve.ts:82-90`.
 5. Interrupting the supervisor kills the child, and the `serve.exit` envelope is written only after the child exits `apps/cli/src/serve.ts:95-110`, `apps/cli/src/run.ts:1969`.
 6. The child launches `layerServer()` over the Node stdio transport for the process's lifetime `apps/mcp/src/bin.ts:15`.
-7. `layerServer` merges the 15-tool toolkit and the 2 resources over `layerApp(repoOverride)`, the CLI's own composition. It pins protocol `v2025_06_18` and routes every log to stderr, so stdout stays the NDJSON-RPC stream `apps/mcp/src/server.ts:40-63`, `apps/mcp/src/tools.ts:1049-1065`, `apps/mcp/src/resources.ts:323`.
-8. The call's arguments are decoded against the tool's own parameter schema, snake_case on the wire `apps/mcp/src/tools.ts:545-575`.
+7. `layerServer` merges the 15-tool toolkit and the 2 resources over `layerApp(repoOverride)`, the CLI's own composition. It pins protocol `v2025_06_18` and routes every log to stderr, so stdout stays the NDJSON-RPC stream `apps/mcp/src/server.ts:40-63`, `apps/mcp/src/tools.ts:1059-1075`, `apps/mcp/src/resources.ts:323`.
+8. The call's arguments are decoded against the tool's own parameter schema, snake_case on the wire `apps/mcp/src/tools.ts:553-583`.
 9. A `tools/call` lands on the handler table that `MemhtmlToolkit.toLayer` type-checks against the toolkit's own parameter and success schemas `apps/mcp/src/handlers.ts:361-365`.
 10. The `memory_search` handler renames the wire parameters and decodes `facets` with the same parser the CLI uses `apps/mcp/src/handlers.ts:588-603`.
 11. It asks the head server through `searchOnHead`, and on a `null` answer calls the same `searchMemories` the CLI arm calls `apps/mcp/src/handlers.ts:604-612`.

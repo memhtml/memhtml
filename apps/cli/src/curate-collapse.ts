@@ -1,6 +1,11 @@
 import { readFile } from "node:fs/promises"
 
-import type { HeadView, OverlayOp, WriteBarPolicy } from "@memhtml/contracts"
+import {
+  archiveSlotFor,
+  type HeadView,
+  type OverlayOp,
+  type WriteBarPolicy
+} from "@memhtml/contracts"
 import {
   type DirtyTree,
   InvalidMemory,
@@ -71,11 +76,12 @@ import { type HeadStats, headStats, type LoadedHead, qualifyRef, revParse } from
  * ## Archive clusters
  *
  * No model. Members are archived in chunks of {@link ARCHIVE_CHUNK}, one session per chunk, each
- * validated against the tip the chunk starts from; a member already archived or whose destination
- * exists is skipped and named. Every archive carries the repoints of the edges live records hold to
- * the member's path (`withRepoints`: an `unlink` and a `link` to the archive slot per edge), and a
- * chunk closes early when they would take it past `BATCH_CAP`. A member whose archive and repoints
- * exceed the cap by themselves is skipped with a warning, because no one session can land it.
+ * validated against the tip the chunk starts from; a member already archived is skipped and named.
+ * Every archive takes the year's free slot, `archive/<YYYY>.<n>/` past one an older record holds,
+ * and carries the repoints of the edges live records hold to the member's path (`withRepoints`: an
+ * `unlink` and a `link` to that slot per edge). A chunk closes early when they would take it past
+ * `BATCH_CAP`, and a member whose archive and repoints exceed the cap by themselves is skipped
+ * with a warning, because no one session can land it.
  *
  * ## Fold clusters
  *
@@ -249,7 +255,17 @@ const describeError = (cause: unknown): string => {
 export const collapseSessionId = (clusterId: string, suffix = ""): string =>
   `collapse-${clusterId}${suffix}`.replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 128)
 
-const archivePathFor = (path: string, year: string): string => `archive/${year}/${path}`
+/**
+ * The archive slot for `path` in the plan's archive year: the first generation the view holds no
+ * record at, so an archive never writes over an older record, and the `supersedes` link names the
+ * member's own archived copy.
+ */
+const archiveSlotIn = (view: HeadView, path: string, year: string): string =>
+  archiveSlotFor(path, Number(year), (slot) => view.get(slot) !== undefined)
+
+/** Each archived source in `ops` mapped to the slot its archive op writes. */
+const archiveDestinationsOf = (ops: ReadonlyArray<OverlayOp>): ReadonlyMap<string, string> =>
+  new Map(ops.flatMap((op) => (op.kind === "archive" ? [[op.path, op.to] as const] : [])))
 
 /**
  * Why a member was left active: its archive and the repoints of every edge live records carry to it
@@ -472,12 +488,12 @@ const archiveCluster = (driver: Driver, cluster: CollapseCluster): Effect.Effect
           while (work.length > 0 && archives.length < ARCHIVE_CHUNK) {
             const path = work[0] as string
             const record = view.get(path)
-            const to = archivePathFor(path, driver.plan.archiveYear)
-            if (record === undefined || record.archived || view.get(to) !== undefined) {
+            if (record === undefined || record.archived) {
               skipped.push(path)
               work.shift()
               continue
             }
+            const to = archiveSlotIn(view, path, driver.plan.archiveYear)
             const archive: OverlayOp = { kind: "archive", path, to, html: record.html }
             const next = withRepoints(view, [...archives, archive], CURATE_SCOPE)
             if (next.length > BATCH_CAP && archives.length > 0) break
@@ -551,14 +567,17 @@ const supersedesInPut = (put: OverlayOp): Effect.Effect<ReadonlySet<string>> =>
 /**
  * Archive-plus-link sessions for the members a fold still owes after its model session landed: the
  * rest of a large cluster, and whatever `BATCH_CAP` pushed out of the first session. Each member
- * costs an archive, its repoints (`withRepoints`), and a link; a member already archived costs the
- * link alone. A round closes before the member that would take it past the cap.
+ * costs an archive to its free slot, its repoints (`withRepoints`), and a link to that slot; a
+ * member the first session archived costs the link alone, to the slot `archivedTo` says it took. A
+ * member that left its path some other way has no slot this fold knows, so it is named under
+ * `skipped` and gets no link. A round closes before the member that would take it past the cap.
  */
 const followUp = (
   driver: Driver,
   cluster: CollapseCluster,
   canonical: string,
   owed: ReadonlyArray<string>,
+  archivedTo: ReadonlyMap<string, string>,
   results: {
     commits: Array<string>
     driver: { archive: number; link: number }
@@ -588,22 +607,24 @@ const followUp = (
       let ops: ReadonlyArray<OverlayOp> = []
       while (work.length > 0) {
         const path = work[0] as string
-        const to = archivePathFor(path, driver.plan.archiveYear)
         const record = view.get(path)
-        const destinationExists = view.get(to) !== undefined
         const live = record !== undefined && !record.archived
+        // The link needs a target: the archive this batch writes, or the one already in the tree.
+        const to = live ? archiveSlotIn(view, path, driver.plan.archiveYear) : archivedTo.get(path)
+        if (to === undefined || (!live && view.get(to) === undefined)) {
+          results.skipped.push(path)
+          work.shift()
+          continue
+        }
         const unit: Array<OverlayOp> = []
-        if (live && !destinationExists) unit.push({ kind: "archive", path, to, html: record.html })
-        // The link needs a target: the archive this batch writes, or one already in the tree.
+        if (live) unit.push({ kind: "archive", path, to, html: record.html })
         const href = `/${to}`
-        if ((destinationExists || unit.length > 0) && !linked.has(href)) {
+        if (!linked.has(href)) {
           unit.push({ kind: "link", path: canonical, rel: "supersedes", href })
         }
         const next = withRepoints(view, [...taken, ...unit], CURATE_SCOPE)
         if (next.length > BATCH_CAP && taken.length > 0) break
         work.shift()
-        // Still active, but its destination is taken: an earlier archive of the same bytes.
-        if (live && destinationExists) results.skipped.push(path)
         if (next.length > BATCH_CAP) {
           results.warnings.push(overCap(path, next.length))
           results.skipped.push(path)
@@ -756,19 +777,21 @@ const foldCluster = (
       for (const path of first) {
         if (archivedByModel.has(path)) continue
         const record = view.get(path)
-        const to = archivePathFor(path, driver.plan.archiveYear)
-        if (record === undefined || view.get(to) !== undefined) continue
+        if (record === undefined) continue
+        const to = archiveSlotIn(view, path, driver.plan.archiveYear)
         const archive: OverlayOp = { kind: "archive", path, to, html: record.html }
         const next = withRepoints(overlaid, [...completion, archive], CURATE_SCOPE)
         if (ops.length + next.length > BATCH_CAP) break
         completion.push(archive)
         repointed = next
       }
-      const willArchive = new Set([...archivedByModel, ...completion.map((op) => op.path)])
+      // Each member's link names the slot its archive takes, the model's or the driver's.
+      const willArchiveTo = archiveDestinationsOf([...ops, ...completion])
       const links: Array<OverlayOp> = []
       for (const path of first) {
-        if (!willArchive.has(path)) continue
-        const href = `/${archivePathFor(path, driver.plan.archiveYear)}`
+        const to = willArchiveTo.get(path)
+        if (to === undefined) continue
+        const href = `/${to}`
         if (linkedByPut.has(href)) continue
         if (ops.length + repointed.length + links.length >= BATCH_CAP) break
         links.push({ kind: "link", path: canonical, rel: "supersedes", href })
@@ -823,22 +846,21 @@ const foldCluster = (
       // Whatever the first session did not settle: the rest of a large cluster, the members the cap
       // pushed out, and any archived member the canonical does not yet point at. A repoint names an
       // archive slot from some other holder, so only the canonical's own supersedes links count.
-      const landedArchives = new Set(
-        finalOps.flatMap((op) => (op.kind === "archive" ? [op.path] : []))
-      )
+      const landedArchives = archiveDestinationsOf(finalOps)
       const landedLinks = new Set([
         ...linkedByPut,
         ...finalOps.flatMap((op) =>
           op.kind === "link" && op.path === canonical && op.rel === "supersedes" ? [op.href] : []
         )
       ])
-      const owed = active.filter(
-        (path) =>
-          !landedArchives.has(path) ||
-          !landedLinks.has(`/${archivePathFor(path, driver.plan.archiveYear)}`)
-      )
+      const owed = active.filter((path) => {
+        const to = landedArchives.get(path)
+        return to === undefined || !landedLinks.has(`/${to}`)
+      })
       const owedAll = [...new Set([...rest, ...owed])]
-      if (owedAll.length > 0) yield* followUp(driver, cluster, canonical, owedAll, results)
+      if (owedAll.length > 0) {
+        yield* followUp(driver, cluster, canonical, owedAll, landedArchives, results)
+      }
       return {
         ...base,
         ...spent,

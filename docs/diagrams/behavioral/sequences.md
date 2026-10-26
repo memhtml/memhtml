@@ -70,21 +70,21 @@ The first `Run->>Run`: `run` parses argv with `parseArgv` (`apps/cli/src/run.ts:
 
 The second `Run->>Run` and `Run->>Ops`: the `write` dispatch arm runs `guardV1Door`, calls `ops.writeMemory`, and names the response type `memory.written` (`apps/cli/src/run.ts:364-386`). The guard reads the policy at the layer's root and refuses with `V1DoorClosed` when the mode closes the door (`apps/cli/src/store-config.ts:120-133`).
 
-`Ops->>Store`: `writeMemory` decodes the parameters with `toWriteInput` and calls `store.writeMemory` (`apps/cli/src/operations.ts:344-353`). The decode checks the type against the operator vocabulary and checks a task's status and due date before any file is rendered (`apps/cli/src/operations.ts:299-336`).
+`Ops->>Store`: `writeMemory` decodes the parameters with `toWriteInput` and calls `store.writeMemory` (`apps/cli/src/operations.ts:349-358`). The decode checks the type against the operator vocabulary and checks a task's status and due date before any file is rendered (`apps/cli/src/operations.ts:304-341`).
 
-The note on `Store`: the store's `writeMemory` runs inside `exclusive`, which takes one in-process permit and then the cross-process checkout lock (`packages/store/src/store.ts:1418-1422`, `packages/store/src/store.ts:1429`). A waiter for the lock retries for up to 15 s (`packages/contracts/src/checkout-lock.ts:47-54`). Its first gate is `strictPathRefusal` (`packages/store/src/store.ts:724`, `packages/store/src/store.ts:707-720`).
+The note on `Store`: the store's `writeMemory` runs inside `exclusive`, which takes one in-process permit and then the cross-process checkout lock (`packages/store/src/store.ts:1463-1467`, `packages/store/src/store.ts:1474`). A waiter for the lock retries for up to 15 s (`packages/contracts/src/checkout-lock.ts:47-54`). Its first gate is `strictPathRefusal` (`packages/store/src/store.ts:763`, `packages/store/src/store.ts:746-759`).
 
-`Store->>Html`: `renderFor` calls `renderTemplate` (`packages/store/src/store.ts:657`), and `renderChecked` fails with `InvalidMemory` on any `checkMemory` violation before the file is written (`packages/store/src/store.ts:676-683`). Both functions are imported from `@memhtml/html` (`packages/store/src/store.ts:22-31`).
+`Store->>Html`: `renderFor` calls `renderTemplate` (`packages/store/src/store.ts:696`), and `renderChecked` fails with `InvalidMemory` on any `checkMemory` violation before the file is written (`packages/store/src/store.ts:715-722`). Both functions are imported from `@memhtml/html` (`packages/store/src/store.ts:23-32`).
 
-`Store->>Recorder` and `Recorder->>Db`: the store hashes the rendered bytes and calls its injected `dedupeLookup` (`packages/store/src/store.ts:728-734`). The composition injects the recorder's `activePathForHash` (`apps/cli/src/api-layer.ts:196`), which is one query for a live, non-archived, non-task row with that hash (`packages/index/src/traces-persist.ts:196-203`). A match returns `deduped: true` with no file and no commit (`packages/store/src/store.ts:735-744`).
+`Store->>Recorder` and `Recorder->>Db`: the store hashes the rendered bytes and calls its injected `dedupeLookup` (`packages/store/src/store.ts:767-773`). The composition injects the recorder's `activePathForHash` (`apps/cli/src/api-layer.ts:196`), which is one query for a live, non-archived, non-task row with that hash (`packages/index/src/traces-persist.ts:196-203`). A match returns `deduped: true` with no file and no commit (`packages/store/src/store.ts:774-783`).
 
-`Store->>Store`: `freePathFor` picks a free path (`packages/store/src/store.ts:746-754`), and `writeFileAt` writes the file with `node:fs` (`packages/store/src/store.ts:767`, `packages/store/src/store.ts:475-481`).
+`Store->>Store`: `freePathFor` picks a free path (`packages/store/src/store.ts:785-793`), and `writeFileAt` writes the file with `node:fs` (`packages/store/src/store.ts:806`, `packages/store/src/store.ts:476-482`).
 
-`Store->>Git` and `Git-->>Store`: the store calls `git.add` and `git.commit` with provenance trailers (`packages/store/src/store.ts:768-771`). The `add` member of `Git` runs `git add` with each path as a `:(literal)` pathspec, so a `[`, `*` or `?` in a record's path never stages a file beside it (`packages/store/src/git.ts:507-513`). Its `commit` member takes the checkout lock again, which the fiber already holds, then runs `git commit` and `git rev-parse HEAD` for the sha (`packages/store/src/git.ts:517-536`). The write, the stage, and the commit run under a journal that compensates a failure (`makeJournal`, `packages/store/src/store.ts:762-773`).
+`Store->>Git` and `Git-->>Store`: the store calls `git.add` and `git.commit` with provenance trailers (`packages/store/src/store.ts:807-810`). The `add` member of `Git` runs `git add` with each path as a `:(literal)` pathspec, so a `[`, `*` or `?` in a record's path never stages a file beside it (`packages/store/src/git.ts:507-513`). Its `commit` member takes the checkout lock again, which the fiber already holds, then runs `git commit` and `git rev-parse HEAD` for the sha (`packages/store/src/git.ts:517-536`). The write, the stage, and the commit run under a journal that compensates a failure (`makeJournal`, `packages/store/src/store.ts:801-812`).
 
-`Store-->>Ops`: the result carries the path, `created`, `deduped`, the commit sha, and the content hash (`packages/store/src/store.ts:775-781`).
+`Store-->>Ops`: the result carries the path, `created`, `deduped`, the commit sha, and the content hash (`packages/store/src/store.ts:814-820`).
 
-`Ops->>Indexer`: only a created file triggers `reindex` (`apps/cli/src/operations.ts:350`), which calls `indexer.update({ embed: true })` (`apps/cli/src/operations.ts:267-271`).
+`Ops->>Indexer`: only a created file triggers `reindex` (`apps/cli/src/operations.ts:355`), which calls `indexer.update({ embed: true })` (`apps/cli/src/operations.ts:272-276`).
 
 `Indexer->>IndexGit`: `update` reads HEAD at `packages/index/src/indexer.ts:811`, diffs the watermark against it with `diffNameStatus` at `packages/index/src/indexer.ts:857`, and reads uncommitted changes with `statusPorcelainV2` at `packages/index/src/indexer.ts:858`. It reads the changed blobs with `lsTreeR` at `packages/index/src/indexer.ts:873` and `catFileBatch` at `packages/index/src/indexer.ts:880`. `IndexGit` is the store's `Git` wrapped by `makeGitPort` (`apps/cli/src/api-layer.ts:155-156`).
 
@@ -94,7 +94,7 @@ The note on `Store`: the store's `writeMemory` runs inside `exclusive`, which ta
 
 `Indexer->>Db`, second arrow: each slice's vectors are written through `applyWrites` (`packages/index/src/indexer.ts:606`), the same batched `writeAll`. When a slice comes back as a `Failure`, the pass ends and keeps every vector already written, so an embedder outage doesn't fail the write (`packages/index/src/indexer.ts:585`).
 
-`Ops->>Recorder`: `recordLink` writes a `wrote` session link when the call carries a session id, and logs a failure instead of raising it (`apps/cli/src/operations.ts:351`, `apps/cli/src/operations.ts:201-218`).
+`Ops->>Recorder`: `recordLink` writes a `wrote` session link when the call carries a session id, and logs a failure instead of raising it (`apps/cli/src/operations.ts:356`, `apps/cli/src/operations.ts:206-223`).
 
 `Run-->>Bin` and `Bin-->>Agent`: a success becomes an envelope at exit 0. A typed failure goes through `failureFor` at exit 1, and a closed door raised inside the layer exits 2 (`apps/cli/src/run.ts:2414-2422`, `apps/cli/src/errors.ts:277-279`). The codes are `EXIT_OK`, `EXIT_USAGE`, and `EXIT_RUNTIME` (`apps/cli/src/envelope.ts:166-168`). The binary calls `process.exit` from the write callback, so a slow pipe reader still gets the whole envelope (`apps/cli/src/bin.ts:22`).
 
@@ -149,7 +149,7 @@ sequenceDiagram
 
 `Agent->>Bin` through `Run->>Ops`: the binary and `run` behave as in the write flow. The `search` arm calls `ops.searchMemories` with the query, the limit, and the shared scope, and names the response type `memory.hits` (`apps/cli/src/run.ts:428-436`). The scope comes from one helper that `search` and `recall` share (`apps/cli/src/run.ts:302-313`).
 
-`Ops->>Retrieval`: `searchMemories` takes `Retrieval` and delegates (`apps/cli/src/operations.ts:994-998`). It records no access bump, so a ranked hit doesn't feed back into salience (`apps/cli/src/operations.ts:982-993`).
+`Ops->>Retrieval`: `searchMemories` takes `Retrieval` and delegates (`apps/cli/src/operations.ts:999-1003`). It records no access bump, so a ranked hit doesn't feed back into salience (`apps/cli/src/operations.ts:987-998`).
 
 `Retrieval->>Db`, coverage: `search` first calls `gatedQueryVector` (`packages/index/src/retrieval.ts:509`), which calls `readVectorCoverage` (`packages/index/src/retrieval.ts:310`, `packages/index/src/vector-coverage.ts:99-125`). Below the floor, `VECTOR_COVERAGE_FLOOR` or 0.95 by default, the query is never embedded (`packages/index/src/retrieval.ts:311-318`, `packages/index/src/vector-coverage.ts:43`). The floor comes from `RetrievalPolicy` (`apps/cli/src/api-layer.ts:328`).
 

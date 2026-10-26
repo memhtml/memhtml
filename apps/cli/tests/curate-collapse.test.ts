@@ -56,6 +56,10 @@ import { run } from "../src/run.js"
  * - `curate-collapse.ts` `foldCluster` (2026-10-26): a `supersedes` link from any path counted as
  *   the canonical's -> "links the canonical to a member a live record also supersedes, which its put
  *   left to the driver" (`driver.link` is 0 and the canonical never reaches pkill-1's slot).
+ * - `curate-collapse.ts` `archiveSlotIn` (2026-10-26): every slot read as free, so each archive
+ *   aims at the bare year -> "repoints a cited member to the generation slot it takes when an older
+ *   record holds the year's" (the chunk is refused and widget d skipped), and the held-slot fold's
+ *   driver cases.
  */
 
 const AT = "2026-09-20T12:00:00Z"
@@ -517,6 +521,74 @@ describe("curate collapse repoints the edges live records carry to what it archi
       }
     }
   }, 120_000)
+
+  it("repoints a cited member to the generation slot it takes when an older record holds the year's", async () => {
+    // Widget d's `archive/<YYYY>/` slot holds an older record, so its archive takes `.2`, and the
+    // notes' edges to it follow it there. A repoint to the bare year would name the older record.
+    const cited = widget("d")
+    const held = archivePathFor(cited, Number(YEAR))
+    const free = archivePathFor(cited, Number(YEAR), 2)
+    const older = renderTemplate({
+      title: "Widget d owner",
+      claim: "Grace Example owned widget d before it moved docks.",
+      memoryType: "semantic",
+      at: AT
+    }).replace('content="active"', 'content="archived"')
+    const notes = [0, 1].map((index) => ({
+      path: note("d", index),
+      html: (["relates_to", "caused_by"] as const).reduce(
+        (html, rel) => addLink(html, rel, `/${cited}`),
+        renderTemplate({
+          title: `Widget d note ${String(index)}`,
+          claim: `Widget d crate ${String(index)} holds ${String(index + 2)} parts.`,
+          memoryType: "semantic",
+          at: AT
+        })
+      )
+    }))
+    const widgetD = renderTemplate({
+      title: "Widget d",
+      claim: "Widget d ships from the north dock.",
+      memoryType: "semantic",
+      at: AT
+    })
+    root = await freshRepo([{ path: cited, html: widgetD }, { path: held, html: older }, ...notes])
+    const rulings = join(work, "widget-d-rulings.jsonl")
+    await writeFile(
+      rulings,
+      `${JSON.stringify({ path: cited, verdict: "archive", reason: "retired" })}\n`,
+      "utf8"
+    )
+    const planned = parse<Envelope>(
+      (await collapse("--ref", REF, "--rulings", rulings, "--dry-run")).stdout
+    )
+    const cluster = (planned.data?.plan?.clusters ?? []).find((one) => one.kind === "archive")
+    if (cluster === undefined) throw new Error("the plan holds no archive cluster")
+    const result = await collapse("--ref", REF, "--rulings", rulings, "--only", cluster.id)
+    expect(result.exitCode, result.stdout).toBe(EXIT_OK)
+    const [archived] = (parse<Envelope>(result.stdout).data as CurateCollapseReport).clusters
+    expect(archived?.outcome, archived?.error ?? "").toBe("committed")
+    expect(archived?.skipped).toEqual([])
+    expect(archived?.ops).toEqual({
+      put: 0,
+      archive: 1,
+      link: 4,
+      unlink: 4,
+      label: 0,
+      unlabel: 0,
+      move: 0
+    })
+    const tree = await treeOf(QUALIFIED)
+    expect(tree.has(cited)).toBe(false)
+    expect(tree.has(free)).toBe(true)
+    expect(await show(QUALIFIED, held)).toBe(older)
+    for (const one of notes) {
+      const html = await show(QUALIFIED, one.path)
+      expect(html, one.path).toContain(`href="/${free}"`)
+      expect(html, one.path).not.toContain(`href="/${held}"`)
+      expect(html, one.path).not.toContain(`href="/${cited}"`)
+    }
+  }, 120_000)
 })
 
 /**
@@ -791,4 +863,223 @@ describe("curate collapse's refusals", () => {
       expect(cluster.error, cluster.id).toMatch(/^storage operation failed: \S/)
     }
   }, 120_000)
+})
+
+describe("a fold whose member's archive slot an older record holds", () => {
+  /*
+   * Member `widget-cache-1` was written at a path whose `archive/<YYYY>/` slot already holds an
+   * older, unrelated record. The fold archives the member into the year's next generation and the
+   * canonical supersedes that slot, under both completions: the driver's (a lowered `largeGroup`)
+   * and the model's own archives through the binder. The older record keeps its bytes, and the
+   * edges two live notes carry to the member are repointed to the generation slot, never to it.
+   *
+   * Mutations, each run once with the change applied and the named case red:
+   * - `foldCluster`'s completion back to skipping a member whose year slot is held -> "the driver
+   *   completes it" (the member is left to a second, follow-up commit).
+   * - `toOverlayOps` back to `archive/<YYYY>/<path>` -> "the model proposes its archives" (the
+   *   validator refuses the proposal and the fold lands nothing).
+   */
+  const CLAIMS = [
+    "The acme widget build fails when its cache directory is read-only.",
+    "An acme widget build fails if its cache directory is read-only.",
+    "When its cache directory is read-only, the acme widget build fails."
+  ]
+  const memberPath = (index: number) => `areas/inbox/widget-cache-${String(index)}.html`
+  const member = memberPath(1)
+  const heldSlot = `archive/${YEAR}/${member}`
+  const generationSlot = `archive/${YEAR}.2/${member}`
+  const OLDER = renderTemplate({
+    title: "Widget cache owner",
+    claim: "Grace Example owned the acme widget cache before the build moved.",
+    memoryType: "semantic",
+    at: AT
+  }).replace('content="active"', 'content="archived"')
+  /** Live notes citing the member, so its archive carries repoints to the slot it takes. */
+  const NOTES = [0, 1].map((index) => ({
+    path: `resources/acme-widget/cache-note-${String(index)}.html`,
+    html: (["relates_to", "caused_by"] as const).reduce(
+      (html, rel) => addLink(html, rel, `/${member}`),
+      renderTemplate({
+        title: `Widget cache note ${String(index)}`,
+        claim: `Cache crate ${String(index)} holds ${String(index + 4)} spare disks.`,
+        memoryType: "semantic",
+        at: AT
+      })
+    )
+  }))
+
+  const slotRepo = async (): Promise<string> => {
+    const dir = await mkdtemp(join(tmpdir(), "memhtml-curate-collapse-slot-"))
+    roots.push(dir)
+    const g = makeGit(dir)
+    await Effect.runPromise(g.run(["init", "-b", "main", "."]).pipe(Effect.orDie))
+    await Effect.runPromise(configureIdentity(g))
+    const files = [
+      ...CLAIMS.map((claim, index) => ({
+        path: memberPath(index),
+        html: renderTemplate({
+          title: `Widget cache read-only ${String(index)}`,
+          claim,
+          body: [`Exit code 73 on attempt ${String(index)}.`],
+          memoryType: "error_pattern",
+          at: AT
+        })
+      })),
+      { path: heldSlot, html: OLDER },
+      ...NOTES
+    ]
+    for (const file of files) {
+      await mkdir(dirname(join(dir, file.path)), { recursive: true })
+      await writeFile(join(dir, file.path), file.html, "utf8")
+    }
+    await Effect.runPromise(g.run(["add", "-A"]).pipe(Effect.orDie))
+    await Effect.runPromise(g.run(["commit", "-q", "-m", "slot fixture"]).pipe(Effect.orDie))
+    return dir
+  }
+
+  const landsInTheGeneration = async (largeGroup: number | undefined) => {
+    const dir = await slotRepo()
+    const inRepo = (...args: ReadonlyArray<string>) =>
+      run(["curate", "collapse", "--model", "fake", "--repo", dir, "--ref", REF, ...args])
+    const planned = await inRepo("--dry-run")
+    expect(planned.exitCode, planned.stdout).toBe(EXIT_OK)
+    const plan = (parse<Envelope>(planned.stdout).data as CurateCollapseReport).plan as CollapsePlan
+    const fold = plan.clusters.find(
+      (cluster) => cluster.kind === "fold" && cluster.members.some((one) => one.path === member)
+    )
+    if (fold === undefined) throw new Error("the plan holds no fold of the member")
+    expect(fold.members.map((one) => one.path).sort()).toEqual([0, 1, 2].map(memberPath))
+    const planFile = join(dir, "..", `${String(Date.now())}-slot-plan.json`)
+    roots.push(planFile)
+    await writeFile(
+      planFile,
+      JSON.stringify(
+        largeGroup === undefined ? plan : { ...plan, options: { ...plan.options, largeGroup } }
+      ),
+      "utf8"
+    )
+
+    const result = await inRepo("--plan", planFile, "--only", fold.id)
+    expect(result.exitCode, result.stdout).toBe(EXIT_OK)
+    const [outcome] = (parse<Envelope>(result.stdout).data as CurateCollapseReport).clusters
+    expect(outcome?.outcome, outcome?.error ?? "").toBe("committed")
+    expect(outcome?.skipped).toEqual([])
+    expect(outcome?.ops.archive).toBe(3)
+    expect(outcome?.ops.unlink).toBe(4)
+    // One session settles the whole fold: no member is left for a follow-up to archive.
+    expect(outcome?.commits).toHaveLength(1)
+
+    const showIn = (path: string) =>
+      Effect.runPromise(
+        makeGit(dir)
+          .run(["show", `${QUALIFIED}:${path}`])
+          .pipe(Effect.orDie)
+      )
+    const tree = new Set(
+      (
+        await Effect.runPromise(
+          makeGit(dir).run(["ls-tree", "-r", "--name-only", QUALIFIED]).pipe(Effect.orDie)
+        )
+      )
+        .split("\n")
+        .filter((line) => line !== "")
+    )
+    for (const index of [0, 1, 2]) expect(tree.has(memberPath(index))).toBe(false)
+    expect(tree.has(`archive/${YEAR}/${memberPath(0)}`)).toBe(true)
+    expect(tree.has(`archive/${YEAR}/${memberPath(2)}`)).toBe(true)
+    expect(tree.has(generationSlot)).toBe(true)
+    expect(await showIn(generationSlot)).toContain(CLAIMS[1])
+    expect(await showIn(heldSlot)).toBe(OLDER)
+    const canonical = await showIn(outcome?.canonical ?? "")
+    expect(canonical).toContain(`href="/${generationSlot}"`)
+    expect(canonical).not.toContain(`href="/${heldSlot}"`)
+    for (const one of NOTES) {
+      const html = await showIn(one.path)
+      expect(html, one.path).toContain(`href="/${generationSlot}"`)
+      expect(html, one.path).not.toContain(`href="/${heldSlot}"`)
+      expect(html, one.path).not.toContain(`href="/${member}"`)
+    }
+  }
+
+  it("the driver completes it: the member is archived to the next generation and linked there", async () => {
+    await landsInTheGeneration(1)
+  }, 180_000)
+
+  it("the model proposes its archives: the binder and the briefing name the next generation", async () => {
+    await landsInTheGeneration(undefined)
+  }, 180_000)
+
+  it("a fold past one session archives the rest and links every member to its generation slot", async () => {
+    // 181 members, one more than a chunk, every one with its bare-year slot held. The first session
+    // archives 170 and links as many as the batch cap leaves room for; the follow-up archives the
+    // other 11 and links the 141 already archived to the slots they took. Mutation: `followUp` back
+    // to `archive/<YYYY>/<path>` -> the validator refuses the follow-up, whose archives name held
+    // slots, and the 11 stay live.
+    const count = 181
+    const path = (index: number) =>
+      `areas/inbox/widget-release-${String(index).padStart(3, "0")}.html`
+    const dir = await mkdtemp(join(tmpdir(), "memhtml-curate-collapse-large-"))
+    roots.push(dir)
+    const g = makeGit(dir)
+    const gitIn = (...args: ReadonlyArray<string>) =>
+      Effect.runPromise(g.run([...args]).pipe(Effect.orDie))
+    await gitIn("init", "-b", "main", ".")
+    await Effect.runPromise(configureIdentity(g))
+    for (let index = 0; index < count; index += 1) {
+      const files = [
+        {
+          at: path(index),
+          html: renderTemplate({
+            title: `Widget release day ${String(index)}`,
+            claim: "The release day of the acme widget is Thursday.",
+            body: [`Noted on build ${String(index)}.`],
+            memoryType: "semantic",
+            at: AT
+          })
+        },
+        {
+          at: `archive/${YEAR}/${path(index)}`,
+          html: renderTemplate({
+            title: `Widget release owner ${String(index)}`,
+            claim: `Grace Example owned acme widget release ${String(index)}.`,
+            memoryType: "semantic",
+            at: AT
+          }).replace('content="active"', 'content="archived"')
+        }
+      ]
+      for (const file of files) {
+        await mkdir(dirname(join(dir, file.at)), { recursive: true })
+        await writeFile(join(dir, file.at), file.html, "utf8")
+      }
+    }
+    await gitIn("add", "-A")
+    await gitIn("commit", "-q", "-m", "large slot fixture")
+    const blobs = async (ref: string, prefix: string) =>
+      (await gitIn("ls-tree", "-r", ref, "--", prefix)).trim().split("\n").sort()
+    const older = await blobs("main", `archive/${YEAR}/`)
+    expect(older).toHaveLength(count)
+
+    const result = await run(["curate", "collapse", "--model", "fake", "--repo", dir, "--ref", REF])
+    expect(result.exitCode, result.stdout).toBe(EXIT_OK)
+    const report = parse<Envelope>(result.stdout).data as CurateCollapseReport
+    const fold = report.clusters.find((cluster) => cluster.kind === "fold")
+    expect(fold?.members).toBe(count)
+    expect(fold?.outcome, fold?.error ?? "").toBe("committed")
+    expect(fold?.skipped).toEqual([])
+    expect(fold?.ops.archive).toBe(count)
+    expect(fold?.commits).toHaveLength(2)
+
+    // Every older record keeps its slot byte for byte, and every member is in the next generation.
+    expect(await blobs(QUALIFIED, `archive/${YEAR}/`)).toEqual(older)
+    const tree = new Set(
+      (await gitIn("ls-tree", "-r", "--name-only", QUALIFIED)).split("\n").filter((l) => l !== "")
+    )
+    const canonical = await gitIn("show", `${QUALIFIED}:${fold?.canonical ?? ""}`)
+    for (let index = 0; index < count; index += 1) {
+      expect(tree.has(path(index)), path(index)).toBe(false)
+      expect(tree.has(`archive/${YEAR}.2/${path(index)}`), path(index)).toBe(true)
+      expect(canonical).toContain(`href="/archive/${YEAR}.2/${path(index)}"`)
+    }
+    expect(canonical).not.toContain(`href="/archive/${YEAR}/`)
+  }, 180_000)
 })

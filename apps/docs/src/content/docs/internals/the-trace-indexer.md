@@ -55,7 +55,7 @@ The three tables answer three questions that sound like one.
 
 ### 7.1. Consumers, and the shape of each
 
-`memhtml trace index`, run hourly by cron, is the producer. `memhtml trace search` and `memhtml trace links` are the read surfaces, mirrored over MCP as `trace_search` and `trace_links` (`apps/mcp/src/tools.ts:616,642`).
+`memhtml trace index`, run hourly by cron, is the producer. `memhtml trace search` and `memhtml trace links` are the read surfaces, mirrored over MCP as `trace_search` and `trace_links` (`apps/mcp/src/tools.ts:624,650`).
 
 Because of the firewall those are a separate query surface rather than a fifth retrieval arm. A trace row cannot enter rank fusion, so searching memories and searching sessions stay two distinct requests.
 

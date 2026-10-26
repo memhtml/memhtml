@@ -52,7 +52,7 @@ The same grep pins the storage engine. Both database planes are plain SQLite rea
 
 `AppLive` (`apps/cli/src/api-layer.ts:67-90`) wires every service. The design's one dependency cycle is broken there. The store needs a SQL lookup to answer whether some content already exists, and `@memhtml/store` contains no SQL, so the lookup arrives as a function passed in.
 
-Two other functions arrive the same way and for the same reason. One is the `onMove` hook the store calls at the single place a path can change, which keeps the state plane's keys in step (`packages/store/src/store.ts:174-181`, `apps/cli/src/api-layer.ts:209`). The other is the session-link recorder. Each keeps a layer's dependency direction intact while letting the composition root state the wiring in one visible place.
+Two other functions arrive the same way and for the same reason. One is the `onMove` hook the store calls at the single place a path can change, which keeps the state plane's keys in step (`packages/store/src/store.ts:175-182`, `apps/cli/src/api-layer.ts:209`). The other is the session-link recorder. Each keeps a layer's dependency direction intact while letting the composition root state the wiring in one visible place.
 
 ## 5. Many packages, one published package
 

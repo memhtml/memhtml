@@ -561,6 +561,33 @@ describe("correctMemory", () => {
     expect(rename?.similarity ?? 0).toBeGreaterThanOrEqual(50)
   })
 
+  it("supersedes toward the generation slot its archive takes when the year's slot is held", async () => {
+    const repo = await fixture()
+    const year = new Date().getUTCFullYear()
+    const path = "areas/inbox/a-fact.html"
+    const first = await run(
+      repo.store.writeMemory(writeInput({ path, claim: "The acme widget ships on Mondays." }))
+    )
+    const held = await run(repo.store.archiveMemory(first.path, "first eviction"))
+    const heldBytes = await readFile(join(repo.root, held.archivePath), "utf8")
+    await run(
+      repo.store.writeMemory(writeInput({ path, claim: "The acme widget ships on Tuesdays." }))
+    )
+
+    const corrected = await run(
+      repo.store.correctMemory(path, {
+        ...writeInput({ title: "Widget ship day", claim: "The acme widget ships on Thursdays." }),
+        reason: "the ship day moved"
+      })
+    )
+
+    expect(corrected.archivedPath).toBe(`archive/${String(year)}.2/${path}`)
+    const fresh = await run(repo.store.readMemory(corrected.path))
+    expect(fresh.doc.links).toEqual([{ rel: "supersedes", href: `/${corrected.archivedPath}` }])
+    expect(await readFile(join(repo.root, held.archivePath), "utf8")).toBe(heldBytes)
+    expect(await run(repo.store.dirtyPaths())).toEqual([])
+  })
+
   it("keeps the archive diff proportional to the stamps, on a hand-authored file", async () => {
     // A hand-authored head — aligned columns, metas not in META_ORDER — is the realistic
     // input: `docs/format.md`'s own example looks like this, and
@@ -915,6 +942,39 @@ describe("archiveMemory", () => {
       PathNotFound
     )
   })
+
+  it("archives into the next generation when the year's slot is held, leaving the older copy alone", async () => {
+    // A record archived once, written again at its path, and archived again. `git mv` onto the held
+    // slot would fail with `destination exists`; the archive takes `archive/<YYYY>.2/` instead.
+    const repo = await fixture()
+    const year = new Date().getUTCFullYear()
+    const path = "resources/people/p.html"
+    const first = await run(
+      repo.store.writeMemory(
+        writeInput({ path, title: "Ada Example", claim: "Ada Example joined the widget team." })
+      )
+    )
+    const older = await run(repo.store.archiveMemory(first.path, "first eviction"))
+    expect(older.archivePath).toBe(`archive/${String(year)}/${path}`)
+    const olderBytes = await readFile(join(repo.root, older.archivePath), "utf8")
+    await run(
+      repo.store.writeMemory(
+        writeInput({ path, title: "Ada Example", claim: "Ada Example maintains the widget build." })
+      )
+    )
+    const before = await commitCount(repo)
+
+    const result = await run(repo.store.archiveMemory(path, "second eviction"))
+
+    expect(result.archivePath).toBe(`archive/${String(year)}.2/${path}`)
+    expect(originalPathFor(result.archivePath)).toBe(path)
+    expect(await commitCount(repo)).toBe(before + 1)
+    expect(await readFile(join(repo.root, older.archivePath), "utf8")).toBe(olderBytes)
+    const archived = await run(repo.store.readMemory(result.archivePath))
+    expect(archived.doc.article.gist).toBe("Ada Example maintains the widget build.")
+    expect(archived.doc.metas.status).toBe("archived")
+    expect(await run(repo.store.dirtyPaths())).toEqual([])
+  })
 })
 
 describe("supersedeMemories", () => {
@@ -926,6 +986,38 @@ describe("supersedeMemories", () => {
     const result = await run(repo.store.supersedeMemories([]))
     expect(result).toEqual({ commitSha: null, archived: [] })
     expect(await commitCount(repo)).toBe(before)
+    expect(await run(repo.store.dirtyPaths())).toEqual([])
+  })
+
+  it("archives a loser whose year slot is held into the next generation, and links the winner there", async () => {
+    const repo = await fixture()
+    const year = new Date().getUTCFullYear()
+    const path = "areas/inbox/widget-ceiling.html"
+    const first = await run(
+      repo.store.writeMemory(writeInput({ path, claim: "The acme widget pool ceiling is 32." }))
+    )
+    const held = await run(repo.store.archiveMemory(first.path, "first eviction"))
+    const heldBytes = await readFile(join(repo.root, held.archivePath), "utf8")
+    const loser = await run(
+      repo.store.writeMemory(writeInput({ path, claim: "The acme widget pool ceiling is 64." }))
+    )
+    const winner = await run(
+      repo.store.writeMemory(
+        writeInput({ title: "Widget ceiling", claim: "The acme widget pool ceiling is 128." })
+      )
+    )
+
+    const result = await run(
+      repo.store.supersedeMemories([{ winnerPath: winner.path, loserPath: loser.path }])
+    )
+
+    const slot = `archive/${String(year)}.2/${path}`
+    expect(result.archived).toEqual([{ loserPath: loser.path, archivePath: slot }])
+    expect((await run(repo.store.readMemory(winner.path))).doc.links).toContainEqual({
+      rel: "supersedes",
+      href: `/${slot}`
+    })
+    expect(await readFile(join(repo.root, held.archivePath), "utf8")).toBe(heldBytes)
     expect(await run(repo.store.dirtyPaths())).toEqual([])
   })
 

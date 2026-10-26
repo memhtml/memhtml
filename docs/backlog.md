@@ -26,7 +26,7 @@ The JSONL/ops envelope carries `op: "write"` precisely so correct/link/archive c
 
 ## ~~6. Doc-sync sweep (small, hygiene)~~ — DONE (verified 2026-08-18)
 
-`docs/design.md`'s ResponseType line named 16 of 31 `RESPONSE_TYPES` (15 omissions, none spurious — T-AC-6-4 finding). Resolved: `RESPONSE_TYPES` now holds 32 members and `docs/design.md:878` cites the enum by path instead of enumerating, so the line can no longer drift from the constant.
+`docs/design.md`'s ResponseType line named 16 of 31 `RESPONSE_TYPES` (15 omissions, none spurious — T-AC-6-4 finding). Resolved: `RESPONSE_TYPES` now holds 32 members and `docs/design.md:885` cites the enum by path instead of enumerating, so the line can no longer drift from the constant.
 
 ## 7. Code snippets: fences in the prose door + `data-lang` (CORE DONE 2026-08-04, fc6addb — a pre-publication-history SHA, not resolvable in this repository)
 

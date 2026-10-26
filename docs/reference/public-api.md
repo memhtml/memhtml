@@ -2,7 +2,7 @@
 
 Describes the source at 0.16.0 (2026-10-18). Citations are `path:line` into that tree.
 
-This repository is the software that manages a memory tree. It stores no memories itself. The tree it manages is the `memhtml root`, which `$MEMHTML_ROOT` locates and which defaults to `~/memhtml` (`AGENTS.md:675`). A command that opens a repo takes it from `--repo` when that flag is given and from `$MEMHTML_ROOT` otherwise (`AGENTS.md:94`). When `MEMHTML_REFUSE_ENV_ROOT` is on, `memhtml` takes the repo from `--repo` alone and refuses a call that opens a repo without it (`AGENTS.md:676`). The root's git history is the system of record. The file `.memhtml/index.db` inside the root is a projection of it that can be deleted and rebuilt without loss (`README.md:58`, under "The design in three sentences").
+This repository is the software that manages a memory tree. It stores no memories itself. The tree it manages is the `memhtml root`, which `$MEMHTML_ROOT` locates and which defaults to `~/memhtml` (`AGENTS.md:688`). A command that opens a repo takes it from `--repo` when that flag is given and from `$MEMHTML_ROOT` otherwise (`AGENTS.md:94`). When `MEMHTML_REFUSE_ENV_ROOT` is on, `memhtml` takes the repo from `--repo` alone and refuses a call that opens a repo without it (`AGENTS.md:689`). The root's git history is the system of record. The file `.memhtml/index.db` inside the root is a projection of it that can be deleted and rebuilt without loss (`README.md:58`, under "The design in three sentences").
 
 An agent reaches this software through two binaries, and package manifests declare both. `apps/cli/package.json:21-23` maps `memhtml` to `./dist/bin.js`, and `apps/mcp/package.json:20-22` maps `memhtml-mcp` to the same relative entry inside its own package. The published `memhtml` package ships the same two binaries as `./dist/memhtml.mjs` and `./dist/memhtml-mcp.mjs`. It declares no `exports` map, so nothing on this page can be imported from the published package (`scripts/package-manifest.mjs:107-112`). The CLI is built for an agent to call. Every command writes exactly one JSON envelope to stdout and sends logs to stderr. The one exception is `memhtml help` on a terminal, which writes Markdown (`AGENTS.md:5-7`). `memhtml manifest` answers with every command, argument, flag, response type, and error code the binary accepts. It works on a machine with no repo, no database, and no credentials, so it serves as the liveness check as well as the discovery call (`AGENTS.md:29-31`). `docs/reference/cli.md` documents that command surface. This page documents the TypeScript library surface underneath it, which the workspace packages import from one another.
 
@@ -112,7 +112,7 @@ export class InvalidMemory extends Schema.TaggedError<InvalidMemory>()("InvalidM
 }) {}
 ```
 
-The typed failure for a memory file that breaks the format or the type and placement vocabulary. Its one field, `reason`, is free text. `parseMemory` fills it with every violation it found, joined by `VIOLATION_SEPARATOR`, which is `"; "` (`packages/html/src/constraints.ts:42`). Other sites write their own reason. The store writes `a memory cannot link to itself: <path>` (`packages/store/src/store.ts:1332-1334`), and the CLI writes one for an unknown memory type (`apps/cli/src/operations.ts:83-92`). The head's overlay raises it for an op that doesn't parse or doesn't resolve, such as a `link` on a path the view doesn't hold or an `unlink` of an edge the file doesn't carry (`packages/head/src/overlay.ts:45-88`). `curate merge` also uses it to report a replay that was refused at commit (`apps/cli/src/v2.ts:2100-2105`).
+The typed failure for a memory file that breaks the format or the type and placement vocabulary. Its one field, `reason`, is free text. `parseMemory` fills it with every violation it found, joined by `VIOLATION_SEPARATOR`, which is `"; "` (`packages/html/src/constraints.ts:42`). Other sites write their own reason. The store writes `a memory cannot link to itself: <path>` (`packages/store/src/store.ts:1377-1379`), and the CLI writes one for an unknown memory type (`apps/cli/src/operations.ts:88-97`). The head's overlay raises it for an op that doesn't parse or doesn't resolve, such as a `link` on a path the view doesn't hold or an `unlink` of an edge the file doesn't carry (`packages/head/src/overlay.ts:45-88`). `curate merge` also uses it to report a replay that was refused at commit (`apps/cli/src/v2.ts:2100-2105`).
 
 `packages/contracts/src/errors.ts:48-50`, 20 importer files
 
@@ -127,7 +127,7 @@ export const contentHash = (input: HashableArticle | Node | string): string => {
 }
 ```
 
-Computes `sha256:<64 hex>` over an article's canonical text (`canonicalText`). In that text, runs of ASCII whitespace collapse to one space, and text inside `<pre>` is kept byte for byte (`packages/html/src/hash.ts:101-125`). It accepts a parsed document, an article node, or a string. A string that contains an `<article>` element is hashed on the first one, and a string without one is hashed as bare article markup. It never fails, because rejecting malformed input is left to `parseMemory` (`packages/html/src/hash.ts:163-185`). The hash is the dedupe key. A record's `contentHash` comes from it (`packages/head/src/record.ts:43`), and `validateOps` reports a put whose hash an active record or an earlier put already holds as a `duplicate` (`packages/session/src/validate.ts:273-279`).
+Computes `sha256:<64 hex>` over an article's canonical text (`canonicalText`). In that text, runs of ASCII whitespace collapse to one space, and text inside `<pre>` is kept byte for byte (`packages/html/src/hash.ts:101-125`). It accepts a parsed document, an article node, or a string. A string that contains an `<article>` element is hashed on the first one, and a string without one is hashed as bare article markup. It never fails, because rejecting malformed input is left to `parseMemory` (`packages/html/src/hash.ts:163-185`). The hash is the dedupe key. A record's `contentHash` comes from it (`packages/head/src/record.ts:43`), and `validateOps` reports a put whose hash an active record or an earlier put already holds as a `duplicate` (`packages/session/src/validate.ts:303-309`).
 
 `packages/html/src/hash.ts:156-161`, 20 importer files
 
@@ -275,7 +275,7 @@ export const normalizePath = (path: string): string => {
 }
 ```
 
-Reduces a caller-supplied path to the git-tree form. It drops leading slashes, collapses runs of slashes to one, and removes a trailing slash. It never fails and does no validation, so `.` and `..` segments pass through unchanged. `memoryPathViolation` is the check that refuses a path outside the four PARA buckets, one that doesn't end in `.html`, or one carrying a blank, `.`, or `..` segment (`packages/contracts/src/paths.ts:83-100`). A session put whose path fails that check is a `format` violation (`packages/session/src/validate.ts:266-271`).
+Reduces a caller-supplied path to the git-tree form. It drops leading slashes, collapses runs of slashes to one, and removes a trailing slash. It never fails and does no validation, so `.` and `..` segments pass through unchanged. `memoryPathViolation` is the check that refuses a path outside the four PARA buckets, one that doesn't end in `.html`, or one carrying a blank, `.`, or `..` segment (`packages/contracts/src/paths.ts:83-100`). A session put whose path fails that check is a `format` violation (`packages/session/src/validate.ts:296-301`).
 
 `packages/contracts/src/paths.ts:57-60`, 10 importer files
 
@@ -297,7 +297,7 @@ export const addLink = (html: string, rel: EdgeRel, href: string): string => {
 }
 ```
 
-Appends one `<link>` edge line to a memory's head. The rel token is `memhtml-` plus the rel with underscores written as hyphens, which `relTokenFor` builds (`packages/contracts/src/edges.ts:106-110`). It's idempotent on the `(rel, href)` pair, so a second call with the same edge returns the input. The new line goes after the last `memhtml-` link, else after the last `memhtml-` meta, else at `</head>` (`packages/html/src/editors.ts:102-128`). It splices bytes by source offset and never touches the article, so the content hash doesn't change. It never fails. A file with no `<head>`, or a parse with no source location, comes back unchanged. The store calls it to add a link and to record a correction's `supersedes` edge (`packages/store/src/store.ts:1339`, `packages/store/src/store.ts:1094`). The overlay's `link` op and the session commit call it too (`packages/head/src/overlay.ts:57`, `packages/session/src/commit.ts:190-204`). The commit also uses it to mark a frame-key rival with a `contradicts` edge (`packages/session/src/commit.ts:302-321`).
+Appends one `<link>` edge line to a memory's head. The rel token is `memhtml-` plus the rel with underscores written as hyphens, which `relTokenFor` builds (`packages/contracts/src/edges.ts:106-110`). It's idempotent on the `(rel, href)` pair, so a second call with the same edge returns the input. The new line goes after the last `memhtml-` link, else after the last `memhtml-` meta, else at `</head>` (`packages/html/src/editors.ts:102-128`). It splices bytes by source offset and never touches the article, so the content hash doesn't change. It never fails. A file with no `<head>`, or a parse with no source location, comes back unchanged. The store calls it to add a link and to record a correction's `supersedes` edge (`packages/store/src/store.ts:1384`, `packages/store/src/store.ts:1136`). The overlay's `link` op and the session commit call it too (`packages/head/src/overlay.ts:57`, `packages/session/src/commit.ts:190-204`). The commit also uses it to mark a frame-key rival with a `contradicts` edge (`packages/session/src/commit.ts:302-321`).
 
 `packages/html/src/editors.ts:226-238`, 8 importer files
 
@@ -381,7 +381,7 @@ The schema name, `state`, under which `state.db` is ATTACHed. Queries that reach
 export const STORE_CONFIG_FILE = "memhtml.config.json"
 ```
 
-The name of the store's policy file, kept at the store root and tracked in git beside the corpus (`packages/contracts/src/store-config.ts:5-18`). It doesn't end in `.html`, so it's never a memory. The CLI's `loadStorePolicy` reads it from the working tree. An absent file, `ENOENT` or `ENOTDIR`, means the library defaults. A file that can't be read or doesn't decode fails with `StoreConfigInvalid` (`apps/cli/src/store-config.ts:63-93`). Nothing caches it. The CLI reads it once per command that judges or creates a record, the head server once per `/v1/neighbors` and `/v1/exec` request, and the MCP server once per record-creating tool call (`apps/cli/src/store-config.ts:27-36`). No session scope may write the file, because `validateOps` lists it in `STORE_FILES` (`packages/session/src/validate.ts:80-81`).
+The name of the store's policy file, kept at the store root and tracked in git beside the corpus (`packages/contracts/src/store-config.ts:5-18`). It doesn't end in `.html`, so it's never a memory. The CLI's `loadStorePolicy` reads it from the working tree. An absent file, `ENOENT` or `ENOTDIR`, means the library defaults. A file that can't be read or doesn't decode fails with `StoreConfigInvalid` (`apps/cli/src/store-config.ts:63-93`). Nothing caches it. The CLI reads it once per command that judges or creates a record, the head server once per `/v1/neighbors` and `/v1/exec` request, and the MCP server once per record-creating tool call (`apps/cli/src/store-config.ts:27-36`). No session scope may write the file, because `validateOps` lists it in `STORE_FILES` (`packages/session/src/validate.ts:90-91`).
 
 `packages/contracts/src/store-config.ts:21`, 7 importer files
 
@@ -423,7 +423,7 @@ export const slugifyStem = (title: string): string => {
 }
 ```
 
-The filename stem a new record takes from its title, which `memoryPathFor` and both collision loops use (`packages/contracts/src/paths.ts:200`, `packages/store/src/store.ts:460`, `apps/cli/src/v2.ts:330`). It kebab-cases as `slugify` does, and a result longer than 80 is cut at its last hyphen at or before 80 when that leaves at least `SLUG_MIN_WORD_CUT` (60) characters, so it ends on a whole word, and at 80 otherwise (`cutAtWord` at `packages/contracts/src/slug.ts:24-34`). It equals `slugify` for every title whose slug fits the budget. `withCollisionOrdinal` cuts its stem by the same rule to make room for a `-N` suffix. A stem is computed only when a record is minted, and the path is the record's id from then on, so the rule decides new filenames and never moves an existing file.
+The filename stem a new record takes from its title, which `memoryPathFor` and both collision loops use (`packages/contracts/src/paths.ts:200`, `packages/store/src/store.ts:461`, `apps/cli/src/v2.ts:330`). It kebab-cases as `slugify` does, and a result longer than 80 is cut at its last hyphen at or before 80 when that leaves at least `SLUG_MIN_WORD_CUT` (60) characters, so it ends on a whole word, and at 80 otherwise (`cutAtWord` at `packages/contracts/src/slug.ts:24-34`). It equals `slugify` for every title whose slug fits the budget. `withCollisionOrdinal` cuts its stem by the same rule to make room for a `-N` suffix. A stem is computed only when a record is minted, and the path is the record's id from then on, so the rule decides new filenames and never moves an existing file.
 
 `packages/contracts/src/slug.ts:82-86`, 2 importer files
 
@@ -435,7 +435,7 @@ export class DirtyTree extends Schema.TaggedError<DirtyTree>()("DirtyTree", {
 }) {}
 ```
 
-The typed failure for an operation that needs a clean tree and found uncommitted changes. It carries the dirty `paths`, and the CLI maps it to `ERR_DIRTY_TREE` (`apps/cli/src/errors.ts:56-57`). When the target ref is checked out, `landOnRef` checks the paths a landing changes and answers `worktree-dirty` when any of them has uncommitted state (`packages/session/src/commit.ts:422-425`). `curate merge` turns that answer into `DirtyTree` on both its fast-forward and its replay (`apps/cli/src/v2.ts:2004-2006`, `apps/cli/src/v2.ts:2106-2107`). `curate run` does the same when it lands (`apps/cli/src/curate-run.ts:530-531`). Nothing moves in either case. `session commit` reports the same case as its `worktree-dirty` outcome (`apps/cli/src/v2.ts:1297-1299`). The store's `requireCleanTree` raises it over every dirty path that isn't ignored (`packages/store/src/store.ts:1360-1373`).
+The typed failure for an operation that needs a clean tree and found uncommitted changes. It carries the dirty `paths`, and the CLI maps it to `ERR_DIRTY_TREE` (`apps/cli/src/errors.ts:56-57`). When the target ref is checked out, `landOnRef` checks the paths a landing changes and answers `worktree-dirty` when any of them has uncommitted state (`packages/session/src/commit.ts:422-425`). `curate merge` turns that answer into `DirtyTree` on both its fast-forward and its replay (`apps/cli/src/v2.ts:2004-2006`, `apps/cli/src/v2.ts:2106-2107`). `curate run` does the same when it lands (`apps/cli/src/curate-run.ts:530-531`). Nothing moves in either case. `session commit` reports the same case as its `worktree-dirty` outcome (`apps/cli/src/v2.ts:1297-1299`). The store's `requireCleanTree` raises it over every dirty path that isn't ignored (`packages/store/src/store.ts:1405-1418`).
 
 `packages/contracts/src/errors.ts:67-69`, 6 importer files
 
@@ -479,9 +479,9 @@ export type Violation =
   | { readonly kind: "write-bar"; readonly path: string; readonly reasons: ReadonlyArray<string> }
 ```
 
-One mechanical refusal from `validateOps`, the check a session commit runs before it writes anything. The check reads only the view and the ops, with no model call and no I/O (`packages/session/src/validate.ts:26-29`). There are six kinds. A batch over `BATCH_CAP`, which is 200 ops, gets a single `batch-cap` violation, and nothing else is judged (`packages/session/src/validate.ts:52`, `packages/session/src/validate.ts:206-214`). For a put, a path or format problem is `format`. A content hash that an active record or an earlier put in the batch holds is `duplicate`, and a different article at an active path is `claim-edit` (`packages/session/src/validate.ts:290-306`). `reserved-path` covers `.memhtml/`, the policy file, `index.html`, and `sitemap.xml` under every scope, plus the arcs and people prefixes outside the `curate` scope (`packages/session/src/validate.ts:93-104`). `write-bar` carries the store policy's reasons for a new record. A commit refuses the whole batch on any violation and writes nothing (`packages/session/src/commit.ts:565-572`). `session put` and `session exec` refuse a call only for `batch-cap` or for a blocking kind on a path the call touches. The blocking kinds are `format`, `reserved-path`, `batch-cap`, and `write-bar`, plus `duplicate` and `claim-edit` in a session bound by `MEMHTML_SESSION` (`apps/cli/src/v2.ts:346-367`).
+One mechanical refusal from `validateOps`, the check a session commit runs before it writes anything. The check reads only the view and the ops, with no model call and no I/O (`packages/session/src/validate.ts:29-32`). There are six kinds. A batch over `BATCH_CAP`, which is 200 ops, gets a single `batch-cap` violation, and nothing else is judged (`packages/session/src/validate.ts:55`, `packages/session/src/validate.ts:209-217`). For a put, a path or format problem is `format`. A content hash that an active record or an earlier put in the batch holds is `duplicate`, and a different article at an active path is `claim-edit` (`packages/session/src/validate.ts:294-309`). `reserved-path` covers `.memhtml/`, the policy file, `index.html`, and `sitemap.xml` under every scope, plus the arcs and people prefixes outside the `curate` scope (`packages/session/src/validate.ts:96-107`). `write-bar` carries the store policy's reasons for a new record. A commit refuses the whole batch on any violation and writes nothing (`packages/session/src/commit.ts:565-572`). `session put` and `session exec` refuse a call only for `batch-cap` or for a blocking kind on a path the call touches. The blocking kinds are `format`, `reserved-path`, `batch-cap`, and `write-bar`, plus `duplicate` and `claim-edit` in a session bound by `MEMHTML_SESSION` (`apps/cli/src/v2.ts:346-367`).
 
-`packages/session/src/validate.ts:24-42`, 6 importer files
+`packages/session/src/validate.ts:34-52`, 6 importer files
 
 ### WriteBarPolicy
 
@@ -493,7 +493,7 @@ export interface WriteBarPolicy {
 }
 ```
 
-The policy half of the write bar, which `validateOps` applies beyond format and integrity (`packages/contracts/src/store-config.ts:98`). `refusedTypes` maps each refused type to the reason its refusal gives. `storePolicyOf` builds the map from the file, and a type listed by name alone gets the reason `refusedTypeReason` writes (`packages/contracts/src/store-config.ts:151-163`). With `requireAnchor` on, a new record must name a `memhtml-entity` or sit under `projects/<slug>/`, which `isAnchored` checks (`packages/session/src/validate.ts:109-112`). The library default, `DEFAULT_WRITE_BAR`, refuses no type and anchors nothing (`packages/contracts/src/store-config.ts:117-121`). `writeBarReasons` returns no reason for an archive destination or a file that doesn't parse (`packages/session/src/validate.ts:131-145`). The bar holds under every scope and for every type, the curator's writes and tasks included (`packages/session/src/validate.ts:114-130`).
+The policy half of the write bar, which `validateOps` applies beyond format and integrity (`packages/contracts/src/store-config.ts:98`). `refusedTypes` maps each refused type to the reason its refusal gives. `storePolicyOf` builds the map from the file, and a type listed by name alone gets the reason `refusedTypeReason` writes (`packages/contracts/src/store-config.ts:151-163`). With `requireAnchor` on, a new record must name a `memhtml-entity` or sit under `projects/<slug>/`, which `isAnchored` checks (`packages/session/src/validate.ts:137-140`). The library default, `DEFAULT_WRITE_BAR`, refuses no type and anchors nothing (`packages/contracts/src/store-config.ts:117-121`). `writeBarReasons` returns no reason for an archive destination or a file that doesn't parse (`packages/session/src/validate.ts:159-173`). The bar holds under every scope and for every type, the curator's writes and tasks included (`packages/session/src/validate.ts:142-158`).
 
 `packages/contracts/src/store-config.ts:99-103`, 6 importer files
 
@@ -520,16 +520,13 @@ Appends ops to a session's log, persists the log, and returns the session the ca
 ### originalPathFor
 
 ```ts
-export const originalPathFor = (archivePath: string): string | undefined => {
-  const normalized = normalizePath(archivePath)
-  const match = /^archive\/(\d{4,})\/(.+)$/.exec(normalized)
-  return match?.[2]
-}
+export const originalPathFor = (archivePath: string): string | undefined =>
+  ARCHIVE_SLOT.exec(normalizePath(archivePath))?.[3]
 ```
 
-The inverse of `archivePathFor` (`packages/contracts/src/paths.ts:217-218`). It normalizes the path, strips exactly one `archive/<year>/` prefix whose year has four or more digits, and returns the rest. It returns `undefined` for a path without such a prefix, and `isArchivePath` asks the same question as a boolean (`packages/contracts/src/paths.ts:232`). A memory archived twice gives back its first archive path. An archive op whose destination doesn't map back to its source through `originalPathFor` is a format violation (`packages/session/src/validate.ts:299-301`).
+The inverse of `archivePathFor` (`packages/contracts/src/paths.ts:237-238`). It normalizes the path, strips exactly one `archive/<year>/` or `archive/<year>.<n>/` prefix whose year has four or more digits and whose generation n is 2 or more with no leading zero (`ARCHIVE_SLOT` at `packages/contracts/src/paths.ts:222`), and returns the rest. It returns `undefined` for a path without such a prefix, and `isArchivePath` asks the same question as a boolean (`packages/contracts/src/paths.ts:271`). A memory archived twice gives back its first archive path. An archive op whose destination doesn't map back to its source through `originalPathFor` is a format violation (`packages/session/src/validate.ts:336-338`).
 
-`packages/contracts/src/paths.ts:225-229`, 6 importer files
+`packages/contracts/src/paths.ts:267-268`, 6 importer files
 
 ### setMeta
 
@@ -552,7 +549,7 @@ export const setMeta = (html: string, name: string, value: string): string => {
 }
 ```
 
-Sets one head meta to one value. It replaces the first `<meta>` of that name in place, or it inserts a new line at the name's position in `META_ORDER` (`packages/html/src/editors.ts:74-100`). Exactly one line changes, and the article stays outside the edited range, so the content hash is the same before and after for every name (`packages/html/src/editors.ts:145-154`). On a repeatable key it sets the first value, and `addMeta` is the append. A name outside the meta vocabulary that `isMemoryMetaName` checks returns the input unchanged (`packages/html/src/vocabulary.ts:89-91`), and so does a file with no `<head>`. It never fails. A session commit stamps an archived copy's `memhtml-status` and `memhtml-archived` through it (`packages/session/src/commit.ts:125-130`). The CLI's `task status` stamps `memhtml-task-status` and `memhtml-updated` through it (`apps/cli/src/operations.ts:2009-2013`).
+Sets one head meta to one value. It replaces the first `<meta>` of that name in place, or it inserts a new line at the name's position in `META_ORDER` (`packages/html/src/editors.ts:74-100`). Exactly one line changes, and the article stays outside the edited range, so the content hash is the same before and after for every name (`packages/html/src/editors.ts:145-154`). On a repeatable key it sets the first value, and `addMeta` is the append. A name outside the meta vocabulary that `isMemoryMetaName` checks returns the input unchanged (`packages/html/src/vocabulary.ts:89-91`), and so does a file with no `<head>`. It never fails. A session commit stamps an archived copy's `memhtml-status` and `memhtml-archived` through it (`packages/session/src/commit.ts:125-130`). The CLI's `task status` stamps `memhtml-task-status` and `memhtml-updated` through it (`apps/cli/src/operations.ts:2071-2075`).
 
 `packages/html/src/editors.ts:155-170`, 6 importer files
 

@@ -5,7 +5,7 @@ description: A real driver and a real git binary, fakes at the two network edges
 
 ## 1. Real driver, real git
 
-Integration tests drive the real SQLite driver against `":memory:"` with the real migrations (`packages/index/src/database.ts:262-266`), and the real git binary against a repository in a temp directory (`packages/store/src/store.ts:335-338`).
+Integration tests drive the real SQLite driver against `":memory:"` with the real migrations (`packages/index/src/database.ts:262-266`), and the real git binary against a repository in a temp directory (`packages/store/src/store.ts:336-339`).
 
 A fake driver would verify the shape of the calls and miss every constraint the database enforces. A fake git would verify that the right strings were assembled and miss every state transition they cause.
 

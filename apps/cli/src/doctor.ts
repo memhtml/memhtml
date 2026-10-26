@@ -74,11 +74,12 @@ import {
  *    make `healthy: false` the normal state of a supported setup. A store with zero vectors and an
  *    embedder bound is the incident's shape one step earlier (a `rebuild --no-embed` nobody
  *    backfilled), and it is low.
- * 11. **Nested archive paths**: a file under `archive/<YYYY>/archive/`, which is a record archived a
- *    second time. `@memhtml/store` refuses a path under `archive/` as an archive source, and so does a
- *    session's `archive` op, so no write makes one, but a tree written before that refusal, or moved by
- *    hand, can hold one. `originalPathFor` strips a single `archive/<YYYY>/` prefix, so such a file maps
- *    back to an archive path rather than to a live one.
+ * 11. **Nested archive paths**: a file under `archive/<YYYY>/archive/` or a generation slot's
+ *    `archive/<YYYY>.<n>/archive/`, which is a record archived a second time. `@memhtml/store`
+ *    refuses a path under `archive/` as an archive source, and so does a session's `archive` op, so
+ *    no write makes one, but a tree written before that refusal, or moved by hand, can hold one.
+ *    `originalPathFor` strips a single `archive/<YYYY>[.<n>]/` prefix, so such a file maps back to
+ *    an archive path rather than to a live one.
  *
  * **`--fix` repairs exactly two of the eleven, and the repair logic is `./repair.ts`, not re-ported per
  * call site.** `archivedFormOf` decides whether a dangling target moved to the archive or is genuinely
@@ -102,8 +103,8 @@ import {
 /** How deep the inbox may get before doctor calls it a finding. */
 export const INBOX_WARN_DEPTH = 20
 
-/** A path archived inside the archive, which is check 11's finding. */
-const NESTED_ARCHIVE_PATH = /^archive\/\d{4}\/archive\//
+/** A path archived inside the archive, under a year or a generation slot: check 11's finding. */
+const NESTED_ARCHIVE_PATH = /^archive\/\d{4}(?:\.(?:[2-9]|[1-9]\d+))?\/archive\//
 
 /**
  * How many unplaced tasks may sit in `areas/inbox/tasks/` before doctor calls it a finding.
@@ -190,7 +191,7 @@ export interface DoctorReport {
   readonly warnings: ReadonlyArray<WarningFinding>
   /** Files the index holds that failed to parse when doctor re-read them. */
   readonly unparseable: ReadonlyArray<string>
-  /** Paths under `archive/<YYYY>/archive/`: records archived a second time, sorted. */
+  /** Paths under `archive/<YYYY>[.<n>]/archive/`: records archived a second time, sorted. */
   readonly nestedArchivePaths: ReadonlyArray<string>
   readonly indexFresh: boolean
   readonly indexHeadSha: string | null
