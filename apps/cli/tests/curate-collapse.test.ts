@@ -2,8 +2,10 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 
+import { MEMORY_RELS } from "@memhtml/contracts/edges"
+import { archivePathFor } from "@memhtml/contracts/paths"
 import type { CollapsePlan } from "@memhtml/curator"
-import { renderTemplate } from "@memhtml/html"
+import { addLink, renderTemplate } from "@memhtml/html"
 import { makeGit } from "@memhtml/store"
 import { configureIdentity } from "@memhtml/store/testing"
 import { Effect } from "effect"
@@ -40,6 +42,9 @@ import { run } from "../src/run.js"
  *   to a run).
  * - `curate-collapse.ts` `archivable`: ignore the `keep` ruling -> "lands the archive cluster and
  *   every fold" (`verify-3` is archived).
+ * - `curate-collapse.ts` `archiveCluster` (2026-10-26): archives with no `withRepoints`, in fixed
+ *   chunks -> "archives each member with its repoints, packs chunks under the cap, and leaves active
+ *   a member no session can carry" (one commit, every note's edges left on the vacated paths).
  */
 
 const AT = "2026-09-20T12:00:00Z"
@@ -180,14 +185,16 @@ interface Envelope {
   readonly data?: CurateCollapseReport
 }
 
-/** A fresh repo with the fixture committed on `main`. */
-const freshRepo = async (): Promise<string> => {
+/** A fresh repo with the fixture (`files`, the shared one unless given) committed on `main`. */
+const freshRepo = async (
+  files: ReadonlyArray<{ readonly path: string; readonly html: string }> = FILES
+): Promise<string> => {
   const dir = await mkdtemp(join(tmpdir(), "memhtml-curate-collapse-"))
   roots.push(dir)
   const g = makeGit(dir)
   await Effect.runPromise(g.run(["init", "-b", "main", "."]).pipe(Effect.orDie))
   await Effect.runPromise(configureIdentity(g))
-  for (const file of FILES) {
+  for (const file of files) {
     const target = join(dir, file.path)
     await mkdir(dirname(target), { recursive: true })
     await writeFile(target, file.html, "utf8")
@@ -405,6 +412,100 @@ describe("curate collapse --model fake", () => {
     expect(tree.has(verifyPath(0))).toBe(true)
     expect(tree.has(singlePath(0))).toBe(true)
   }, 180_000)
+})
+
+describe("curate collapse repoints the edges live records carry to what it archives", () => {
+  // Three archive-ruled widgets, cited by live notes that each carry every memory rel to one of
+  // them: 6 notes x 9 rels is 54 edges, so an archive and its repoints are 109 ops and two of them
+  // do not fit one session; 12 notes x 9 rels is 217 ops, which no session can carry.
+  const widget = (letter: string) => `areas/inbox/widget-${letter}.html`
+  const note = (letter: string, index: number) =>
+    `resources/acme-widget/note-${letter}-${String(index)}.html`
+  const CITERS: ReadonlyArray<readonly [string, number]> = [
+    ["a", 6],
+    ["b", 6],
+    ["c", 12]
+  ]
+  const CITED: ReadonlyArray<{ readonly path: string; readonly html: string }> = [
+    ...CITERS.map(([letter]) => ({
+      path: widget(letter),
+      html: renderTemplate({
+        title: `Widget ${letter}`,
+        claim: `Widget ${letter} ships from the north dock.`,
+        memoryType: "semantic",
+        at: AT
+      })
+    })),
+    ...CITERS.flatMap(([letter, count]) =>
+      Array.from({ length: count }, (_, index) => ({
+        path: note(letter, index),
+        html: MEMORY_RELS.reduce(
+          (html, rel) => addLink(html, rel, `/${widget(letter)}`),
+          renderTemplate({
+            title: `Widget ${letter} note ${String(index)}`,
+            claim: `Widget ${letter} crate ${String(index)} holds ${String(index + 2)} parts.`,
+            memoryType: "semantic",
+            at: AT
+          })
+        )
+      }))
+    )
+  ]
+
+  it("archives each member with its repoints, packs chunks under the cap, and leaves active a member no session can carry", async () => {
+    root = await freshRepo(CITED)
+    await writeFile(
+      join(work, "widget-rulings.jsonl"),
+      `${CITERS.map(([letter]) => JSON.stringify({ path: widget(letter), verdict: "archive", reason: "retired" })).join("\n")}\n`,
+      "utf8"
+    )
+    const rulings = join(work, "widget-rulings.jsonl")
+    const planned = parse<Envelope>(
+      (await collapse("--ref", REF, "--rulings", rulings, "--dry-run")).stdout
+    )
+    const cluster = (planned.data?.plan?.clusters ?? []).find((one) => one.kind === "archive")
+    if (cluster === undefined) throw new Error("the plan holds no archive cluster")
+    const result = await collapse("--ref", REF, "--rulings", rulings, "--only", cluster.id)
+    expect(result.exitCode, result.stdout).toBe(EXIT_OK)
+    const data = parse<Envelope>(result.stdout).data as CurateCollapseReport
+    const [archived] = data.clusters
+    expect(archived?.outcome, archived?.error ?? "").toBe("committed")
+    // Widgets a and b land one chunk each, every edge to them repointed; c is left with a reason.
+    expect(archived?.commits).toHaveLength(2)
+    expect(archived?.ops).toEqual({
+      put: 0,
+      archive: 2,
+      link: 108,
+      unlink: 108,
+      label: 0,
+      unlabel: 0,
+      move: 0
+    })
+    expect(archived?.driver).toEqual({ archive: 2, link: 108 })
+    expect(archived?.skipped).toEqual([widget("c")])
+    expect(archived?.warnings).toEqual([
+      `${widget("c")} left active: its archive and the repoints of the edges live records carry to it are 217 ops, over the cap of 200 one session carries`
+    ])
+    const tree = await treeOf(QUALIFIED)
+    for (const [letter, count] of CITERS) {
+      const slot = archivePathFor(widget(letter), Number(YEAR))
+      const moved = letter !== "c"
+      expect(tree.has(widget(letter)), letter).toBe(!moved)
+      expect(tree.has(slot), letter).toBe(moved)
+      for (let index = 0; index < count; index += 1) {
+        const html = await show(QUALIFIED, note(letter, index))
+        expect(html.includes(`href="/${slot}"`), note(letter, index)).toBe(moved)
+        expect(html.includes(`href="/${widget(letter)}"`), note(letter, index)).toBe(!moved)
+      }
+    }
+    // Every edge in the landed tree names a file in the landed tree.
+    for (const path of [...tree].filter((one) => one.endsWith(".html"))) {
+      const html = await show(QUALIFIED, path)
+      for (const match of html.matchAll(/<link rel="memhtml-[^"]+" href="\/([^"]+)"/g)) {
+        expect(tree.has(match[1] ?? ""), `${path} -> ${match[1]}`).toBe(true)
+      }
+    }
+  }, 120_000)
 })
 
 describe("curate collapse's refusals", () => {

@@ -713,7 +713,8 @@ const appendRefusal = (operation: string): string | null =>
 
 /**
  * The half of `session exec` that follows the head: overlay the session's ops on `base`, run the
- * script over that view, harvest, judge the log plus the harvest against `base`, and append the
+ * script over that view, harvest, complete the harvest's archives and moves with the edge repoints
+ * they need ({@link withRepoints}), judge the log plus the harvest against `base`, and append the
  * harvest when it is clean. The CLI calls it with the version it loaded and the head server with the
  * version it holds (`head-server.ts`, `/v1/exec`), so the two answer with one function and cannot
  * drift; `runtime` is the only difference, and it changes where the script runs, never what the run
@@ -754,8 +755,12 @@ export const execOverHead = (input: {
       scope,
       ...input.runtime
     })
-    const harvested = new Set(report.ops.flatMap(touchedPaths))
-    const violations = validateOps(input.base, [...session.ops, ...report.ops], {
+    // A file the script archived or moved has left its path, so every edge a live record still
+    // carries to that path is repointed to where the record went, as the curator's `exec` completes
+    // its own harvest; an edge the script repointed itself stays as it wrote it.
+    const ops = withRepoints(view, report.ops, scope)
+    const harvested = new Set(ops.flatMap(touchedPaths))
+    const violations = validateOps(input.base, [...session.ops, ...ops], {
       scope,
       writeBar: input.writeBar
     })
@@ -769,8 +774,8 @@ export const execOverHead = (input: {
     const blocked = blocking.map(describeViolation)
     let next: Session = session
     let appended = 0
-    if (clean && report.ops.length > 0) {
-      const outcome = yield* appendOps(session, report.ops).pipe(
+    if (clean && ops.length > 0) {
+      const outcome = yield* appendOps(session, ops).pipe(
         Effect.map((written) => ({ written, refusal: null })),
         Effect.catchTag("StorageFailure", (failure) => {
           const refusal = appendRefusal(failure.operation)
@@ -781,7 +786,7 @@ export const execOverHead = (input: {
       )
       if (outcome.written !== null) {
         next = outcome.written
-        appended = report.ops.length
+        appended = ops.length
       } else {
         blocked.push(outcome.refusal)
       }
@@ -803,8 +808,12 @@ export const execOverHead = (input: {
       durationMs: report.durationMs,
       timeoutMs: report.timeoutMs,
       timedOut: report.timedOut,
-      /** Ops the harvester produced from the tree the script left. */
-      ops: report.ops.length,
+      /**
+       * Ops the harvest carries: what the harvester made of the tree the script left, plus an
+       * `unlink` and a `link` for each edge a live record carries to a path an archive or a move
+       * vacated ({@link withRepoints}).
+       */
+      ops: ops.length,
       /**
        * How many of those were appended to the log: all of them on exit 0 with no blocking
        * violation and a log nobody else changed meanwhile, none otherwise.
@@ -812,7 +821,7 @@ export const execOverHead = (input: {
       appended,
       /** The log's length after this call. */
       opsTotal: next.ops.length,
-      harvested: report.ops.map(opSummary),
+      harvested: ops.map(opSummary),
       rejected: report.rejected,
       /** Every violation over the session's ops plus the harvest, judged against the base. */
       violations,
@@ -1702,7 +1711,10 @@ export const curateMerge = (input: {
       })
       // A move on the branch repointed the edges its base held; `into` may have gained one to the
       // old path since, so the replay completes the repoints against the tip it lands on.
-      session = yield* appendOps(session, withRepoints(head.view, replay.reconstruction.ops))
+      session = yield* appendOps(
+        session,
+        withRepoints(head.view, replay.reconstruction.ops, MERGE_SCOPE)
+      )
       const violations = validateOps(head.view, session.ops, {
         scope: MERGE_SCOPE,
         batchCap: MERGE_BATCH_CAP,

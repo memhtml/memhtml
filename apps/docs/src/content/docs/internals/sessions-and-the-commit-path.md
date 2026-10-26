@@ -27,7 +27,7 @@ The log has seven operation kinds:
 | `label`   | Add one `memhtml-entity` value to a record's head.                                                              |
 | `unlabel` | Remove one `memhtml-entity` value from a record's head.                                                         |
 
-The last four never touch the article, so a record keeps its content hash through all of them. A `move` doesn't rewrite the records that link to the old path. Those edges are explicit `unlink` and `link` pairs in the same log, so every file a commit changes is named by an operation, and `withRepoints` (`packages/session/src/moves.ts`) adds the pairs for a caller that only names the move.
+The last four never touch the article, so a record keeps its content hash through all of them. A `move` or an `archive` doesn't rewrite the records that link to the old path. Those edges are explicit `unlink` and `link` pairs in the same log, so every file a commit changes is named by an operation, and `withRepoints` (`packages/session/src/moves.ts`) adds the pairs for a caller that only names the move or the archive. An archive's pairs point at its `archive/<YYYY>/` slot.
 
 Every writer of a log reads it, works for a while, and then writes. A `session exec` can run a script for seconds between its read and its append, so a plain lock would still lose an update when two calls read the same log. Each write therefore takes the session's lock (`withSessionLock`, `packages/session/src/session.ts:161`), re-reads the log under it, and writes only when the log still holds the operations the caller read. Otherwise it refuses with `StorageFailure` `session.moved` and writes nothing (`requireLogUnmoved`, `packages/session/src/session.ts:311`). A lock a killed process left goes stale after 30 seconds (`SESSION_LOCK_STALE_MS`).
 
@@ -37,7 +37,7 @@ Every writer of a log reads it, works for a while, and then writes. A `session e
 
 | Violation       | Raised when                                                                                                                                                            |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `format`        | The file doesn't parse as a memory, or a `move` leaves a live record linking to the old path.                                                                          |
+| `format`        | The file doesn't parse as a memory, or a `move` or an `archive` leaves a live record linking to the old path.                                                          |
 | `duplicate`     | A put's article is already held by an active record at another path.                                                                                                   |
 | `claim-edit`    | A put lands on an active path with a different article.                                                                                                                |
 | `reserved-path` | The path is under `.memhtml/`, is `memhtml.config.json`, or is an `index.html` or `sitemap.xml`. Under the `session` scope, `areas/arcs/` and `resources/people/` too. |

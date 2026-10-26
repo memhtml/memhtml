@@ -1,4 +1,4 @@
-import type { OverlayOp } from "@memhtml/contracts"
+import { archivePathFor, type OverlayOp } from "@memhtml/contracts"
 import { addLink, contentHash } from "@memhtml/html"
 import { Effect } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
@@ -47,6 +47,13 @@ import {
  *   bar refuses the bare move).
  * - stage: the `move` case left out of `stage` -> "commits a move as the same blob at the new path,
  *   with the holder's edge repointed" (the old path is still in the tree).
+ * - withRepoints, archives (2026-10-26): the `archive` kind left out of the first-op search and the
+ *   loop -> "repoints every live edge to the archived path at its archive slot, before the archive"
+ *   (the archive comes back alone) and "commits the archive with the successor's supersedes edge at
+ *   the archive slot" (the landed edge names the vacated path).
+ * - withRepoints, scope (2026-10-26): the `isReservedPath(holder, scope)` skip dropped -> "leaves a
+ *   holder the scope may not write to the curator, and repoints it under curate" (the arc is
+ *   repointed under `session`).
  */
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect)
@@ -281,7 +288,7 @@ describe("withRepoints", () => {
   it("withRepoints repoints every live holder before the first move and leaves archived holders and settled edges alone", async () => {
     const head = await view()
     const moved = move(FROM, TO, PLACED)
-    const completed = withRepoints(head, [moved])
+    const completed = withRepoints(head, [moved], "curate")
     expect(completed).toEqual([
       unlink(HOLDER, "part_of", `/${FROM}`),
       link(HOLDER, "part_of", `/${TO}`),
@@ -324,6 +331,161 @@ describe("withRepoints", () => {
   })
 })
 
+/** A retired claim, the live claim that supersedes it, and the slot the retired one archives to. */
+const RETIRED = "resources/acme-widget/b.html"
+const SUCCESSOR = "resources/acme-widget/a.html"
+const SLOT = archivePathFor(RETIRED, 2031)
+const RETIRED_HTML = memory("Widget batch size", "The acme widget ships in batches of twelve.", {
+  entities: ["project:acme-widget"],
+  at: "2031-03-01T12:00:00Z"
+})
+const SUCCESSOR_HTML = addLink(
+  memory("Widget batch size, revised", "The acme widget ships in batches of twenty.", {
+    entities: ["project:acme-widget"],
+    at: "2031-03-02T12:00:00Z"
+  }),
+  "supersedes",
+  `/${RETIRED}`
+)
+const retire = (path: string, html: string): OverlayOp => ({
+  kind: "archive",
+  path,
+  to: archivePathFor(path, 2031),
+  html
+})
+
+describe("withRepoints completes an archive", () => {
+  it("repoints every live edge to the archived path at its archive slot, before the archive", async () => {
+    const head = mapHead(SHA, [
+      await recordFrom(SUCCESSOR, SUCCESSOR_HTML),
+      await recordFrom(RETIRED, RETIRED_HTML)
+    ])
+    const archived = retire(RETIRED, RETIRED_HTML)
+    const completed = withRepoints(head, [archived])
+    expect(completed).toEqual([
+      unlink(SUCCESSOR, "supersedes", `/${RETIRED}`),
+      link(SUCCESSOR, "supersedes", `/${SLOT}`),
+      archived
+    ])
+    expect(validateOps(head, completed)).toEqual([])
+  })
+
+  it("leaves a holder the batch archives, an archived holder, and an edge the batch cuts alone, and edits a holder the batch moves at its old path", async () => {
+    const note = "resources/acme-widget/c.html"
+    const noteHtml = addLink(
+      addLink(
+        memory("Widget packing note", "Widget batches are packed by hand.", {
+          entities: ["project:acme-widget"]
+        }),
+        "relates_to",
+        `/${RETIRED}`
+      ),
+      "part_of",
+      `/${RETIRED}`
+    )
+    const history = archivePathFor("resources/acme-widget/d.html", 2030)
+    const head = mapHead(SHA, [
+      await recordFrom(SUCCESSOR, SUCCESSOR_HTML),
+      await recordFrom(RETIRED, RETIRED_HTML),
+      await recordFrom(note, noteHtml),
+      await recordFrom(
+        history,
+        addLink(memory("Old widget note", "An older widget fact."), "relates_to", `/${RETIRED}`)
+      )
+    ])
+    const archived = retire(RETIRED, RETIRED_HTML)
+    // Every edge a live holder carries gets its own pair; the archived holder is history.
+    const completed = withRepoints(head, [archived])
+    expect(completed).toEqual([
+      unlink(SUCCESSOR, "supersedes", `/${RETIRED}`),
+      link(SUCCESSOR, "supersedes", `/${SLOT}`),
+      unlink(note, "relates_to", `/${RETIRED}`),
+      link(note, "relates_to", `/${SLOT}`),
+      unlink(note, "part_of", `/${RETIRED}`),
+      link(note, "part_of", `/${SLOT}`),
+      archived
+    ])
+    expect(validateOps(head, completed)).toEqual([])
+    // A holder the batch archives keeps its edge in its archived copy; an edge the batch already
+    // cuts is the batch's.
+    const both = [
+      unlink(note, "part_of", `/${RETIRED}`),
+      unlink(note, "relates_to", `/${RETIRED}`),
+      retire(SUCCESSOR, SUCCESSOR_HTML),
+      archived
+    ]
+    expect(withRepoints(head, both)).toEqual(both)
+    expect(validateOps(head, both)).toEqual([])
+    // A holder the batch moves is repointed before the first move or archive, so the edit travels.
+    const moved = "resources/acme-gadget/a.html"
+    const travels = withRepoints(head, [
+      unlink(note, "part_of", `/${RETIRED}`),
+      unlink(note, "relates_to", `/${RETIRED}`),
+      move(SUCCESSOR, moved, SUCCESSOR_HTML),
+      archived
+    ])
+    expect(travels.slice(2, 4)).toEqual([
+      unlink(SUCCESSOR, "supersedes", `/${RETIRED}`),
+      link(SUCCESSOR, "supersedes", `/${SLOT}`)
+    ])
+    expect(validateOps(head, travels)).toEqual([])
+  })
+
+  it("leaves a holder the scope may not write to the curator, and repoints it under curate", async () => {
+    const arc = "areas/arcs/acme-widget-arc.html"
+    const arcHtml = addLink(
+      memory("Acme widget arc", "Four widget memories together show how batches grew.", {
+        entities: ["project:acme-widget"]
+      }),
+      "part_of",
+      `/${RETIRED}`
+    )
+    const head = mapHead(SHA, [
+      await recordFrom(RETIRED, RETIRED_HTML),
+      await recordFrom(arc, arcHtml)
+    ])
+    const archived = retire(RETIRED, RETIRED_HTML)
+    // Under `session` the arc is the curator's to edit, so the archive goes alone and lands.
+    expect(withRepoints(head, [archived])).toEqual([archived])
+    expect(validateOps(head, [archived])).toEqual([])
+    const curated = withRepoints(head, [archived], "curate")
+    expect(curated).toEqual([
+      unlink(arc, "part_of", `/${RETIRED}`),
+      link(arc, "part_of", `/${SLOT}`),
+      archived
+    ])
+    expect(validateOps(head, curated, { scope: "curate" })).toEqual([])
+  })
+
+  it("commits the archive with the successor's supersedes edge at the archive slot", async () => {
+    const repo = await makeRepo()
+    repos.push(repo)
+    await commitFiles(repo.root, { [SUCCESSOR]: SUCCESSOR_HTML, [RETIRED]: RETIRED_HTML })
+    const head = await loadHead(repo.root)
+    const ops = withRepoints(head, [retire(RETIRED, RETIRED_HTML)])
+    const session = await run(
+      startSession({ root: repo.root, id: "retire", base: head }).pipe(
+        Effect.flatMap((s) => appendOps(s, ops))
+      )
+    )
+    const outcome = await run(commitSession({ session, head, message: "retire one claim" }))
+    if (outcome.kind !== "committed") throw new Error(JSON.stringify(outcome))
+    const paths = await treePaths(repo.root, outcome.sha)
+    expect(paths).toContain(SLOT)
+    expect(paths).not.toContain(RETIRED)
+    const successor = await fileAt(repo.root, outcome.sha, SUCCESSOR)
+    expect(successor).toContain(`<link rel="memhtml-supersedes" href="/${SLOT}">`)
+    expect(successor).not.toContain(`href="/${RETIRED}"`)
+    // Every edge in the landed tree names a file in the landed tree.
+    for (const path of paths.filter((one) => one.endsWith(".html"))) {
+      const html = await fileAt(repo.root, outcome.sha, path)
+      for (const match of html.matchAll(/<link rel="memhtml-[^"]+" href="\/([^"]+)"/g)) {
+        expect(paths, `${path} -> ${match[1]}`).toContain(match[1])
+      }
+    }
+  })
+})
+
 describe("commitSession lands a move", () => {
   it("commits a move as the same blob at the new path, with the holder's edge repointed", async () => {
     const repo = await makeRepo()
@@ -331,7 +493,7 @@ describe("commitSession lands a move", () => {
     await commitFiles(repo.root, { [FROM]: PLACED, [HOLDER]: ARC })
     const head = await loadHead(repo.root)
     const before = await fileAt(repo.root, "main", FROM)
-    const ops = withRepoints(head, [move(FROM, TO, PLACED)])
+    const ops = withRepoints(head, [move(FROM, TO, PLACED)], "curate")
     const session = await run(
       startSession({
         root: repo.root,
