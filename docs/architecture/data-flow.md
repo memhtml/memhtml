@@ -192,13 +192,13 @@ The session commands resolve the root themselves and never build `layerApp`, bec
 5. A decline, a 4xx, or no server sends the commit to the local path. A 5xx or a lost answer fails with `ERR_STORAGE` and isn't retried locally, because the ref may already have moved `apps/cli/src/v2.ts:1039-1077`, `apps/cli/src/v2.ts:1136-1139`.
 6. Locally, the CLI resumes the session, loads the head at its base, and runs the same `commitOverHead` `apps/cli/src/v2.ts:1141-1150`.
 7. `commitOverHead` calls `commitSession`, repeats it with the refused ops dropped under `--drop-refused`, and writes the new commit's snapshot on `committed` `apps/cli/src/v2.ts:944-996`.
-8. `commitSession` holds the session's lock and refuses a log that changed since it was read `packages/session/src/commit.ts:451-458`.
+8. `commitSession` holds the session's lock and refuses a log that changed since it was read `packages/session/src/commit.ts:520-527`.
 9. It settles a `pending` commit an earlier call left, answering `committed` with `recovered: true` when that commit landed `packages/session/src/commit.ts:465-491`.
-10. It validates the ops, answers `refused` on any violation, and answers `rebase-needed` when the ref moved past the base `packages/session/src/commit.ts:493-508`.
-11. It marks frame-key contradictions, builds the blobs and the tree in a temporary index under the OS temp directory, and writes the commit object `packages/session/src/commit.ts:510-534`, `packages/session/src/commit.ts:223-247`.
+10. It validates the ops, answers `refused` on any violation, and answers `rebase-needed` when the ref moved past the base `packages/session/src/commit.ts:566-581`.
+11. It marks frame-key contradictions, builds the blobs and the tree in a temporary index under the OS temp directory, and writes the commit object `packages/session/src/commit.ts:583-608`, `packages/session/src/commit.ts:289-313`.
 12. It saves `pending` before it touches anything shared `packages/session/src/commit.ts:536-537`.
-13. `landOnRef` takes the checkout lock, checks that the ref still names the base, moves the checkout when `HEAD` is the ref, and compare-and-swaps the ref. A lost swap rolls the checkout back `packages/session/src/commit.ts:539-567`, `packages/session/src/commit.ts:284-333`.
-14. The log is saved on the new commit with zero ops, and the commit's `Memhtml-Session` trailer records the session id `packages/session/src/commit.ts:569-580`, `packages/session/src/commit.ts:62-80`.
+13. `landOnRef` takes the checkout lock, checks that the ref still names the base, moves the checkout when `HEAD` is the ref, and compare-and-swaps the ref. A lost swap rolls the checkout back `packages/session/src/commit.ts:539-567`, `packages/session/src/commit.ts:351-400`.
+14. The log is saved on the new commit with zero ops, and the commit's `Memhtml-Session` trailer records the session id `packages/session/src/commit.ts:569-580`, `packages/session/src/commit.ts:89-107`.
 15. On the server path, the server moves the version it holds to the new commit and writes its snapshot before it answers `apps/cli/src/head-server.ts:1198-1230`.
 
 ```mermaid
