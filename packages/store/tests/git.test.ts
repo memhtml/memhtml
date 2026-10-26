@@ -391,17 +391,21 @@ describe("answers git gives as exit 1", () => {
   it("fails typed and logs at Error when git exits 128", async () => {
     const { repo, main } = await forked()
     const gone = "f".repeat(40)
-    const calls: ReadonlyArray<Effect.Effect<unknown, GitFailure>> = [
-      repo.git.isAncestor(gone, main),
-      repo.git.mergeBase(gone, main)
+    // Outside a repository there is no ref or HEAD to answer about, so git exits 128, not 1.
+    const notARepo = makeGit((await fixture({ init: false })).root)
+    const calls: ReadonlyArray<readonly [string, Effect.Effect<unknown, GitFailure>]> = [
+      ["merge-base", repo.git.isAncestor(gone, main)],
+      ["merge-base", repo.git.mergeBase(gone, main)],
+      ["rev-parse", notARepo.revParse("main")],
+      ["symbolic-ref", notARepo.headRef()]
     ]
-    for (const call of calls) {
+    for (const [command, call] of calls) {
       const { result, entries } = await logged(call)
-      if (Result.isSuccess(result)) throw new Error("expected a failure, got a value")
+      if (Result.isSuccess(result)) throw new Error(`expected git ${command} to fail, got a value`)
       expect(result.failure).toBeInstanceOf(GitFailure)
-      expect(result.failure).toMatchObject({ command: "merge-base", exitCode: 128 })
+      expect(result.failure).toMatchObject({ command, exitCode: 128 })
       expect(entries.map((entry) => entry.level)).toEqual(["Error"])
-      expect(entries[0]?.message).toMatch(/^git merge-base exited 128: /)
+      expect(entries[0]?.message.startsWith(`git ${command} exited 128: `)).toBe(true)
     }
   })
 })
