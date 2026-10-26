@@ -19,6 +19,7 @@ import { describe, expect, it } from "vitest"
 import {
   batchAbortFailure,
   mcpSuggestionsFor,
+  reinforcePathsMissing,
   resourceFailure,
   ToolFailure,
   toResourceFailure,
@@ -297,6 +298,41 @@ describe("the atomic batch abort as a wire failure", () => {
     )
     // A reason that already ends in a terminator is not given a second one.
     expect(batchAbortFailure(1, "ERR_INVALID_MEMORY", "no <mark>.").message).not.toContain("..")
+  })
+})
+
+describe("memory_reinforce's refusal of a call that names no path", () => {
+  /**
+   * Composed outside `toToolFailure` because `InvalidMemory`'s suggestions speak of the render gate, and
+   * this call never reached the store. The decoder has already dropped whatever key the caller sent
+   * instead, so the text is the only place it learns the two spellings the tool reads.
+   */
+  it("names both keys under the code the other missing-parameter refusals use", () => {
+    const failure = reinforcePathsMissing()
+    expect(failure.code).toBe("ERR_INVALID_MEMORY")
+    expect(failure.message.startsWith("ERR_INVALID_MEMORY: memory_reinforce needs ")).toBe(true)
+    expect(failure.message).toContain("`paths` (an array of memory paths)")
+    expect(failure.message).toContain("`path` (one memory path)")
+    expect(failure.message).not.toContain("render gate")
+  })
+
+  it("suggests the call to make, action-first, naming only callable tools", () => {
+    const failure = reinforcePathsMissing()
+    expect(failure.suggestions[0]).toMatch(/^call memory_reinforce again with paths /)
+    for (const suggestion of failure.suggestions) {
+      expect(suggestion).not.toContain("memhtml ")
+      for (const word of suggestion.match(/\b(?:memory|trace)_[a-z_]+\b/g) ?? []) {
+        expect(CALLABLE.has(word)).toBe(true)
+      }
+      expect(failure.message).toContain(suggestion)
+    }
+  })
+
+  it("is a declared failure on memory_reinforce, which is what un-masks it", () => {
+    const isDeclaredFailure = Schema.is(MemhtmlToolkit.tools.memory_reinforce.failureSchema)
+    expect(isDeclaredFailure(reinforcePathsMissing())).toBe(true)
+    // And `toToolFailure` passes it through unchanged, since `handled` maps every handler's error.
+    expect(toToolFailure(reinforcePathsMissing()).message).toBe(reinforcePathsMissing().message)
   })
 })
 

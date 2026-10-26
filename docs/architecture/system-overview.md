@@ -24,7 +24,7 @@ Failures carry a stable `code` from the append-only `ERROR_CODES` list plus `sug
 
 `AGENTS.md` is generated from the same `COMMANDS` array that drives argument parsing, so the doc stays in step with the binary (`apps/cli/src/agents-doc.ts:11-16`).
 
-The MCP server exposes 15 tools and 2 resources over stdio (`apps/mcp/src/tools.ts:1041-1057`, `apps/mcp/src/resources.ts:323`, `apps/mcp/src/server.ts:40-63`). Curation is deliberately absent from it, because a curation run produces a branch a human is expected to read (`apps/mcp/src/index.ts:4-5`). `memory_search` and `memory_recall` ask the head server first and fall back to the SQLite index. The three tools that create a record obey the store's `v1Doors` mode (`apps/mcp/src/handlers.ts:322-328`, `apps/mcp/src/handlers.ts:573-581`).
+The MCP server exposes 15 tools and 2 resources over stdio (`apps/mcp/src/tools.ts:1049-1065`, `apps/mcp/src/resources.ts:323`, `apps/mcp/src/server.ts:40-63`). Curation is deliberately absent from it, because a curation run produces a branch a human is expected to read (`apps/mcp/src/index.ts:4-5`). `memory_search` and `memory_recall` ask the head server first and fall back to the SQLite index. The three tools that create a record obey the store's `v1Doors` mode (`apps/mcp/src/handlers.ts:353-359`, `apps/mcp/src/handlers.ts:604-612`).
 
 ## How the pieces fit
 
