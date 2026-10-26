@@ -106,8 +106,8 @@ flowchart LR
 | Locks         | proper-lockfile 4.1.2 for the checkout lock and the session lock                                 | `packages/store/package.json:40`, `packages/session/package.json:30`           |
 | Atomic writes | write-file-atomic 8.0.0 for session logs, snapshots, and vector caches                           | `packages/session/package.json:31`, `packages/snapshot/package.json:29`        |
 | HTML parsing  | parse5 8.0.1                                                                                     | `packages/html/package.json:36`                                                |
-| Embeddings    | AWS Bedrock SDK 3.1153.0, `cohere.embed-v4:0` at 1024 dims                                       | `packages/llm/package.json:33`, `packages/llm/src/constants.ts:7-8`            |
-| Curator model | AI SDK `ai` 7.0.146 with `@ai-sdk/amazon-bedrock` 5.0.120 and `@ai-sdk/openai-compatible` 3.0.74 | `packages/curator/package.json:28-38`                                          |
+| Embeddings    | AWS Bedrock SDK 3.1156.0, `cohere.embed-v4:0` at 1024 dims                                       | `packages/llm/package.json:33`, `packages/llm/src/constants.ts:7-8`            |
+| Curator model | AI SDK `ai` 7.0.150 with `@ai-sdk/amazon-bedrock` 5.0.123 and `@ai-sdk/openai-compatible` 3.0.77 | `packages/curator/package.json:28-38`                                          |
 | Collapse plan | graphology 0.26.0, graphology-communities-louvain 2.0.2, graphology-metrics 2.4.2                | `packages/curator/package.json:40-42`                                          |
 | Sandbox       | just-bash 3.4.2 for `exec` and `session exec`                                                    | `apps/cli/package.json:56`                                                     |
 | Head server   | `@effect/platform-node` 4.0.5, HTTP over the store's Unix socket                                 | `pnpm-workspace.yaml:62`, `apps/cli/src/head-client.ts:30-33`                  |
