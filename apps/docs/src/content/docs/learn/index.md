@@ -20,7 +20,7 @@ The operations pages are task-shaped how-tos, one per section of the runbook. Th
 | [Initialize a store](/learn/operations/initialize-a-store/)                       | Why a fresh clone runs `memhtml init` before its first merge                               |
 | [Wire up your coding agent](/learn/operations/wire-a-coding-agent/)               | What `integrations install` writes per host, and how uninstall removes exactly that        |
 | [Hooks and recall](/learn/operations/hooks-and-recall/)                           | What each hook injects, why a failing hook prints nothing, and how to run one by hand      |
-| [Run the store day to day](/learn/operations/run-the-store-day-to-day/)           | The daily verbs, the cron lines, and what moves the access plane                           |
+| [Run the store day to day](/learn/operations/run-the-store-day-to-day/)           | The everyday commands, the upkeep commands, and what moves the access plane                |
 | [Share one store between a CLI and a server](/learn/operations/share-one-store/)  | Whether a command and a running server can touch one database at once                      |
 | [Write through a session](/learn/operations/write-through-a-session/)             | How many writes land as one commit, and how an agent run binds them with `MEMHTML_SESSION` |
 | [Set the store policy](/learn/operations/set-the-store-policy/)                   | What `memhtml.config.json` controls, its defaults, and why a typo in it stops writes       |
