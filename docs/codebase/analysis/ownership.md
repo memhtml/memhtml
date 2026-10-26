@@ -31,7 +31,7 @@ Modules are ranked by surviving lines, from blame at this commit grouped by modu
 | `tests-integration`       | Laith Al-Saadoon | 100%                     | 1       |
 | `packages/curator`        | Laith Al-Saadoon | 100%                     | 1       |
 
-No bot or agent identity (release-please, dependabot, `Bonk`) owns a surviving line: the `ownership` table holds one author.
+No bot or automation identity (release-please, dependabot) owns a surviving line: blame at this commit gives one author.
 
 ## Single points of failure
 
