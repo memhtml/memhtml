@@ -301,7 +301,7 @@ const MemoryArchive = Tool.make("memory_archive", {
 
 Soft-evicts a memory with a `git mv` into `archive/<YYYY>/` and the archive stamps. Nothing is deleted, and `git log --follow` reads straight through the move.
 
-**Input:** `path`, the memory to evict, and `reason`, both required. `reason` is recorded only in the commit subject, after the path (`packages/store/src/store.ts:1166`). A `path` under `archive/`, or one that isn't a usable memory path, such as a `./` or `../` spelling of an archived file, is refused before the store reads it, because archiving it again would nest it under `archive/<YYYY>/archive/` (`archiveSourceRefusal` at `packages/store/src/store.ts:563`).
+**Input:** `path`, the memory to evict, and `reason`, both required. `reason` is recorded only in the commit subject, after the path (`packages/store/src/store.ts:1193`). A `path` under `archive/`, or one that isn't a usable memory path, such as a `./` or `../` spelling of an archived file, is refused before the store reads it, because archiving it again would nest it under `archive/<YYYY>/archive/` (`archiveSourceRefusal` at `packages/store/src/store.ts:564`).
 
 No store policy closes this tool, because it edits a record that already exists.
 
@@ -309,7 +309,7 @@ No store policy closes this tool, because it edits a record that already exists.
 
 **Failure:**
 
-- `ERR_INVALID_MEMORY` when `path` is under `archive/` or isn't a usable memory path. No journal opens, so nothing moves and a change staged on the path stays staged (`packages/store/src/store.ts:1176`).
+- `ERR_INVALID_MEMORY` when `path` is under `archive/` or isn't a usable memory path. No journal opens, so nothing moves and a change staged on the path stays staged (`packages/store/src/store.ts:1177`).
 - `ERR_PATH_NOT_FOUND` when no file is at `path`, found before anything is written (`packages/store/src/store.ts:1151-1153`).
 - `ERR_GIT` or `ERR_STORAGE` from the move or the commit. The journal, `compensated`, puts the file back at its original path (`packages/store/src/store.ts:1155-1169`).
 - `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` from `reindex`, after the archive commit has landed (`apps/cli/src/operations.ts:1118`).
@@ -360,7 +360,7 @@ The store policy can close this tool, because it creates a record (see [The stor
 **Failure:**
 
 - `ERR_SESSION_BOUND`, `ERR_V1_DOOR_CLOSED`, or `ERR_STORE_CONFIG` from `guardV1Door`, before anything else runs (`apps/mcp/src/handlers.ts:658`).
-- `ERR_INVALID_MEMORY` before anything is written, for both or neither of `body` and `article_html`, a target that doesn't parse, a `target_path` under `archive/` or not a usable memory path (`packages/store/src/store.ts:1081`), or markup the render gate, `renderChecked`, refuses (`packages/store/src/store.ts:1062`).
+- `ERR_INVALID_MEMORY` before anything is written, for both or neither of `body` and `article_html`, a target that doesn't parse, a `target_path` under `archive/` or not a usable memory path (`packages/store/src/store.ts:1082`), or markup the render gate, `renderChecked`, refuses (`packages/store/src/store.ts:1088`).
 - `ERR_PATH_NOT_FOUND` before anything is written, when the first `readMemory` finds no file at `target_path` (`apps/cli/src/operations.ts:1065`).
 - `ERR_GIT` or `ERR_STORAGE` from the move, the write, or the commit. The journal, `compensated`, puts the target back and removes the new file (`packages/store/src/store.ts:1100-1136`).
 - `ERR_STORAGE`, `ERR_EMBED_MODEL_MISMATCH`, or `ERR_INDEX_STALE` from `reindex`, after the commit has landed (`apps/cli/src/operations.ts:1087`).

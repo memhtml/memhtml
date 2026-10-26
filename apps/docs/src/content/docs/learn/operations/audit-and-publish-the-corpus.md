@@ -4,7 +4,7 @@ description: Every memhtml doctor finding and its fix, what --fix will and will 
 ---
 
 ```bash
-memhtml doctor          # fourteen findings; eleven of them decide healthy
+memhtml doctor          # fourteen findings; ten of them decide healthy
 memhtml doctor --fix    # repairs the two that need no judgement call
 memhtml publish         # regenerate index.html listings and sitemap.xml, and commit
 ```
