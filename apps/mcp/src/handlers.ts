@@ -33,7 +33,12 @@ import type { MemoryDoc } from "@memhtml/html"
 import { parseFacetFilters } from "@memhtml/index"
 import { Effect, type Layer } from "effect"
 
-import { batchAbortFailure, type ToolFailure, toToolFailure } from "./failure.js"
+import {
+  batchAbortFailure,
+  reinforcePathsMissing,
+  type ToolFailure,
+  toToolFailure
+} from "./failure.js"
 import { pinnedUri } from "./resources.js"
 import { MemhtmlToolkit } from "./tools.js"
 
@@ -311,6 +316,32 @@ const summarize = (
     else written += 1
   }
   return { total: results.length, written, deduped, failed, skipped }
+}
+
+/**
+ * The paths a `memory_reinforce` call names: `paths`, then `path` when it arrives.
+ *
+ * `path` is how `memory_read`, `memory_archive`, `memory_neighbors`, and `memory_resolve` name one
+ * memory, so an agent reinforcing the one memory it just read sends that key here too. It is taken as
+ * `paths: [path]` rather than refused, because what the call means is not in doubt.
+ *
+ * Both together are merged, the opposite of `authored`'s rule and for the opposite reason. `body` and
+ * `article_html` are two renderings of one article, so honoring one drops the other. Two lists of paths
+ * have one union, and `reinforce` dedups it, so nothing the caller sent is lost.
+ *
+ * Neither is the one refusal. The decoder admits that call, because neither key can be `required`, and
+ * a misspelled key decodes to exactly that: the decoder drops a key the schema does not declare.
+ * Answering it with an empty success would tell the agent its signal landed. An explicit empty `paths`
+ * is not this case: it names its paths, none of them, and answers as it always has.
+ */
+const reinforceTargets = (
+  paths: ReadonlyArray<string> | null | undefined,
+  path: string | null | undefined
+): Effect.Effect<ReadonlyArray<string>, ToolFailure> => {
+  const many = opt(paths)
+  const one = opt(path)
+  if (many === undefined && one === undefined) return Effect.fail(reinforcePathsMissing())
+  return Effect.succeed(one === undefined ? arr(many) : [...arr(many), one])
 }
 
 /**
@@ -769,7 +800,8 @@ export const ToolHandlers: Layer.Layer<
   memory_reinforce: (params) =>
     handled(
       Effect.gen(function* () {
-        const result = yield* reinforceMemories(params.paths, params.signal)
+        const paths = yield* reinforceTargets(params.paths, params.path)
+        const result = yield* reinforceMemories(paths, params.signal)
         return { bumped: result.bumped, cooled_down: result.cooledDown }
       })
     ),
