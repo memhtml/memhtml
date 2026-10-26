@@ -66,7 +66,7 @@ These are the codes a tool can reach, and the suggestions each one carries (`app
 
 Two suggestion texts don't fit every case they reach. The `ERR_INVALID_MEMORY` text says the store refused "at the render gate", but the same text follows a `body`/`article_html` refusal, a self-link, and a `trace_links` call with neither key. The `ERR_WRITE_CONFLICT` text says to retry the write, but a retry at the same occupied path conflicts again. `memory_correct` is the replacement (`apps/mcp/src/tools.ts:191-192`).
 
-`mcpSuggestionsFor` also has arms for `ERR_DUPLICATE_CONTENT`, `ERR_MODEL_UNAVAILABLE`, `ERR_DIRTY_TREE`, and `ERR_DISCRIMINATION_FAILED`. No tool or resource raises those codes at this tree. A duplicate is a successful dedupe, and an embedder or extractor failure degrades the call instead of failing it. Only the CLI's `curate merge` raises a dirty-tree refusal (`apps/cli/src/v2.ts:1741-1743`).
+`mcpSuggestionsFor` also has arms for `ERR_DUPLICATE_CONTENT`, `ERR_MODEL_UNAVAILABLE`, `ERR_DIRTY_TREE`, and `ERR_DISCRIMINATION_FAILED`. No tool or resource raises those codes at this tree. A duplicate is a successful dedupe, and an embedder or extractor failure degrades the call instead of failing it. Only the CLI's `curate merge` raises a dirty-tree refusal (`apps/cli/src/v2.ts:1730-1732`).
 
 ### What a failed write leaves behind
 
@@ -78,9 +78,9 @@ The five write tools are `memory_write`, `memory_write_batch`, `memory_correct`,
 
 A blind retry after a phase-3 failure can store the memory twice. Dedupe reads the index through `activePathForHash`, and the index hasn't caught up with the commit (`packages/index/src/traces-persist.ts:196-203`). `memory_status` shows the gap as `index_fresh: false`.
 
-The commit is a plain `git commit -m`, so it also commits any path that was already staged in the root (`packages/store/src/git.ts:403-422`).
+The commit is a plain `git commit -m`, so it also commits any path that was already staged in the root (`packages/store/src/git.ts:485-504`).
 
-Writes in one process take turns behind one permit, `oneWriterAtATime`, and reads don't wait for it. Inside the permit, each write holds the checkout lock, the directory `.memhtml/checkout.lock`, for the whole operation (`packages/store/src/store.ts:1397-1424`). `git commit` takes the same lock as a backstop (`packages/store/src/git.ts:403-406`). The lock is shared across processes, so a CLI command beside the server and a session commit in any process take turns with the server's writes. A write that waits 15 s for the lock fails with `ERR_STORAGE` (`checkout.locked`) before anything is written (`packages/store/src/checkout-lock.ts:31-44`). `docs/design.md` §17 gives the lock's timings.
+Writes in one process take turns behind one permit, `oneWriterAtATime`, and reads don't wait for it. Inside the permit, each write holds the checkout lock, the directory `.memhtml/checkout.lock`, for the whole operation (`packages/store/src/store.ts:1397-1424`). `git commit` takes the same lock as a backstop (`packages/store/src/git.ts:485-488`). The lock is shared across processes, so a CLI command beside the server and a session commit in any process take turns with the server's writes. A write that waits 15 s for the lock fails with `ERR_STORAGE` (`checkout.locked`) before anything is written (`packages/store/src/checkout-lock.ts:31-44`). `docs/design.md` §17 gives the lock's timings.
 
 ### The store policy and the record-creating tools
 
