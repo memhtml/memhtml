@@ -120,16 +120,16 @@ This module declares four edge classes that don't mix, four rel vocabularies, an
 
 **Consumer(s):**
 
-- `packages/store/src/store.ts:4` imports `EdgeRel` and `relClassFor`; the store calls `relClassFor` at `packages/store/src/store.ts:1285` to decide which endpoint rule to enforce.
+- `packages/store/src/store.ts:4` imports `EdgeRel` and `relClassFor`; the store calls `relClassFor` at `packages/store/src/store.ts:1301` to decide which endpoint rule to enforce.
 - `packages/index/src/project.ts:1` imports `relClassFor` and writes its result into the `edge_class` column at `packages/index/src/project.ts:366-368`.
 - `packages/html/src/serialize.ts:1` imports `relTokenFor` to emit the `<link rel>` wire token.
 - `packages/html/src/parse.ts:1` imports `relForToken`; `packages/html/src/parse.ts:285-286` drops a link whose token is outside the vocabulary.
 - `packages/html/src/constraints.ts:1` imports `relForToken`; `packages/html/src/constraints.ts:319-321` reports the same token as a violation.
 - `packages/html/src/document.ts:1` imports `EdgeRel` as the type of `MemoryLink.rel`.
 - `packages/html/src/template.ts:1` imports `EdgeRel` alone, as the type of a `NewMemoryInput` link (`packages/html/src/template.ts:58`); `packages/html/src/editors.ts:1-2` imports `EdgeRel`, `relForToken`, and `relTokenFor`.
-- `packages/head/src/overlay.ts:2` imports `isEdgeRel`, so a session view refuses a `link` or `unlink` whose rel is outside the vocabulary; `packages/session/src/validate.ts:7` reads the same predicate through the root `@memhtml/contracts` barrel for the commit's own check.
+- `packages/head/src/overlay.ts:2` imports `isEdgeRel`, so a session view refuses a `link` or `unlink` whose rel is outside the vocabulary; `packages/session/src/validate.ts:9` reads the same predicate through the root `@memhtml/contracts` barrel for the commit's own check.
 - `apps/cli/src/doctor.ts:4` imports `EdgeRel` and `isEdgeRel`, and `apps/cli/src/repair.ts:1` imports `EdgeRel` for the head edits `doctor --fix` applies.
-- `apps/cli/src/operations.ts:1` imports `isEdgeRel`, `MEMORY_RELS`, `relClassFor`, `TASK_RELS`; `apps/cli/src/operations.ts:1301` filters to memory-class rels.
+- `apps/cli/src/operations.ts:1` imports `isEdgeRel`, `MEMORY_RELS`, `relClassFor`, `TASK_RELS`; `apps/cli/src/operations.ts:1304` filters to memory-class rels.
 - `apps/cli/src/commands.ts:1` and `apps/mcp/src/tools.ts:15` import `MEMORY_RELS` to build the authorable-rel enum; `apps/mcp/src/tools.ts:62` turns it into `Schema.Literals(MEMORY_RELS)`.
 - `packages/index/migrations/0008_tasks.sql:194-199` restates all four rel vocabularies as per-class CHECK constraints.
 
@@ -181,7 +181,7 @@ export const Edge = Schema.Struct({
 
 - The indexer assumes `relClassFor` is total, so it writes the result straight into a NOT NULL column with no fallback (`packages/index/src/project.ts:366-368`). Totality comes from `relClassFor`'s final `return "provenance"` rather than from a check.
 - The two HTML consumers handle an unknown rel token differently, on purpose. The parser drops it so the file still parses (`packages/html/src/parse.ts:285-286`), while the constraint checker reports it (`packages/html/src/constraints.ts:319-321`).
-- The store assumes it's the only module that can see both endpoints' memory types, so it checks the endpoint rule that SQL can't check. `packages/store/src/store.ts:1279-1311` rejects a memory-class rel touching a task file, and rejects a task-class rel touching a non-task. `packages/store/src/store.ts:299-300` states that the `edges` CHECK can't read the endpoints' types at all.
+- The store assumes it's the only module that can see both endpoints' memory types, so it checks the endpoint rule that SQL can't check. `packages/store/src/store.ts:1295-1327` rejects a memory-class rel touching a task file, and rejects a task-class rel touching a non-task. `packages/store/src/store.ts:299-300` states that the `edges` CHECK can't read the endpoints' types at all.
 - Every memory-graph query assumes `edge_class = 'memory'` is enough to keep a person or task edge out of the memory graph (`packages/contracts/src/edges.ts:3-8`, restated at `packages/index/migrations/0008_tasks.sql:177-181`).
 - `packages/index/src/project.ts:349-350` assumes a self-loop must be dropped at projection time rather than sent to the driver (the drop is at `packages/index/src/project.ts:361`), because the table's `CHECK (src_path <> dst_path)` at `packages/index/migrations/0008_tasks.sql:193` would reject the whole write batch over one hand-authored file.
 - `relTokenFor` and `relForToken` assume the underscore-to-hyphen mapping is injective on the vocabulary (`packages/contracts/src/edges.ts:109-120`). No rel in `ALL_RELS` contains a hyphen, so the inverse is unambiguous.
@@ -192,16 +192,16 @@ export const Edge = Schema.Struct({
 
 This module provides placement, archival, and normalization as pure total functions over repo-root-relative paths. It has 16 non-test importers across 4 packages and 2 apps, and it's the only module that decides where a memory lands in the root.
 
-**Producer:** `packages/contracts/src/paths.ts:10-238`
+**Producer:** `packages/contracts/src/paths.ts:10-279`
 
 **Consumer(s):**
 
-- `packages/store/src/store.ts:12-19` imports six names: `archivePathFor`, `isValidMemoryPath`, `memoryPathFor`, `memoryPathViolation`, `normalizePath`, and `PlacementInput`. `memoryPathViolation` (`packages/store/src/store.ts:16`) is the one the `strictPath` refusal quotes at `packages/store/src/store.ts:707-720`.
+- `packages/store/src/store.ts:12-19` imports six names: `archivePathFor`, `isValidMemoryPath`, `memoryPathFor`, `memoryPathViolation`, `normalizePath`, and `PlacementInput`. `memoryPathViolation` (`packages/store/src/store.ts:16`) is the one the `strictPath` refusal quotes at `packages/store/src/store.ts:722-735`.
 - `packages/store/src/layout.ts:5` imports `ARCS_DIR`, `INBOX_DIR`, `PEOPLE_DIR` and puts all three in `SCAFFOLD_DIRS` (`packages/store/src/layout.ts:41-48`).
 - `packages/index/src/indexer.ts:6` imports `MEMORY_EXTENSION` and `normalizePath`.
 - `packages/index/src/project.ts:2` imports `normalizePath` and `paraBucketOf`; `packages/index/src/project.ts:360` normalizes a link's `href` before storing it as `dst_path`.
 - `packages/head/src/record.ts:4` imports `ARCHIVE_BUCKET`, which decides a record's `archived` flag, and `packages/head/src/version.ts:3` imports `MEMORY_EXTENSION` for `isCandidatePath`.
-- `packages/session/src/validate.ts:2-15` reads `isArchivePath`, `memoryPathViolation`, `normalizePath`, `originalPathFor`, `pathToHref`, and `hrefToPath` through the root barrel, so a session's archive op is judged by the same inverse the store's archive writes.
+- `packages/session/src/validate.ts:2-17` reads `isArchivePath`, `memoryPathViolation`, `normalizePath`, `originalPathFor`, `pathToHref`, and `hrefToPath` through the root barrel, so a session's archive op is judged by the same inverse the store's archive writes.
 - `packages/eval/src/corpus.ts:1` imports `PEOPLE_DIR`.
 - `apps/cli/src/session-exec.ts:6` imports `memoryPathViolation` and `originalPathFor` to turn a sandbox's file moves into `archive` and `move` ops; `apps/cli/src/replay.ts:2` imports `originalPathFor` to rebuild a curator branch's archives; `apps/cli/src/v2.ts:12` imports `isValidMemoryPath` and `memoryPathFor` for `session put`; `apps/cli/src/detected-tasks.ts:3` imports `placementFor`.
 - `apps/cli/src/doctor.ts:5` imports `INBOX_DIR`, `normalizePath`, and `TASKS_SUBDIR`.
@@ -260,7 +260,7 @@ export const originalPathFor = (archivePath: string): string | undefined => {
 **Assumptions consumers make:**
 
 - Every caller assumes `placementFor` never fails and never returns a directory outside a PARA bucket, so the write path doesn't guess twice (`packages/contracts/src/paths.ts:132-147`). An unusable explicit `path` is ignored rather than propagated, which is how totality is preserved.
-- No rule routes into `resources/people/`, and a tag that slugs to `people` falls through to the inbox (`packages/contracts/src/paths.ts:181-184`). `packages/contracts/src/paths.ts:166-174` states why. A person record is a place written by a curator under the `curate` scope, and inside a run that path is reserved, so a routing rule that sent a fact there would produce a write the session validator refuses (`packages/session/src/validate.ts:75`, `:87-97`). `PlacementInput.entities` is still accepted and read by no rule.
+- No rule routes into `resources/people/`, and a tag that slugs to `people` falls through to the inbox (`packages/contracts/src/paths.ts:181-184`). `packages/contracts/src/paths.ts:166-174` states why. A person record is a place written by a curator under the `curate` scope, and inside a run that path is reserved, so a routing rule that sent a fact there would produce a write the session validator refuses (`packages/session/src/validate.ts:77`, `:89-99`). `PlacementInput.entities` is still accepted and read by no rule.
 - `packages/store/src/layout.ts:35-48` assumes the three directory constants `placementFor` can return already exist on disk, so `memhtml init` creates all of them and an agent's first write lands somewhere real.
 - `packages/index/src/project.ts:344-347` assumes the leading slash in a link's `href` must be stripped before it becomes a `dst_path`, because the `edges` table stores the git-tree form and a slashed value would fail to join `files.path` while looking exactly like a corpus with no edges.
 - A caller that wants an invalid path rejected instead of re-derived asks the store for it, with `strictPath` on a `WriteInput` (`packages/store/src/store.ts`, `strictPathRefusal`).
@@ -349,7 +349,7 @@ This is the one interface between every SQL-writing module and the driver. 17 no
 - `packages/index/src/indexer.ts:11` takes it as an indexer dependency.
 - `packages/index/src/traces-persist.ts`, `packages/index/src/index-state.ts`, and `packages/index/src/reinforce.ts` all reference it, and `packages/index/src/sidecar.ts:44` and `packages/index/src/vector-coverage.ts:100` take it as their first argument.
 - `packages/eval/src/harness.ts` references it.
-- `apps/cli/src/api-layer.ts` wires it, and `apps/cli/src/operations.ts`, `apps/cli/src/views.ts`, `apps/cli/src/doctor.ts`, `apps/cli/src/hook.ts:5`, `apps/cli/src/artifacts.ts:32`, and `apps/cli/src/repair.ts:86`, `:98` consume it.
+- `apps/cli/src/api-layer.ts` wires it, and `apps/cli/src/operations.ts`, `apps/cli/src/views.ts`, `apps/cli/src/doctor.ts`, `apps/cli/src/hook.ts:5`, `apps/cli/src/artifacts.ts:32`, and `apps/cli/src/repair.ts:118`, `:130` consume it.
 - `packages/index/src/index.ts:10-18` publishes `DatabaseService`, `DatabaseShape`, `SqlValue`, `Write`, `attachState`, `makeDatabase`, `runStateMigrations` as the package's SQL surface.
 
 **Shape:**
@@ -387,7 +387,7 @@ export interface DatabaseShape {
 
 **Assumptions consumers make:**
 
-- Every caller of `get` and `all` supplies its own row type parameter `A` and assumes the driver's rows match it, because there's no runtime decode at this boundary. `apps/cli/src/repair.ts:72-76` declares `DanglingEdge` with snake_case column names and hands it to `all<DanglingEdge>` (`apps/cli/src/repair.ts:88`), so a column rename becomes a silent `undefined` and never a type error.
+- Every caller of `get` and `all` supplies its own row type parameter `A` and assumes the driver's rows match it, because there's no runtime decode at this boundary. `apps/cli/src/repair.ts:104-108` declares `DanglingEdge` with snake_case column names and hands it to `all<DanglingEdge>` (`apps/cli/src/repair.ts:120`), so a column rename becomes a silent `undefined` and never a type error.
 - `packages/index/src/project.ts:379-387` assumes `writeAll` is one transaction and therefore deduplicates rows before sending them, because a duplicate primary key from one file with a repeated `<dt>`/`<dd>` pair would roll back every other row in the batch.
 - `packages/index/src/indexer.ts` assumes it must split a whole-store pass into batches instead of sending one transaction. `packages/index/src/schema-const.ts:81-89` sets `WRITE_BATCH_SIZE` at 500 and states the reason, which is to bound how much work a single failure discards and how long one write holds the WAL write lock.
 - Callers assume a concurrent writer blocks rather than fails. `packages/index/src/database.ts:13-22` sets a 5000 ms busy timeout and states that many short-lived CLI invocations plus a long-lived MCP server run against one store and serialize by waiting.
@@ -407,7 +407,7 @@ export interface DatabaseShape {
 - `packages/index/src/project.ts:5` imports `MemoryDoc` and projects it onto rows; `packages/index/src/project.ts:359` reads `doc.links`, and `packages/index/src/project.ts:336` reads `doc.article.codeLangs`.
 - `packages/index/src/indexer.ts:8` imports `parseMemory` and `contentHash`, then calls both at `packages/index/src/indexer.ts:305-317`.
 - `packages/head/src/record.ts:6` imports `parseMemory` and `contentHash`, and `recordFrom` maps the parsed document onto a `MemoryRecord` field by field (`packages/head/src/record.ts:34-63`).
-- `packages/session/src/validate.ts:16` and `packages/session/src/commit.ts:7` import `parseMemory`, so a session's ops are judged and applied against the same parse the head reads.
+- `packages/session/src/validate.ts:18` and `packages/session/src/commit.ts:7` import `parseMemory`, so a session's ops are judged and applied against the same parse the head reads.
 - `apps/cli/src/session-exec.ts:7` imports `MemoryDoc` and compares the metas, tags, and aliases of a sandbox's edited file against the original (`apps/cli/src/session-exec.ts:277`).
 - `packages/store/src/store.ts:21` imports `MemoryDoc` as `ReadResult.doc` (`packages/store/src/store.ts:153-157`).
 - `apps/mcp/src/handlers.ts:32` imports `MemoryDoc`.
@@ -467,7 +467,7 @@ export const MemoryLink = Schema.Struct({
 **Consumer(s):**
 
 - `apps/cli/src/api-layer.ts:59` re-exports the `Store` tag and the layer wires it, making `apps/cli` the composition root for both apps.
-- `apps/cli/src/operations.ts:42` imports `Store` and calls the write methods behind every v1 CLI command. `apps/cli/src/operations.ts:2024` is the one caller of `store.exclusive`. A task status change writes, stages, and commits as the store's one writer, so it holds the checkout lock a session commit also takes.
+- `apps/cli/src/operations.ts:42` imports `Store` and calls the write methods behind every v1 CLI command. `apps/cli/src/operations.ts:2059` is the one caller of `store.exclusive`. A task status change writes, stages, and commits as the store's one writer, so it holds the checkout lock a session commit also takes.
 - `apps/mcp/src/handlers.ts:1-30` imports the CLI's operations from `@memhtml/cli`, so every MCP write reaches the same methods through `apps/cli/src/operations.ts`. `apps/mcp/src/resources.ts:285` and `:570` take `Store` directly for reads.
 - `apps/cli/src/doctor.ts:570` takes `Store` for its health checks.
 - `tests-integration/tests/contracts.test.ts:35-70` asserts the dedupe behavior through the shipped CLI, which is the store's contract observed from outside.
@@ -553,7 +553,7 @@ export interface StoreShape {
 **Assumptions consumers make:**
 
 - Callers assume one operation is one commit, and that the store owns staging. `packages/store/src/store.ts:39-45` states that a caller staging its own files could bundle two unrelated writes into one commit, which would stop `git log` from reading as a history and stop `diff base..HEAD` from being a reviewable unit. The example of a reviewable run in that comment comes from the removed v1 pipeline.
-- Callers assume an explicit `path` is re-derived, never refused, unless they opt in with `strictPath` (`packages/store/src/store.ts:58-85`); with it set, `strictPathRefusal` at `packages/store/src/store.ts:707-720` fails with `InvalidMemory` quoting `memoryPathViolation`'s reason, and an occupied path is refused with `WriteConflict` either way.
+- Callers assume an explicit `path` is re-derived, never refused, unless they opt in with `strictPath` (`packages/store/src/store.ts:58-85`); with it set, `strictPathRefusal` at `packages/store/src/store.ts:722-735` fails with `InvalidMemory` quoting `memoryPathViolation`'s reason, and an occupied path is refused with `WriteConflict` either way.
 - Callers assume `created` and `deduped` are mutually exclusive and that exactly one is true (`packages/store/src/store.ts:89-95`), so they branch on either.
 - Callers assume `commitSha` is `null` exactly when nothing was written. `packages/store/src/store.ts:102-103` says so for a single write, and `packages/store/src/store.ts:131-147` for a batch.
 - Batch callers assume the error channel means the batch mechanism failed, and never that a single op was rejected. `packages/store/src/store.ts:253-255` states that a rejected op is a `BatchOpResult` with `ok: false`, including in atomic mode, so a caller always gets its per-op array back.
@@ -562,7 +562,7 @@ export interface StoreShape {
 - Callers assume the dedupe question is asked before any file is written, so a duplicate leaves the tree byte-identical with nothing to roll back. `tests-integration/tests/contracts.test.ts:55-69` asserts that against git itself rather than only against the report.
 - The store assumes dedupe knowledge is injected rather than owned, because the package is SQL-free by design. `packages/store/src/store.ts:189-199` declares `DedupeLookup` as a function and states that the store's only knowledge is that a non-null answer means don't write.
 - The store assumes a path move needs an explicit callback, because cross-database foreign keys don't exist. `packages/store/src/store.ts:201-209` declares `MoveCallback` as how `state.access.path` follows an archive.
-- A caller of `exclusive` assumes the effect it passes calls no write method of the same store, because the in-process permit isn't reentrant (`packages/store/src/store.ts:229-235`). `apps/cli/src/operations.ts:2024-2029` keeps to that by staging and committing through `store.git` alone.
+- A caller of `exclusive` assumes the effect it passes calls no write method of the same store, because the in-process permit isn't reentrant (`packages/store/src/store.ts:229-235`). `apps/cli/src/operations.ts:2059-2064` keeps to that by staging and committing through `store.git` alone.
 - Three methods have no caller outside the store's own tests: `supersedeMemories`, `requireCleanTree`, and `mergeBranch`. The doc comments at `packages/store/src/store.ts:275-290` and `:309` still describe callers in the removed v1 batch pipeline and in a curation preflight, and neither calls them at 0.16.0. A change to their behavior reaches no shipped path.
 
 **Drift risk:** Adding a method that writes without committing, or splitting an existing one-commit operation into two, breaks rollback and stops `diff base..HEAD` from being a reviewable unit. Mitigation: `packages/store/src/store.ts:262-269` states the one-commit rule for corrections, and `packages/store/src/store.ts:241-256` states it for batches. Hold any new operation to the same rule and assert the commit count in the integration tier.
@@ -926,7 +926,7 @@ The closed element and metadata vocabulary that defines what a memory file may c
 - `packages/html/src/constraints.ts:26` imports `REQUIRED_META` and checks each at `packages/html/src/constraints.ts:352-355`, then rejects an out-of-vocabulary meta name at `packages/html/src/constraints.ts:356-359`.
 - `packages/html/src/parse.ts` reads the same prefix when collecting head metas and links (`packages/html/src/parse.ts:277-288`).
 - `packages/store/src/store.ts:22-31` imports `checkMemory` and `renderTemplate`, so every v1 write passes the vocabulary gate before a file is created.
-- `packages/session/src/validate.ts:16` imports `checkMemory` and runs it on every `put` and on the `html` an `archive` or a `move` carries (`packages/session/src/validate.ts:267`, `:310`, `:429`). A failure is a `format` violation (`packages/session/src/validate.ts:268-270`), so a session op meets the same gate as a v1 write.
+- `packages/session/src/validate.ts:18` imports `checkMemory` and runs it on every `put` and on the `html` an `archive` or a `move` carries (`packages/session/src/validate.ts:269`, `:330`, `:449`). A failure is a `format` violation (`packages/session/src/validate.ts:270-272`), so a session op meets the same gate as a v1 write.
 - `apps/cli/src/doctor.ts:6` imports `checkMemory` to report violations over the whole root.
 
 **Shape:**
@@ -1090,7 +1090,7 @@ The plane's root is `Roots.traceRoot` (`apps/cli/src/api-layer.ts:87-94`), resol
 **Consumer(s):**
 
 - `apps/cli/src/run.ts:6` imports `HOSTS`, `HOOK_EVENTS`, `isHostId`, `isHookEvent`, and `renderHookOutput`; `apps/cli/src/run.ts:1344-1359` turns an out-of-vocabulary event or host into `ERR_UNKNOWN_HOOK_EVENT` or `ERR_UNKNOWN_HOST` with one suggestion per known value, and `apps/cli/src/run.ts:1835` re-checks both before the hook engine runs.
-- `apps/cli/src/commands.ts:5` imports `HOSTS` and `HOOK_EVENTS` and interpolates them into flag descriptions at `apps/cli/src/commands.ts:1032,1089,1128,1172` and into an enum at `:1181`, so the manifest and the generated agent doc name every host the parser accepts.
+- `apps/cli/src/commands.ts:5` imports `HOSTS` and `HOOK_EVENTS` and interpolates them into flag descriptions at `apps/cli/src/commands.ts:1033,1089,1128,1172` and into an enum at `:1182`, so the manifest and the generated agent doc name every host the parser accepts.
 - `apps/cli/src/integrations.ts:61-83` declares `IntegrationsAnswer` (an envelope plus an exit code) and `IntegrationsInput`, and `apps/cli/src/integrations.ts:264-499` runs the five verbs `integrationsInstall`, `integrationsUninstall`, `integrationsList`, `integrationsDoctor`, and `integrationsShell`.
 - Inside the package, `packages/integrations/src/install.ts:60`, `uninstall.ts:27`, `list.ts:14`, and `doctor.ts:28` all read the receipt through `inspectReceiptFile` and `compareEntries`, so four verbs share one reading of what "installed" means.
 
@@ -1295,7 +1295,7 @@ A session is a base commit, a ref, and a log of overlay ops, and its commit land
 - `packages/session/package.json:25-32` lists `@memhtml/contracts`, `@memhtml/domain`, `@memhtml/html`, `effect`, `proper-lockfile`, and `write-file-atomic`, and no `@memhtml/store`. `packages/session/src/errors.ts:9` re-exports the contracts' `GitFailure`, so a session's git failure is the same class the store raises.
 - `packages/session/src/checkout-lock.ts:19-41` and `packages/store/src/checkout-lock.ts:19-44` each bind `withCheckoutLockUsing` (`packages/contracts/src/checkout-lock.ts:128`) to their own `proper-lockfile` acquisition over `CHECKOUT_LOCK_PATH`.
 - `packages/session/src/commit.ts:302` takes the lock around `landOnRef`, and `packages/session/src/commit.ts:359` takes it around `settlePending`.
-- `packages/store/src/store.ts:1420-1423` takes it inside the store's one in-process permit, so every v1 write method runs as `exclusive`, and `apps/cli/src/operations.ts:2024` calls `store.exclusive` for the one v1 path that stages through `store.git` itself.
+- `packages/store/src/store.ts:1436-1439` takes it inside the store's one in-process permit, so every v1 write method runs as `exclusive`, and `apps/cli/src/operations.ts:2059` calls `store.exclusive` for the one v1 path that stages through `store.git` itself.
 - `apps/cli/src/v2.ts:944-996` (`commitOverHead`) is the one caller of `commitSession` for `session commit`, run by the CLI and by the head server alike.
 
 **Shape:**
@@ -1536,10 +1536,10 @@ export const vectorCachePathFor = (root: string, space: StoredVectorSpace): stri
 **Consumer(s):**
 
 - `apps/cli/src/store-config.ts:64-93` (`loadStorePolicy`) reads and decodes the file, and `apps/cli/src/store-config.ts:27-36` lists when it's read.
-- `apps/cli/src/v2.ts:654`, `:916`, `:1116`, and `:1635` read it for `session put`, `session exec`, `session commit`, and `curate merge`, and `apps/cli/src/curate-run.ts:565` and `apps/cli/src/curate-collapse.ts:893` read it for the curator.
+- `apps/cli/src/v2.ts:654`, `:916`, `:1116`, and `:1635` read it for `session put`, `session exec`, `session commit`, and `curate merge`, and `apps/cli/src/curate-run.ts:565` and `apps/cli/src/curate-collapse.ts:907` read it for the curator.
 - `apps/cli/src/head-server.ts:1096`, `:1271`, and `:1427` read it per `exec`, `commit`, and `neighbors` request, so an edit applies to the server's next request with no restart.
 - `apps/cli/src/run.ts:1712-1723` reads `v1Doors` before validation for the four record-creating v1 commands, and `apps/cli/src/run.ts:366`, `:396`, `:450`, and `:539` and `apps/mcp/src/handlers.ts:338`, `:406`, and `:658` call `guardV1Door` inside the layer when the mode couldn't be read first.
-- `packages/session/src/validate.ts:131-145` applies the write bar's `refusedTypes` and `requireAnchor` as `write-bar` violations.
+- `packages/session/src/validate.ts:133-147` applies the write bar's `refusedTypes` and `requireAnchor` as `write-bar` violations.
 
 **Shape:**
 
@@ -1586,7 +1586,7 @@ export const StoreConfig = Schema.Struct({
 - `session commit` reads the policy before it asks the head server, so a broken file refuses with `ERR_STORE_CONFIG` before the server sees the request (`apps/cli/src/v2.ts:1114-1116`).
 - `PLACEMENT_QUOTA_MAX` restates the session's `BATCH_CAP` of 200 because the contracts package can't import the session (`packages/contracts/src/store-config.ts:40-45`), and a quota above the cap could never land in one commit.
 - `v1Doors` assumes `MEMHTML_SESSION` marks a process inside an agent runtime's run (`packages/contracts/src/store-config.ts:23-36`). Under `closed-in-session` such a process gets `ERR_SESSION_BOUND` from `memhtml write`, `apply`, `correct`, `task add`, and the MCP `memory_write`, `memory_write_batch`, and `memory_correct` tools. Under `closed` every process gets `ERR_V1_DOOR_CLOSED`. Both are usage codes at exit 2 (`apps/cli/src/run.ts:990-1016`, `apps/cli/src/run.ts:2416-2421`).
-- The session validator assumes no session writes the policy file, and `packages/session/src/validate.ts:80-81` lists `STORE_CONFIG_FILE` as a store file no scope writes.
+- The session validator assumes no session writes the policy file, and `packages/session/src/validate.ts:82-83` lists `STORE_CONFIG_FILE` as a store file no scope writes.
 
 **Drift risk:** The strict decode makes the file's schema a version contract between every build that touches a store. A key added in a newer build is an excess key to an older one, so every older process on the store refuses every command that needs the policy with `ERR_STORE_CONFIG` once the file uses it, the head server included. The `apps/cli/src/store-config.ts:30-33` list of readers names the server's `neighbors` and `exec` routes and omits `commit`. Mitigation: ship a new key in a release before any store's file uses it, and say in the changelog which version first reads it.
 
@@ -1594,12 +1594,12 @@ export const StoreConfig = Schema.Struct({
 
 `@memhtml/curator` owns the model loop and the tools the model sees, and owns no head, session, or sandbox. It takes those through `CuratorTools`, an interface of five promise-returning methods, and `apps/cli` binds it to the real head, a session on disk, and the `session exec` sandbox. The interface exists because the sandbox lives in `apps/cli` and a package can't import an app (`packages/curator/src/tools.ts:5-13`).
 
-**Producer:** `packages/curator/src/tools.ts:15-201`
+**Producer:** `packages/curator/src/tools.ts:15-220`
 
 **Consumer(s):**
 
 - `packages/curator/src/loop.ts:152-188` registers the five methods as the model's tools, through the AI SDK, and cuts every result at `TOOL_RESULT_CAP`, 30,000 characters (`packages/curator/src/loop.ts:40`).
-- `apps/cli/src/curate-run.ts:357-460` (`bindTools`) is the production binder, called by `curate run` at `apps/cli/src/curate-run.ts:613` and by `curate collapse` at `apps/cli/src/curate-collapse.ts:651`.
+- `apps/cli/src/curate-run.ts:357-460` (`bindTools`) is the production binder, called by `curate run` at `apps/cli/src/curate-run.ts:613` and by `curate collapse` at `apps/cli/src/curate-collapse.ts:668`.
 - `packages/curator/src/tools.ts:2` imports `Violation` from `@memhtml/session`, so the violations a tool returns are the session validator's own type.
 
 **Shape:**
@@ -1631,7 +1631,7 @@ export interface CuratorTools {
 }
 ```
 
-The model doesn't propose `OverlayOp` directly. `ProposedOp` (`packages/curator/src/tools.ts:91-162`) is a Zod union where an `archive` or a `move` names only its source and destination, and `toOverlayOps` (`packages/curator/src/tools.ts:168-201`) reads the source's bytes through `read` to fill the op's `html`, so a model never restates a whole file. A source `read` can't find comes back in `missing` instead of being dropped.
+The model doesn't propose `OverlayOp` directly. `ProposedOp` (`packages/curator/src/tools.ts:91-165`) is a Zod union where an `archive` or a `move` names only its source and destination, and `toOverlayOps` (`packages/curator/src/tools.ts:185-220`) reads the source's bytes through `read` to fill the op's `html`, so a model never restates a whole file. A source `read` can't find comes back in `missing` instead of being dropped.
 
 **Assumptions consumers make:**
 
@@ -1642,7 +1642,7 @@ The model doesn't propose `OverlayOp` directly. `ProposedOp` (`packages/curator/
 - `search` ranks the overlaid view with `searchHead` and no vectors (`apps/cli/src/curate-run.ts:394-405`), so the curator searches with the lexical arm alone and recency breaks ties.
 - `status` reports the session's base, ref, and op counts by kind (`packages/curator/src/tools.ts:68-81`), and the loop adds the steps and tokens it has spent.
 
-**Drift risk:** `packages/curator/src/tools.ts:164-166` declares its own `archivePathFor(path, now)`, beside the contracts' `archivePathFor(path, year)` (`packages/contracts/src/paths.ts:217`). The curator's copy takes a `Date`, reads the UTC year, and doesn't normalize the path, and the contracts' copy normalizes it and formats the year segment itself. The two agree for the normalized paths `read` resolves, and the session validator checks every destination with the contracts' inverse (`packages/session/src/validate.ts:299-301`), so a divergence would show up as a refused archive and never as a misplaced file. The risk is a change to one rule that doesn't reach the other. Mitigation: call the contracts' function with `now.getUTCFullYear()` and drop the local copy.
+**Drift risk:** small. The curator's `archivePathFor(path, now, read)` (`packages/curator/src/tools.ts:167-183`) takes its slot from the contracts' `archiveSlotFor` (`packages/contracts/src/paths.ts:249-258`), with the year read from `now` in UTC and each candidate slot probed through `read`, so the curator and the store spell a slot the same way. The session validator still checks every destination with the contracts' inverse and refuses a held or skipped slot (`packages/session/src/validate.ts:303-325`), so a probe that missed a held slot would show up as a refused archive and never as an overwrite.
 
 ## MCP search and recall against the head server
 
@@ -1698,7 +1698,7 @@ An agent runtime that gives each run one session talks to memhtml through the CL
 **Consumer(s):**
 
 - An agent runtime, which reads `session status` and `session commit` payloads by key and may stat or read the log file. Nothing in this repository is that consumer, and the contract is stated here from the producer's side.
-- `apps/cli/src/commands.ts:1348-1409` documents `session commit`, `--drop-refused`, `--no-server`, and `session rebase` in the command table, so `memhtml manifest` and the generated agent doc publish the same text.
+- `apps/cli/src/commands.ts:1349-1410` documents `session commit`, `--drop-refused`, `--no-server`, and `session rebase` in the command table, so `memhtml manifest` and the generated agent doc publish the same text.
 - `apps/cli/src/run.ts:990-1016` closes the v1 record doors in a process that carries `MEMHTML_SESSION`, under the store's default `v1Doors` mode.
 
 **Shape:**

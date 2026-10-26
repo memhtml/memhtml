@@ -212,7 +212,7 @@ After the script exits, the harvester compares every file with what it seeded an
 | Deleted a record with no copy, or edited its head in any other way                  | a `rejected` entry naming the reason      |
 | Changed an existing record's article                                                | a `put` the commit refuses (`claim-edit`) |
 
-A record archived earlier in the year already holds `archive/<YYYY>/<path>`, so the next archive of that path goes to `archive/<YYYY>.2/<path>`, then `.3`, and so on. A move onto a held slot is blocked, and its violation names the free one.
+An archive takes its year's first free slot. When a record archived earlier in the year already holds `archive/<YYYY>/<path>`, move the file to `archive/<YYYY>.2/<path>` instead, then `.3`, and so on. A script that moves a file onto a held slot gets an `archive` the harvest is blocked on, and its violation names the free slot.
 
 A `move` keeps the record's bytes, so its content hash and its history come with it. Every live record that links to the old path has to drop that edge in the same script: cut the old `<link>` line, and add one with the new path to keep the edge. Otherwise the harvest is blocked and names the edge to fix.
 

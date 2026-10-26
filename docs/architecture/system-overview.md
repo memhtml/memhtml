@@ -20,7 +20,7 @@ Every CLI call writes one JSON envelope carrying `apiVersion`, a `type` discrimi
 
 Failures carry a stable `code` from the append-only `ERROR_CODES` list plus `suggestions`, so an agent branches on the code instead of the prose (`apps/cli/src/envelope.ts:98-110`). Exit codes are fixed at 0 for success, 2 for usage, and 1 for runtime (`apps/cli/src/envelope.ts:165-168`).
 
-`memhtml manifest` returns the whole command surface without building the app layer, so it answers on a machine with no root, no database, and no credentials (`apps/cli/src/run.ts:1728-1743`). At 0.16.0 it lists 57 commands, the 53 response types they answer, 25 error codes, and 25 environment variables (`buildManifest` at `apps/cli/src/commands.ts:1995-2023`). `--dense` drops nulls and indentation to save context tokens (`apps/cli/src/envelope.ts:218-235`).
+`memhtml manifest` returns the whole command surface without building the app layer, so it answers on a machine with no root, no database, and no credentials (`apps/cli/src/run.ts:1728-1743`). At 0.16.0 it lists 57 commands, the 53 response types they answer, 25 error codes, and 25 environment variables (`buildManifest` at `apps/cli/src/commands.ts:1996-2024`). `--dense` drops nulls and indentation to save context tokens (`apps/cli/src/envelope.ts:218-235`).
 
 `AGENTS.md` is generated from the same `COMMANDS` array that drives argument parsing, so the doc stays in step with the binary (`apps/cli/src/agents-doc.ts:11-16`).
 
