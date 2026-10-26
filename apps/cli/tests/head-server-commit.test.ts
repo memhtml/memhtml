@@ -85,7 +85,10 @@ import { writeStoreConfig } from "./strict-store.js"
  *   chain through a path two dropped moves aim at as written" (the note lands citing the second
  *   record moved there).
  * - `v2.ts` `commitOverHead` (2026-10-26): a dropped pair keyed by its own path -> "does not list a
- *   pair the round took at a dropped move's destination that comes back where the holder stays".
+ *   pair the round took at a dropped move's destination that comes back where the holder stays";
+ *   the key without its rel, without its href, or with kind and path alone -> "lists a dropped
+ *   edit on a holder whose new repoint shares its kind and path" (one of the note's edits is not
+ *   listed).
  */
 
 const run_ = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect)
@@ -1472,6 +1475,48 @@ describe("a --drop-refused round that drops an archive or a move", () => {
       const doctor = dataOf((await cli(repo.root, ["doctor"])).body)
       expect(doctor.dangling).toEqual([
         expect.objectContaining({ srcPath: p, rel: "relates_to", dstPath: further })
+      ])
+    }, 120_000)
+
+    // Mutation: key a dropped op in the drop loop by kind and path alone, or leave out its rel or
+    // its href, and `dropped` loses one of the note's own edits to the pair the completion adds.
+    it("lists a dropped edit on a holder whose new repoint shares its kind and path", async () => {
+      const repo = await corpus()
+      const p = "resources/acme-widget/p.html"
+      const placed = "resources/acme-gadget/p.html"
+      // A note citing the harbor and the glacier, cited by two others, so its move needs four ops.
+      await commitFiles(
+        repo,
+        [
+          {
+            path: p,
+            html: addLink(
+              note("Note p", "Note p cites the harbor.", "relates_to", `/${harbor}`),
+              "relates_to",
+              `/${glacier}`
+            )
+          },
+          cites(n1, "Note one", p),
+          cites(n2, "Note two", p)
+        ],
+        "a note and two citers"
+      )
+      // The note's own edits (an unlink with the rel of the pair the archive needs, a link to the
+      // slot with another rel), its move, and the archive: 198 ops. The move's four repoint ops
+      // would pass the cap, so the completion names it and appends nothing; once it is dropped,
+      // the archive's pair for the note fits, at the note's own path.
+      await writeLog(repo.root, 194, [
+        { kind: "unlink", path: p, rel: "relates_to", href: `/${glacier}` },
+        { kind: "link", path: p, rel: "part_of", href: `/${slot}` },
+        { kind: "move", path: p, to: placed, html: await htmlAt(repo, p) },
+        { kind: "archive", path: harbor, to: slot, html: await htmlAt(repo, harbor) }
+      ])
+      const dropped = await dropRefused(repo)
+      expect(kindsOf(dropped)).toEqual([`unlink ${p}`, `link ${p}`, `move ${p}`])
+      expect(await treeOf(repo)).toContain(slot)
+      expect(await linksAt(repo, p)).toEqual([
+        edge("relates-to", glacier),
+        edge("relates-to", slot)
       ])
     }, 120_000)
 

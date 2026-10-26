@@ -73,9 +73,12 @@ import {
  *   there -> "makes the ops kept at a dropped move's destination at its source"; `liveAt` stopped at
  *   the vacate's own source -> "follows a chain the round dropped whole back to the path the
  *   record still has"; `tangled` answering false -> "names no record through a path two dropped
- *   ops aim at or two leave, and leaves the edges as written"; `removed` or `retargeted`
- *   reporting the op's current path rather than the log's -> "reports a kept op it moved and then
- *   took or aimed back at the path the log held it at". The rest of it is pinned through `session
+ *   ops aim at or two leave, and leaves the edges as written"; the `seen` guard dropped -> "ends a
+ *   walk around two dropped moves into each other off the view" (the run never ends, and was
+ *   stopped after ten minutes); the `record.archived` check dropped -> "aims nothing at an archived
+ *   record a dropped move named as its source"; `removed` or `retargeted` reporting the op's
+ *   current path rather than the log's -> "reports a kept op it moved and then took or aimed back
+ *   at the path the log held it at". The rest of it is pinned through `session
  *   commit --drop-refused` in `apps/cli/tests/head-server-commit.test.ts`.
  */
 
@@ -930,6 +933,39 @@ describe("afterDroppedVacates settles the ops a drop round keeps", () => {
     expect(afterDroppedVacates(head, [citesFurther, labelFurther], leftTwice)).toEqual({
       ...none,
       keep: [citesFurther, labelFurther]
+    })
+  })
+
+  it("ends a walk around two dropped moves into each other off the view, and leaves the edges as written", async () => {
+    const head = await headOf()
+    const one = "resources/acme-gadget/one.html"
+    const two = "resources/acme-gadget/two.html"
+    const kept: Array<OverlayOp> = [
+      link(OTHER, "relates_to", `/${two}`),
+      { kind: "label", path: two, entity: "system:gadget" }
+    ]
+    expect(
+      afterDroppedVacates(head, kept, [move(one, two, OTHER_HTML), move(two, one, OTHER_HTML)])
+    ).toEqual({ keep: kept, removed: [], retargeted: [], returned: [], homes: new Map() })
+  })
+
+  it("aims nothing at an archived record a dropped move named as its source", async () => {
+    const earlier = archivePathFor(RETIRED, 2030)
+    const head = mapHead(SHA, [
+      await recordFrom(
+        earlier,
+        memory("Widget batch size, earlier", "The acme widget shipped in sixes.")
+      ),
+      await recordFrom(OTHER, OTHER_HTML)
+    ])
+    const placed = "resources/acme-gadget/b.html"
+    const kept = [link(OTHER, "relates_to", `/${placed}`)]
+    expect(afterDroppedVacates(head, kept, [move(earlier, placed, RETIRED_HTML)])).toEqual({
+      keep: kept,
+      removed: [],
+      retargeted: [],
+      returned: [],
+      homes: new Map()
     })
   })
 })
