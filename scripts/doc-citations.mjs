@@ -75,7 +75,7 @@ const repositoryFiles = () => {
 const MARKDOWN = /\.mdx?$/
 const SITE = "apps/docs/src/content/docs/"
 
-/** A dot-directory (`docs/codebase/.excavate/`) holds a tool's working files, not pages. */
+/** A dot-directory under `docs/` holds a generator's working files, not pages. */
 const isPage = (file) =>
   MARKDOWN.test(file) && !file.split("/").some((part) => part.startsWith("."))
 
