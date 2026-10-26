@@ -571,7 +571,7 @@ An explicit open counts as salience. `readMemory` reaches the state plane throug
 - `archived` is true when the head's status is `archived` (`apps/mcp/src/handlers.ts:551`).
 - `warnings` carries the parser's warnings.
 
-**Failure:** `ERR_PATH_NOT_FOUND` when no file is at `path`, `ERR_INVALID_MEMORY` when the file doesn't parse as a memory, and `ERR_STORAGE` on another read error, from `readRaw`, `parseMemory`, and `readFileOrNull` (`packages/store/src/store.ts:1037-1043`, `packages/store/src/layout.ts:161-176`). Nothing is written. The access bump and the session link swallow their own failures (`apps/cli/src/operations.ts:1017-1035`).
+**Failure:** `ERR_PATH_NOT_FOUND` when no file is at `path`, `ERR_INVALID_MEMORY` when the file doesn't parse as a memory, and `ERR_STORAGE` on another read error, from `readRaw`, `parseMemory`, and `readFileOrNull` (`packages/store/src/store.ts:1037-1043`, `packages/store/src/layout.ts:194-209`). Nothing is written. The access bump and the session link swallow their own failures (`apps/cli/src/operations.ts:1017-1035`).
 
 Source: `MemoryRead` at `apps/mcp/src/tools.ts:517-543`, its handler at `apps/mcp/src/handlers.ts:539-555`, and `readMemory` at `apps/cli/src/operations.ts:968-975`.
 

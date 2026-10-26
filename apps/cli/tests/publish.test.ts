@@ -230,6 +230,22 @@ describe("memhtml publish removes a listing whose directory holds no record", ()
     expect(await headPaths(cli)).toContain("resources/old/index.html")
   })
 
+  it("sets merge.directoryRenames on a store whose init did not", async () => {
+    /**
+     * Config is per clone and never travels, so a clone initialized before `memhtml init` set
+     * `merge.directoryRenames=false` lacks it until something sets it there. Publish does, because
+     * a removal can empty a directory, which is what lets a merge read archive moves as a rename.
+     */
+    const cli = await store()
+    await git(cli, "config", "--local", "--unset-all", "merge.directoryRenames").catch(() => "")
+    await write(cli, "resources/acme-widget/a.html", "The acme widget fact")
+
+    await publish(cli)
+
+    const value = await git(cli, "config", "--local", "--get", "merge.directoryRenames")
+    expect(value.trim()).toBe("false")
+  })
+
   it("commits nothing on a second run once the stale listings are gone", async () => {
     const cli = await store()
     await write(cli, "resources/old/a-fact.html", "The old widget fact")

@@ -28,12 +28,14 @@ export {
 export type { InitResult } from "./layout.js"
 export {
   attemptIo,
+  ensureConfig,
   GITATTRIBUTES,
   GITIGNORE,
   HEAD_SOCKET_PATH,
   INDEX_DB_PATH,
   initRepo,
   MEMHTML_DIR,
+  MERGE_DIRECTORY_RENAMES,
   MERGE_OURS_DRIVER,
   README,
   readFileOrNull,

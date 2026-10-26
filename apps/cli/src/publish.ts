@@ -4,7 +4,9 @@ import { DatabaseService, IndexStale, isIndexablePath, TREE_PREFIXES } from "@me
 import {
   attemptIo,
   commitSubject,
+  ensureConfig,
   type GitShape,
+  MERGE_DIRECTORY_RENAMES,
   parseNulPathList,
   readFileOrNull,
   withCheckoutLock
@@ -136,6 +138,12 @@ const subjectFor = (artifacts: number, removed: number): string => {
  * artifact is written and staged. Every store write commits the whole shared index, so a removal
  * staged by a publish whose write or `git add` then failed would ride along in the next, unrelated
  * commit; staged last, a failure before the commit leaves no deletion behind.
+ *
+ * A removal can empty a directory, and in a clone without `merge.directoryRenames=false` the next
+ * merge would read the archive moves out of it as a directory rename and carry another clone's
+ * new record there into `archive/` (`MERGE_DIRECTORY_RENAMES`). `memhtml init` sets it, and
+ * publish sets it too when the clone lacks it, so a clone initialized before init did gets it on
+ * its next publish.
  */
 export const publish = () =>
   Effect.gen(function* () {
@@ -151,6 +159,7 @@ export const publish = () =>
     const { commit, removed } = yield* withCheckoutLock(
       git.root,
       Effect.gen(function* () {
+        yield* ensureConfig(git, MERGE_DIRECTORY_RENAMES)
         const removed = staleListings(yield* trackedPaths(git), artifacts)
         for (const artifact of artifacts) {
           if (yield* writeIfChanged(git.root, artifact)) written.push(artifact.path)

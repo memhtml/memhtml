@@ -54,7 +54,7 @@ memhtml init
 memhtml index rebuild --embed
 ```
 
-`memhtml init` is convergent: each step asks the repo what is already true and supplies only what is missing, so it reaches the same end state from an empty directory, from a fully scaffolded repo, and from one left half-initialized by an interrupted run (`packages/store/src/layout.ts:183`).
+`memhtml init` is convergent: each step asks the repo what is already true and supplies only what is missing, so it reaches the same end state from an empty directory, from a fully scaffolded repo, and from one left half-initialized by an interrupted run (`packages/store/src/layout.ts:246`).
 
 **A git identity is a precondition, and its absence surfaces as `ERR_GIT` exit 128.** `memhtml init` commits the scaffold, and `git commit` refuses without one — so on a fresh container, a CI runner, or any sandbox with no `~/.gitconfig`, the very first command fails with `git commit failed (exit 128)` while git's own "Please tell me who you are" goes to stderr. Nothing is lost: `init` is convergent, so setting an identity and re-running carries the staged scaffold to a commit. Either configure it:
 
@@ -70,7 +70,7 @@ export GIT_AUTHOR_NAME="memhtml" GIT_AUTHOR_EMAIL="memhtml@localhost"
 export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
 ```
 
-**`memhtml init` is required on a fresh clone.** `.gitattributes` marks `index.html` and `sitemap.xml` `merge=ours`, and that attribute is INERT without the `merge.ours.driver` config (`packages/store/src/layout.ts:76`). Git config is per-clone and is not cloned, so a clone that skips `memhtml init` gets conflict markers written into a generated file on the first merge touching one. Verify with `git -C "$MEMHTML_ROOT" config --get merge.ours.driver`; it must print `true`.
+**`memhtml init` is required on a fresh clone.** `.gitattributes` marks `index.html` and `sitemap.xml` `merge=ours`, and that attribute is INERT without the `merge.ours.driver` config (`packages/store/src/layout.ts:76`). Git config is per-clone and is not cloned, so a clone that skips `memhtml init` gets conflict markers written into a generated file on the first merge touching one. Verify with `git -C "$MEMHTML_ROOT" config --get merge.ours.driver`; it must print `true`. `memhtml init` also sets `merge.directoryRenames=false`, so a merge never reads an archive move that emptied a directory as that directory's rename and moves another clone's new record there into `archive/`. `git -C "$MEMHTML_ROOT" config --get merge.directoryRenames` must print `false`; on a clone initialized before init set it, run `memhtml init` again, or let the next `memhtml publish` set it.
 
 `.memhtml/index.db` and `.memhtml/state.db` are both gitignored (`packages/store/src/layout.ts:55`). A clone carries the TREE plus `.memhtml/state/access.jsonl`, which is why `memhtml state import` is a step and not an optimization: without it the salience retrieval arm has no signal and ranking is silently poorer rather than broken.
 
@@ -288,7 +288,7 @@ memhtml publish         # regenerate index.html listings and sitemap.xml, and co
 
 Thresholds are `INBOX_WARN_DEPTH` 20 and `INBOX_TASK_WARN_DEPTH` 10 (`apps/cli/src/doctor.ts:69`, `apps/cli/src/doctor.ts:78`). `--fix` splices the changed bytes in place (`apps/cli/src/repair.ts`) rather than writing through the serializer, because a repair routed through the serializer would move the content hash of every file it touched.
 
-**Read `repaired.failedWrites` before believing a `--fix` run.** The report is `repaired: { rewritten, dropped, failedWrites, prunedAccessRows, commitSha }` (`apps/cli/src/doctor.ts:156`), and a repair whose write failed lands in `failedWrites` naming the source path: it is NOT counted under `rewritten` and it is never staged, because staging the unchanged file would commit the pre-repair bytes under a message claiming a repair. So a path in `failedWrites` is still a live finding and the next `memhtml doctor` reports it again — usually a permissions or disk problem on that one file, which is worth fixing before re-running. `memhtml publish` is deterministic to the byte, so two runs over an unchanged corpus write nothing and commit nothing (`apps/cli/src/publish.ts:10`); it is also the resolution for a `merge=ours` conflict in a generated artifact — regenerate rather than hand-edit.
+**Read `repaired.failedWrites` before believing a `--fix` run.** The report is `repaired: { rewritten, dropped, failedWrites, prunedAccessRows, commitSha }` (`apps/cli/src/doctor.ts:156`), and a repair whose write failed lands in `failedWrites` naming the source path: it is NOT counted under `rewritten` and it is never staged, because staging the unchanged file would commit the pre-repair bytes under a message claiming a repair. So a path in `failedWrites` is still a live finding and the next `memhtml doctor` reports it again — usually a permissions or disk problem on that one file, which is worth fixing before re-running. `memhtml publish` is deterministic to the byte, so two runs over an unchanged corpus write nothing and commit nothing (`apps/cli/src/publish.ts:36-38`); it is also the resolution for a `merge=ours` conflict in a generated artifact — regenerate rather than hand-edit.
 
 ---
 
