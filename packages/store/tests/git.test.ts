@@ -6,7 +6,7 @@ import { join } from "node:path"
 import { Effect, Fiber, Result } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
-import { GitFailure, makeGit } from "../src/git.js"
+import { GitFailure, literalPathspecs, makeGit } from "../src/git.js"
 import { parseNulPathList, SESSION_TRAILER } from "../src/plumbing.js"
 import { configureIdentity, type FixtureRepo, makeFixtureRepo } from "../src/testing.js"
 
@@ -703,6 +703,37 @@ describe("add stages the paths it is given and no others", () => {
       "D",
       "probe/gone.html"
     ])
+  })
+
+  it("refuses an empty path before git runs, rather than staging the whole tree", async () => {
+    /**
+     * Git refuses a bare `""` as a pathspec, but `:(literal)` with nothing after it matches every
+     * path, so an empty path would stage every untracked file and every deletion for the next
+     * commit, which takes the whole index.
+     */
+    const repo = await fixture()
+    for (const path of ["probe/a.html", "probe/b.html"]) await put(repo.root, path, path)
+
+    const failure = await runErr(repo.git.add(["probe/a.html", ""]))
+
+    expect(failure).toBeInstanceOf(GitFailure)
+    expect(failure.command).toBe("add")
+    expect(failure.exitCode).toBeNull()
+    const staged = await run(repo.git.run(["diff", "--cached", "--name-only", "-z"]))
+    expect(parseNulPathList(staged)).toEqual([])
+  })
+})
+
+describe("literalPathspecs", () => {
+  it("spells each path as a literal pathspec and refuses an empty one", async () => {
+    expect(await run(literalPathspecs("rm", ["a[b]/index.html", "*.html"]))).toEqual([
+      ":(literal)a[b]/index.html",
+      ":(literal)*.html"
+    ])
+    const failure = await runErr(literalPathspecs("rm", ["a.html", ""]))
+    expect(failure).toBeInstanceOf(GitFailure)
+    expect(failure.command).toBe("rm")
+    expect(failure.exitCode).toBeNull()
   })
 })
 

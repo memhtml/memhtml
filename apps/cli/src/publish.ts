@@ -6,6 +6,7 @@ import {
   commitSubject,
   ensureConfig,
   type GitShape,
+  literalPathspecs,
   MERGE_DIRECTORY_RENAMES,
   parseNulPathList,
   readFileOrNull,
@@ -104,19 +105,21 @@ const trackedPaths = (git: GitShape) =>
   git.run(["ls-files", "-z", "--", ...TREE_PREFIXES]).pipe(Effect.map(parseNulPathList))
 
 /**
- * `git rm` the stale listings, each spelled as a `:(literal)` pathspec. `git rm` reads a bare
- * argument as a pattern in which `*`, `?` and `[` match, so a stale `resources/a[b]/index.html`
- * would also match `resources/ab/index.html`, a live listing this publish has just written and
- * staged, and the commit would delete it. `-f` because the filename is the generator's: without it
- * `git rm` refuses a file whose working copy was edited, and a listing edited by hand is removed
- * exactly as {@link writeIfChanged} would overwrite it, rather than failing the whole publish.
+ * `git rm` the stale listings, each spelled as a `:(literal)` pathspec by {@link literalPathspecs},
+ * which also refuses an empty path. `git rm` reads a bare argument as a pattern in which `*`, `?`
+ * and `[` match, so a stale `resources/a[b]/index.html` would also match `resources/ab/index.html`,
+ * a live listing this publish has just written and staged, and the commit would delete it. `-f`
+ * because the filename is the generator's: without it `git rm` refuses a file whose working copy
+ * was edited, and a listing edited by hand is removed exactly as {@link writeIfChanged} would
+ * overwrite it, rather than failing the whole publish.
  */
 const removeListings = (git: GitShape, paths: ReadonlyArray<string>) =>
   paths.length === 0
     ? Effect.void
-    : git
-        .run(["rm", "-q", "-f", "--", ...paths.map((path) => `:(literal)${path}`)])
-        .pipe(Effect.asVoid)
+    : literalPathspecs("rm", paths).pipe(
+        Effect.flatMap((pathspecs) => git.run(["rm", "-q", "-f", "--", ...pathspecs])),
+        Effect.asVoid
+      )
 
 /** The commit subject, naming the removals only when there are some. */
 const subjectFor = (artifacts: number, removed: number): string => {

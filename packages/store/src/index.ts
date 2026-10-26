@@ -20,6 +20,7 @@ export {
   GitFailure,
   type GitShape,
   layerGit,
+  literalPathspecs,
   type MergeOutcome,
   makeGit,
   type Trailers,
