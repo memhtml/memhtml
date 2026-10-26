@@ -78,9 +78,9 @@ The five write tools are `memory_write`, `memory_write_batch`, `memory_correct`,
 
 A blind retry after a phase-3 failure can store the memory twice. Dedupe reads the index through `activePathForHash`, and the index hasn't caught up with the commit (`packages/index/src/traces-persist.ts:196-203`). `memory_status` shows the gap as `index_fresh: false`.
 
-The commit is a plain `git commit -m`, so it also commits any path that was already staged in the root (`packages/store/src/git.ts:403-422`).
+The commit is a plain `git commit -m`, so it also commits any path that was already staged in the root (`packages/store/src/git.ts:470-489`).
 
-Writes in one process take turns behind one permit, `oneWriterAtATime`, and reads don't wait for it. Inside the permit, each write holds the checkout lock, the directory `.memhtml/checkout.lock`, for the whole operation (`packages/store/src/store.ts:1397-1424`). `git commit` takes the same lock as a backstop (`packages/store/src/git.ts:403-406`). The lock is shared across processes, so a CLI command beside the server and a session commit in any process take turns with the server's writes. A write that waits 15 s for the lock fails with `ERR_STORAGE` (`checkout.locked`) before anything is written (`packages/store/src/checkout-lock.ts:31-44`). `docs/design.md` §17 gives the lock's timings.
+Writes in one process take turns behind one permit, `oneWriterAtATime`, and reads don't wait for it. Inside the permit, each write holds the checkout lock, the directory `.memhtml/checkout.lock`, for the whole operation (`packages/store/src/store.ts:1397-1424`). `git commit` takes the same lock as a backstop (`packages/store/src/git.ts:470-473`). The lock is shared across processes, so a CLI command beside the server and a session commit in any process take turns with the server's writes. A write that waits 15 s for the lock fails with `ERR_STORAGE` (`checkout.locked`) before anything is written (`packages/store/src/checkout-lock.ts:31-44`). `docs/design.md` §17 gives the lock's timings.
 
 ### The store policy and the record-creating tools
 
@@ -130,7 +130,7 @@ The answer through the head has the index answer's fields and types, so the hand
 - `vector_coverage` is the share of the served version's active records whose content hash has a vector in the head server's cache, 0 to 1 (`apps/cli/src/head-vectors.ts:125-135`). It's `0` when the server holds no cache or has no embedder bound (`apps/cli/src/head-retrieval.ts:157-158`). The index path reports the share of indexed chunks that carry a vector.
 - `snippet` is always the article's opening chunk, cut to the snippet size (`apps/cli/src/head-scope.ts:77`). The index path takes the chunk that best matches the query when the vector arm fired.
 
-`memory_recall` on the head asks for 30 candidates, the index path's pool size, in fused order. It folds them with the index's own `foldDisclosure`, arcs under their 9,000-character envelope and the rest under `budget_chars` (`apps/cli/src/head-retrieval.ts:167-214`). Each quote is the record's disclosure text, which the head derives the way the index does (`apps/cli/src/head-protocol.ts:545-563`). `degraded` and `vector_coverage` mean what they mean on a head search.
+`memory_recall` on the head asks for 30 candidates, the index path's pool size, in fused order. It folds them with the index's own `foldDisclosure`, arcs under their 9,000-character envelope and the rest under `budget_chars` (`apps/cli/src/head-retrieval.ts:167-214`). Each quote is the record's disclosure text, which the head derives the way the index does (`apps/cli/src/head-protocol.ts:551-569`). `degraded` and `vector_coverage` mean what they mean on a head search.
 
 Neither path bumps salience.
 
@@ -571,7 +571,7 @@ An explicit open counts as salience. `readMemory` reaches the state plane throug
 - `archived` is true when the head's status is `archived` (`apps/mcp/src/handlers.ts:582`).
 - `warnings` carries the parser's warnings.
 
-**Failure:** `ERR_PATH_NOT_FOUND` when no file is at `path`, `ERR_INVALID_MEMORY` when the file doesn't parse as a memory, and `ERR_STORAGE` on another read error, from `readRaw`, `parseMemory`, and `readFileOrNull` (`packages/store/src/store.ts:1037-1043`, `packages/store/src/layout.ts:161-176`). Nothing is written. The access bump and the session link swallow their own failures (`apps/cli/src/operations.ts:1017-1035`).
+**Failure:** `ERR_PATH_NOT_FOUND` when no file is at `path`, `ERR_INVALID_MEMORY` when the file doesn't parse as a memory, and `ERR_STORAGE` on another read error, from `readRaw`, `parseMemory`, and `readFileOrNull` (`packages/store/src/store.ts:1037-1043`, `packages/store/src/layout.ts:194-209`). Nothing is written. The access bump and the session link swallow their own failures (`apps/cli/src/operations.ts:1017-1035`).
 
 Source: `MemoryRead` at `apps/mcp/src/tools.ts:517-543`, its handler at `apps/mcp/src/handlers.ts:570-586`, and `readMemory` at `apps/cli/src/operations.ts:968-975`.
 

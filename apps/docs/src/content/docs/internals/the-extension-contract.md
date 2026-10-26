@@ -23,7 +23,7 @@ Repeatable, open vocabulary. One `<meta name="memhtml-tag">` per tag rather than
 
 Placement reads the FIRST tag as a directory name and nothing more: a `semantic`, `procedural`, or `precedent` memory with no workspace routes to `resources/<primary-tag>` (`packages/contracts/src/paths.ts:178-180`). It does not interpret which tag it is.
 
-**Two tag VALUES are reserved, and the first POSITION carries meaning for them.** `detected` and `machine-closed` belong to the sleep pipeline's task-detection phase, which 0.16 removed, and the tasks it wrote still carry them. A detected task was written with `tags: [detected, <detector>]`, and `memhtml task list --detected` still reads `tags[0] === "detected"` and `tags[1]` as the detector's name (`apps/cli/src/detected-tasks.ts`). Do not use either value on a task you author, and do not reorder the tags on a file that phase wrote.
+**Two tag VALUES are reserved, and the first POSITION carries meaning for them.** `detected` and `machine-closed` belong to the sleep pipeline's task-detection phase, which 0.16 removed, and the tasks it wrote still carry them. A detected task was written with `tags: [detected, <detector>]`. `memhtml task list --detected` finds one by its `det-` path alone, and the curator's briefing reads `tags[0] === "detected"` and `tags[1] === "entity-resolution"` to tell an entity question, whose entities are the spellings it asks about, from every other detected task (`isEntityQuestion` in `packages/curator/src/inbox.ts`). Do not use either value on a task you author, and do not reorder the tags on a file that phase wrote.
 
 ### The entity type vocabulary: `type:name`
 

@@ -3,7 +3,8 @@ import { createServer, type IncomingMessage, request, type Server } from "node:h
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 
-import { renderTemplate } from "@memhtml/html"
+import { archivePathFor } from "@memhtml/contracts/paths"
+import { addLink, renderTemplate } from "@memhtml/html"
 import { SESSIONS_DIR, sessionStateFile } from "@memhtml/session"
 import { snapshotPathFor } from "@memhtml/snapshot"
 import { type FixtureRepo, makeFixtureRepo } from "@memhtml/store/testing"
@@ -61,6 +62,39 @@ import { writeStoreConfig } from "./strict-store.js"
  *   early round dropped" (`dropped` is empty).
  * - `v2.ts` `commitOverHead`: commit a log with no ops instead of answering `refused` -> "a commit
  *   of a log with no ops ... touches nothing" (main gains an empty `memhtml(session)` commit).
+ * - `v2.ts` `commitOverHead` (2026-10-26): the log committed without the repoints it lacks appended
+ *   -> "completes the new edge when the log is committed after a rebase here" and "completes a log
+ *   an older writer left with the archive alone" (both refused, naming the note that still cites
+ *   the vacated path) and "completes it in the server's rebase round under --drop-refused" (the
+ *   archive and the first note's repoint are dropped and the successor lands alone).
+ * - `v2.ts` `commitOverHead` (2026-10-26): the completion's `overflow` ignored -> "refuses by name
+ *   an archive whose new repoints would pass the cap" (the commit goes on to a dangling-edge
+ *   refusal); the drop rounds without completing the kept ops again -> "puts back a repoint a drop
+ *   on its holder took" (the archive is dropped next and the successor lands alone).
+ * - `moves.ts` `afterDroppedVacates` (2026-10-26): `keep` answered unchanged -> "takes the
+ *   archive's own repoint pairs with it" (the label and the move go with the pairs), "keeps a move
+ *   whose holder cited a move the round dropped" (the second move goes too), "aims a kept put's
+ *   edge to a dropped move's destination back at the record" and "refuses by name an archive whose
+ *   new repoints would pass the cap" (the edge names a path nothing wrote, and doctor reports the
+ *   successor's); the pair match skipped -> the first two and the cap case (the pairs land aimed
+ *   back at the record, and `dropped` lists the vacate alone); the put rewrite skipped -> the last
+ *   two; the ops at a dropped move's destination left there -> "makes the ops kept at a dropped
+ *   move's destination at its source" (the archive overflows the cap and is dropped too). Since
+ *   2026-10-26, also: the pairs taken only when the destination is empty and the record live ->
+ *   the four "takes ... pairs" cases under "when its destination is held, its record is not live,
+ *   or the round drops a chain" (a note lands citing the record at the held path, or loses its
+ *   label); the chain stopped at the vacate's own source -> the two "aims ..." cases there (the
+ *   edge names a path nothing wrote); `tangled` answering false -> "leaves an edge to the end of a
+ *   chain through a path two dropped moves aim at as written" (the note lands citing the second
+ *   record moved there); a repeated source and destination counted again -> "aims a successor and
+ *   a label back at a record the round dropped moved twice", and a path two dropped ops leave
+ *   counted as naming no record whatever aims at it -> "... moved and archived" (the successor
+ *   lands naming a path nothing wrote, and the label is dropped).
+ * - `v2.ts` `commitOverHead` (2026-10-26): a dropped pair keyed by its own path -> "does not list a
+ *   pair the round took at a dropped move's destination that comes back where the holder stays";
+ *   the key without its rel, without its href, or with kind and path alone -> "lists a dropped
+ *   edit on a holder whose new repoint shares its kind and path" (one of the note's edits is not
+ *   listed).
  */
 
 const run_ = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect)
@@ -685,6 +719,920 @@ describe("the head server's rebase rounds under --drop-refused", () => {
       dropped: [{ kind: "put", path: twin }]
     })
   }, 60_000)
+})
+
+/** A note with one edge, as a record of the corpus or a put of a log. */
+const note = (
+  title: string,
+  claim: string,
+  rel: "relates_to" | "supersedes",
+  href: string,
+  entities: ReadonlyArray<string> = ["project:acme-widget"]
+) =>
+  addLink(
+    renderTemplate({ title, claim, memoryType: "semantic", at: AT, entities: [...entities] }),
+    rel,
+    href
+  )
+
+const treeOf = async (repo: FixtureRepo): Promise<ReadonlyArray<string>> =>
+  (await run_(repo.git.run(["ls-tree", "-r", "--name-only", "main"])))
+    .split("\n")
+    .filter((path) => path.length > 0)
+
+describe("an archive whose ref gained an edge to the archived path before the commit", () => {
+  const retired = "areas/inbox/orchard.html"
+  const slot = archivePathFor(retired, 2031)
+  const successor = "resources/acme-widget/a.html"
+  const cited = "resources/acme-widget/c.html"
+  const later = "resources/acme-widget/d.html"
+  const citedHtml = (entities?: ReadonlyArray<string>) =>
+    note(
+      "Orchard note",
+      "Orchard ladders are stored by the gate.",
+      "relates_to",
+      `/${retired}`,
+      entities
+    )
+
+  /** The corpus, a note citing the orchard record, and the session `retire` started over both. */
+  const citedCorpus = async (): Promise<FixtureRepo> => {
+    const repo = await corpus()
+    await commitFiles(
+      repo,
+      [{ path: cited, html: citedHtml() }],
+      "a note citing the orchard record"
+    )
+    await start(repo.root, "retire")
+    return repo
+  }
+
+  /**
+   * The session's exec puts a successor that supersedes the orchard record at its archive slot and
+   * archives the record, so the harvest repoints the note that cites it.
+   */
+  const retireByExec = async (root: string): Promise<void> => {
+    const script = [
+      `mkdir -p /mnt/memhtml/${dirname(successor)} /mnt/memhtml/${dirname(slot)}`,
+      `cat > /mnt/memhtml/${successor} <<'HTML'`,
+      note(
+        "Orchard pruning, revised",
+        "Pruning in the orchard moved to the first dry week of spring.",
+        "supersedes",
+        `/${slot}`
+      ).trimEnd(),
+      "HTML",
+      `mv /mnt/memhtml/${retired} /mnt/memhtml/${slot}`
+    ].join("\n")
+    const harvest = await cli(root, [
+      "session",
+      "exec",
+      "--id",
+      "retire",
+      "--script",
+      script,
+      "--no-server"
+    ])
+    expect(dataOf(harvest.body).blocking, JSON.stringify(harvest.body)).toEqual([])
+    expect(dataOf(harvest.body).harvested).toEqual([
+      { kind: "put", path: successor },
+      { kind: "unlink", path: cited },
+      { kind: "link", path: cited },
+      { kind: "archive", path: retired, to: slot }
+    ])
+  }
+
+  /** Another writer lands a second note citing the record at its live path. */
+  const anotherCites = (repo: FixtureRepo) =>
+    commitFiles(
+      repo,
+      [
+        {
+          path: later,
+          html: note(
+            "Orchard gate note",
+            "The orchard gate is locked at dusk.",
+            "relates_to",
+            `/${retired}`
+          )
+        }
+      ],
+      "another writer's note citing the orchard record"
+    )
+
+  /** The exec's session, then another writer's note the log knows nothing of. */
+  const raced = async (): Promise<FixtureRepo> => {
+    const repo = await citedCorpus()
+    await retireByExec(repo.root)
+    await anotherCites(repo)
+    return repo
+  }
+
+  /** The landed tree: the record at its slot, the notes and the successor naming the slot. */
+  const landedWhole = async (
+    repo: FixtureRepo,
+    notes: ReadonlyArray<string> = [cited, later]
+  ): Promise<void> => {
+    const paths = await treeOf(repo)
+    expect(paths).toContain(slot)
+    expect(paths).not.toContain(retired)
+    for (const [path, rel] of [
+      ...notes.map((one) => [one, "relates-to"] as const),
+      [successor, "supersedes"] as const
+    ]) {
+      const html = await run_(repo.git.run(["show", `main:${path}`]))
+      expect(html, path).toContain(`<link rel="memhtml-${rel}" href="/${slot}">`)
+      expect(html, path).not.toContain(`href="/${retired}"`)
+    }
+  }
+
+  it("completes the new edge when the log is committed after a rebase here", async () => {
+    const repo = await raced()
+    const first = dataOf((await commitCli(repo.root, "retire", { local: true })).body)
+    expect(first.kind).toBe("rebase-needed")
+    expect((await rebaseCli(repo.root, "retire", { local: true })).exitCode).toBe(0)
+    const landed = await commitCli(repo.root, "retire", { local: true })
+    expect(dataOf(landed.body), JSON.stringify(landed.body)).toMatchObject({
+      kind: "committed",
+      dropped: []
+    })
+    await landedWhole(repo)
+  }, 60_000)
+
+  it("completes a log an older writer left with the archive alone", async () => {
+    const repo = await raced()
+    expect((await rebaseCli(repo.root, "retire", { local: true })).exitCode).toBe(0)
+    // The repoint pair taken out, as a log written before the harvest completed archives holds it.
+    const file = sessionStateFile(repo.root, "retire")
+    const state = JSON.parse(await readFile(file, "utf8")) as { ops: Array<{ kind: string }> }
+    state.ops = state.ops.filter((op) => op.kind === "put" || op.kind === "archive")
+    await writeFile(file, JSON.stringify(state), "utf8")
+    const landed = await commitCli(repo.root, "retire", { local: true })
+    expect(dataOf(landed.body), JSON.stringify(landed.body)).toMatchObject({
+      kind: "committed",
+      dropped: []
+    })
+    await landedWhole(repo)
+  }, 60_000)
+
+  it("refuses by name an archive whose new repoints would pass the cap, writes nothing, and lets --drop-refused land the rest", async () => {
+    const repo = await citedCorpus()
+    // 195 puts and the exec's four ops: 199, one short of the cap, until the ref gains a citer.
+    await put(
+      repo.root,
+      "retire",
+      Array.from({ length: 195 }, (_, at) => ({
+        title: `Filler ${String(at)}`,
+        type: "semantic",
+        body: `Filler record ${String(at)} weighs ${String(at + 3)} grams in this fixture.`
+      }))
+    )
+    await retireByExec(repo.root)
+    await anotherCites(repo)
+    expect((await rebaseCli(repo.root, "retire", { local: true })).exitCode).toBe(0)
+    const log = await readFile(sessionStateFile(repo.root, "retire"), "utf8")
+    expect((await logOf(repo.root, "retire")).ops).toHaveLength(199)
+    const refused = dataOf((await commitCli(repo.root, "retire", { local: true })).body)
+    expect(refused).toMatchObject({
+      kind: "refused",
+      violations: [
+        {
+          kind: "format",
+          path: retired,
+          reasons: [
+            `archived to ${slot}, and repointing the 1 edge live records carry to /${retired} that the log does not repoint would take it to 201 ops, over the cap of 200: archive it in a session of its own`
+          ]
+        }
+      ]
+    })
+    expect(await readFile(sessionStateFile(repo.root, "retire"), "utf8")).toBe(log)
+    // --drop-refused takes the archive out with the first note's repoint pair, in one round, and
+    // lands the rest. The record stays live, so both notes still cite it where it is, and the
+    // successor's supersedes edge to the slot nothing writes now names the live record instead.
+    const landed = dataOf(
+      (await commitCli(repo.root, "retire", { local: true, dropRefused: true })).body
+    )
+    expect(landed.kind, JSON.stringify(landed)).toBe("committed")
+    const dropped = landed.dropped as ReadonlyArray<{
+      kind: string
+      path: string
+      reasons: string[]
+    }>
+    expect(dropped.map((op) => [op.kind, op.path])).toEqual([
+      ["archive", retired],
+      ["unlink", cited],
+      ["link", cited]
+    ])
+    expect(dropped[0]?.reasons.at(-1)).toBe(
+      `the edges kept ops aimed at /${slot} now name /${retired}, where the record still is: ${successor} supersedes`
+    )
+    // The pair goes under the archive's own refusal.
+    expect(dropped[1]?.reasons).toEqual(dropped[0]?.reasons.slice(0, -1))
+    expect(dropped[2]?.reasons).toEqual(dropped[1]?.reasons)
+    expect(landed.paths).toHaveLength(196)
+    const paths = await treeOf(repo)
+    expect(paths).toContain(retired)
+    expect(paths).not.toContain(slot)
+    expect(paths).toContain(successor)
+    for (const [path, rel] of [
+      [cited, "relates-to"],
+      [later, "relates-to"],
+      [successor, "supersedes"]
+    ] as const) {
+      const html = await run_(repo.git.run(["show", `main:${path}`]))
+      expect(html, path).toContain(`<link rel="memhtml-${rel}" href="/${retired}">`)
+      expect(html, path).not.toContain(`href="/${slot}"`)
+    }
+    expect((await logOf(repo.root, "retire")).ops).toEqual([])
+    // So doctor, over the landed tree, finds no dangling edge for --fix or the curator's integrity
+    // rule to cut.
+    await run_(repo.git.run(["reset", "-q", "--hard", "main"]))
+    expect((await cli(repo.root, ["index", "update"])).exitCode).toBe(0)
+    const doctor = dataOf((await cli(repo.root, ["doctor"])).body)
+    expect(doctor.dangling).toEqual([])
+  }, 120_000)
+
+  it("puts back a repoint a drop on its holder took, and drops only the refused op", async () => {
+    const repo = await citedCorpus()
+    await retireByExec(repo.root)
+    await put(repo.root, "retire", [{ op: "label", path: cited, entity: "system:orchard" }])
+    // Another writer gives the note the same label, keeping its edge, so the session's label is
+    // refused, and the drop of every op on the note takes its repoint pair with the label.
+    await commitFiles(
+      repo,
+      [{ path: cited, html: citedHtml(["project:acme-widget", "system:orchard"]) }],
+      "another writer labels the note"
+    )
+    expect((await rebaseCli(repo.root, "retire", { local: true })).exitCode).toBe(0)
+    const landed = dataOf(
+      (await commitCli(repo.root, "retire", { local: true, dropRefused: true })).body
+    )
+    expect(landed.kind, JSON.stringify(landed)).toBe("committed")
+    expect((landed.dropped as ReadonlyArray<Body>).map((op) => [op.kind, op.path])).toEqual([
+      ["label", cited]
+    ])
+    await landedWhole(repo, [cited])
+  }, 60_000)
+
+  it("completes it in the server's rebase round under --drop-refused, and drops nothing", async () => {
+    const repo = await raced()
+    await serve(repo.root)
+    const landed = await commitCli(repo.root, "retire", { dropRefused: true })
+    expect(dataOf(landed.body), JSON.stringify(landed.body)).toMatchObject({
+      kind: "committed",
+      via: "server",
+      rebased: 1,
+      dropped: []
+    })
+    await landedWhole(repo)
+  }, 60_000)
+})
+
+describe("a --drop-refused round that drops an archive or a move", () => {
+  const harbor = "areas/inbox/harbor.html"
+  const glacier = "areas/inbox/glacier.html"
+  const slot = archivePathFor(harbor, 2031)
+  const n1 = "resources/acme-widget/n1.html"
+  const n3 = "resources/acme-widget/n3.html"
+  const n4 = "resources/acme-widget/n4.html"
+  const htmlAt = (repo: FixtureRepo, path: string) => run_(repo.git.run(["show", `main:${path}`]))
+
+  /** Ops a writer appends to the log as written, after `count` filler puts. */
+  const writeLog = async (
+    root: string,
+    count: number,
+    ops: ReadonlyArray<Record<string, unknown>>
+  ): Promise<void> => {
+    await start(root, "s")
+    await put(
+      root,
+      "s",
+      Array.from({ length: count }, (_, at) => ({
+        title: `Filler ${String(at)}`,
+        type: "semantic",
+        body: `Filler record ${String(at)} weighs ${String(at + 3)} grams in this fixture.`
+      }))
+    )
+    const file = sessionStateFile(root, "s")
+    const state = JSON.parse(await readFile(file, "utf8")) as { ops: Array<unknown> }
+    state.ops.push(...ops)
+    await writeFile(file, JSON.stringify(state), "utf8")
+  }
+
+  /** Another writer's note citing `href`, then the session rebased over it. */
+  const raceACiter = async (repo: FixtureRepo, href: string): Promise<void> => {
+    await commitFiles(
+      repo,
+      [
+        {
+          path: n4,
+          html: note("Note four", "Note four came from another writer.", "relates_to", href)
+        }
+      ],
+      "another writer's citer"
+    )
+    expect((await rebaseCli(repo.root, "s", { local: true })).exitCode).toBe(0)
+  }
+
+  type Dropped = ReadonlyArray<{ kind: string; path: string; reasons: ReadonlyArray<string> }>
+  const kindsOf = (dropped: Dropped) => dropped.map((op) => `${op.kind} ${op.path}`)
+
+  // Mutation: return `keep` unchanged from `afterDroppedVacates` and the next round refuses each
+  // holder's link to the slot, so the label and the move go with the pairs. Skip only the pair
+  // match and the pairs land, aimed back at the record, and `dropped` lists the archive alone.
+  it("takes the archive's own repoint pairs with it and keeps the holders' other ops", async () => {
+    const repo = await corpus()
+    await commitFiles(
+      repo,
+      [
+        {
+          path: n1,
+          html: note("Note one", "Note one cites the harbor.", "relates_to", `/${harbor}`)
+        },
+        {
+          path: n3,
+          html: note("Note three", "Note three cites the harbor.", "relates_to", `/${harbor}`)
+        }
+      ],
+      "two citers"
+    )
+    const moved = "resources/acme-gadget/n3.html"
+    // The pairs withRepoints put before the archive, then a label on one holder and a move of the
+    // other: 199 ops, until another writer's citer needs a pair of its own.
+    await writeLog(repo.root, 192, [
+      { kind: "unlink", path: n1, rel: "relates_to", href: `/${harbor}` },
+      { kind: "link", path: n1, rel: "relates_to", href: `/${slot}` },
+      { kind: "unlink", path: n3, rel: "relates_to", href: `/${harbor}` },
+      { kind: "link", path: n3, rel: "relates_to", href: `/${slot}` },
+      { kind: "label", path: n1, entity: "system:harbor" },
+      { kind: "move", path: n3, to: moved, html: await htmlAt(repo, n3) },
+      { kind: "archive", path: harbor, to: slot, html: await htmlAt(repo, harbor) }
+    ])
+    await raceACiter(repo, `/${harbor}`)
+    const landed = dataOf(
+      (await commitCli(repo.root, "s", { local: true, dropRefused: true })).body
+    )
+    expect(landed.kind, JSON.stringify(landed)).toBe("committed")
+    const dropped = landed.dropped as Dropped
+    expect(kindsOf(dropped)).toEqual([
+      `archive ${harbor}`,
+      `unlink ${n1}`,
+      `link ${n1}`,
+      `unlink ${n3}`,
+      `link ${n3}`
+    ])
+    for (const op of dropped) {
+      expect(op.reasons, `${op.kind} ${op.path}`).toEqual([
+        expect.stringContaining(`archived to ${slot}`)
+      ])
+    }
+    const paths = await treeOf(repo)
+    expect(paths).toContain(harbor)
+    expect(paths).not.toContain(slot)
+    expect(paths).toContain(moved)
+    expect(paths).not.toContain(n3)
+    const one = await htmlAt(repo, n1)
+    expect(one).toContain(`<meta name="memhtml-entity" content="system:harbor">`)
+    for (const html of [one, await htmlAt(repo, moved)]) {
+      expect(html).toContain(`<link rel="memhtml-relates-to" href="/${harbor}">`)
+    }
+    const trail = (await readFile(join(repo.root, SESSIONS_DIR, "s.dropped.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Dropped[number])
+    expect(kindsOf(trail)).toEqual(kindsOf(dropped))
+    expect(trail.map((op) => op.reasons)).toEqual(dropped.map((op) => op.reasons))
+  }, 120_000)
+
+  // Mutation: either of the two above, and the second move goes with its holder's link to the first
+  // move's destination, or `dropped` lists the first move alone.
+  it("keeps a move whose holder cited a move the round dropped", async () => {
+    const repo = await corpus()
+    const h1 = "resources/acme-widget/h1.html"
+    const h2 = "resources/acme-widget/h2.html"
+    const h1To = "resources/acme-gadget/h1.html"
+    const h2To = "resources/acme-gadget/h2.html"
+    await commitFiles(
+      repo,
+      [
+        {
+          path: h1,
+          html: note("Holder one", "Holder one cites holder two.", "relates_to", `/${h2}`)
+        },
+        {
+          path: h2,
+          html: note("Holder two", "Holder two cites holder one.", "relates_to", `/${h1}`)
+        }
+      ],
+      "two holders citing each other"
+    )
+    await writeLog(repo.root, 193, [
+      { kind: "unlink", path: h2, rel: "relates_to", href: `/${h1}` },
+      { kind: "link", path: h2, rel: "relates_to", href: `/${h1To}` },
+      { kind: "unlink", path: h1, rel: "relates_to", href: `/${h2}` },
+      { kind: "link", path: h1, rel: "relates_to", href: `/${h2To}` },
+      { kind: "move", path: h1, to: h1To, html: await htmlAt(repo, h1) },
+      { kind: "move", path: h2, to: h2To, html: await htmlAt(repo, h2) }
+    ])
+    await raceACiter(repo, `/${h1}`)
+    const landed = dataOf(
+      (await commitCli(repo.root, "s", { local: true, dropRefused: true })).body
+    )
+    expect(landed.kind, JSON.stringify(landed)).toBe("committed")
+    // The first holder's own pair to the second move comes back, as its repoint, and is not
+    // listed.
+    expect(kindsOf(landed.dropped as Dropped)).toEqual([`move ${h1}`, `unlink ${h2}`, `link ${h2}`])
+    const paths = await treeOf(repo)
+    expect(paths).toContain(h1)
+    expect(paths).not.toContain(h1To)
+    expect(paths).toContain(h2To)
+    expect(paths).not.toContain(h2)
+    expect(await htmlAt(repo, h1)).toContain(`<link rel="memhtml-relates-to" href="/${h2To}">`)
+    expect(await htmlAt(repo, h2To)).toContain(`<link rel="memhtml-relates-to" href="/${h1}">`)
+  }, 120_000)
+
+  // Mutation: skip the ops at a dropped move's destination in `afterDroppedVacates` and the
+  // completion wants the note's pair again at its own path, so the archive overflows the cap and is
+  // dropped too.
+  it("makes the ops kept at a dropped move's destination at its source, and lands the archive they repoint for", async () => {
+    const repo = await corpus()
+    await commitFiles(
+      repo,
+      [
+        {
+          path: n1,
+          html: note("Note one", "Note one cites the harbor.", "relates_to", `/${harbor}`)
+        }
+      ],
+      "a citer"
+    )
+    const moved = "resources/acme-gadget/n1.html"
+    // The log moves the note and archives the record it cites, and a commit already appended the
+    // note's repoint at the path the move takes it to: 200 ops, until another writer cites the note.
+    await writeLog(repo.root, 196, [
+      { kind: "move", path: n1, to: moved, html: await htmlAt(repo, n1) },
+      { kind: "archive", path: harbor, to: slot, html: await htmlAt(repo, harbor) },
+      { kind: "unlink", path: moved, rel: "relates_to", href: `/${harbor}` },
+      { kind: "link", path: moved, rel: "relates_to", href: `/${slot}` }
+    ])
+    await raceACiter(repo, `/${n1}`)
+    const landed = dataOf(
+      (await commitCli(repo.root, "s", { local: true, dropRefused: true })).body
+    )
+    expect(landed.kind, JSON.stringify(landed)).toBe("committed")
+    const dropped = landed.dropped as Dropped
+    expect(kindsOf(dropped)).toEqual([`move ${n1}`])
+    expect(dropped[0]?.reasons).toEqual([
+      expect.stringContaining(`${n1}: moved to ${moved}`),
+      `the ops kept at ${moved} are made at ${n1}, where the record still is: unlink relates_to, link relates_to`
+    ])
+    const paths = await treeOf(repo)
+    expect(paths).toContain(slot)
+    expect(paths).not.toContain(harbor)
+    expect(paths).toContain(n1)
+    expect(paths).not.toContain(moved)
+    const html = await htmlAt(repo, n1)
+    expect(html).toContain(`<link rel="memhtml-relates-to" href="/${slot}">`)
+    expect(html).not.toContain(`href="/${harbor}"`)
+    expect(await htmlAt(repo, n4)).toContain(`<link rel="memhtml-relates-to" href="/${n1}">`)
+  }, 120_000)
+
+  // Mutation: skip the put rewrite in `afterDroppedVacates` and the landed put cites the
+  // destination, a path nothing wrote.
+  it("aims a kept put's edge to a dropped move's destination back at the record", async () => {
+    const repo = await corpus()
+    await commitFiles(
+      repo,
+      [
+        {
+          path: n1,
+          html: note("Note one", "Note one cites the glacier.", "relates_to", `/${glacier}`)
+        }
+      ],
+      "a citer"
+    )
+    const dest = "resources/acme-gadget/glacier.html"
+    const cites = "resources/acme-widget/p.html"
+    // The move's pair for the citer is missing, and 199 ops leave no room for it.
+    await writeLog(repo.root, 197, [
+      {
+        kind: "put",
+        path: cites,
+        html: note(
+          "Glacier note",
+          "The glacier record moves to the gadget area.",
+          "relates_to",
+          `/${dest}`
+        )
+      },
+      { kind: "move", path: glacier, to: dest, html: await htmlAt(repo, glacier) }
+    ])
+    const refused = dataOf((await commitCli(repo.root, "s", { local: true })).body)
+    expect(refused).toMatchObject({
+      kind: "refused",
+      violations: [
+        {
+          kind: "format",
+          path: glacier,
+          reasons: [
+            `moved to ${dest}, and repointing the 1 edge live records carry to /${glacier} that the log does not repoint would take it to 201 ops, over the cap of 200: move it in a session of its own`
+          ]
+        }
+      ]
+    })
+    const landed = dataOf(
+      (await commitCli(repo.root, "s", { local: true, dropRefused: true })).body
+    )
+    expect(landed.kind, JSON.stringify(landed)).toBe("committed")
+    expect(landed.dropped).toEqual([
+      {
+        kind: "move",
+        path: glacier,
+        reasons: [
+          `${glacier}: ${(refused.violations as ReadonlyArray<{ reasons: ReadonlyArray<string> }>)[0]?.reasons[0]}`,
+          `the edges kept ops aimed at /${dest} now name /${glacier}, where the record still is: ${cites} relates_to`
+        ]
+      }
+    ])
+    const paths = await treeOf(repo)
+    expect(paths).toContain(glacier)
+    expect(paths).not.toContain(dest)
+    const html = await htmlAt(repo, cites)
+    expect(html).toContain(`<link rel="memhtml-relates-to" href="/${glacier}">`)
+    expect(html).not.toContain(`href="/${dest}"`)
+  }, 120_000)
+
+  describe("when its destination is held, its record is not live, or the round drops a chain", () => {
+    const orchard = "areas/inbox/orchard.html"
+    const n2 = "resources/acme-widget/n2.html"
+    const succ = "resources/acme-widget/succ.html"
+    const linksAt = async (repo: FixtureRepo, path: string) =>
+      (await htmlAt(repo, path)).match(/<link rel="memhtml-[^"]+" href="[^"]+">/g) ?? []
+    const edge = (rel: string, path: string) => `<link rel="memhtml-${rel}" href="/${path}">`
+    const cites = (path: string, title: string, href: string) => ({
+      path,
+      html: note(title, `${title} cites a fixture record.`, "relates_to", `/${href}`)
+    })
+    const dropRefused = async (repo: FixtureRepo) => {
+      const landed = dataOf(
+        (await commitCli(repo.root, "s", { local: true, dropRefused: true })).body
+      )
+      expect(landed.kind, JSON.stringify(landed)).toBe("committed")
+      return landed.dropped as Dropped
+    }
+
+    // Mutation: take the pairs only when the destination is empty and the record live, as the
+    // rewrites are, and this case and the next three go red: the notes land citing the older copy
+    // in the slot or the record at the held path, or lose their label to the next round.
+    it("takes a dropped archive's pairs when an older copy holds its slot, and leaves the edges to that copy", async () => {
+      const repo = await corpus()
+      const earlier = renderTemplate({
+        title: "Harbor, earlier",
+        claim: "Harbor pilots boarded ships at the north pier.",
+        memoryType: "semantic",
+        at: AT,
+        entities: ["system:fixture"]
+      })
+      await commitFiles(
+        repo,
+        [{ path: slot, html: earlier }, cites(n1, "Note one", harbor)],
+        "an earlier copy in the slot, and a citer"
+      )
+      await writeLog(repo.root, 196, [
+        {
+          kind: "put",
+          path: succ,
+          html: note(
+            "Harbor, revised",
+            "Harbor pilots now board at the inner buoy.",
+            "supersedes",
+            `/${slot}`
+          )
+        },
+        { kind: "unlink", path: n1, rel: "relates_to", href: `/${harbor}` },
+        { kind: "link", path: n1, rel: "relates_to", href: `/${slot}` },
+        { kind: "archive", path: harbor, to: slot, html: await htmlAt(repo, harbor) }
+      ])
+      await raceACiter(repo, `/${harbor}`)
+      const dropped = await dropRefused(repo)
+      expect(kindsOf(dropped)).toEqual([`archive ${harbor}`, `unlink ${n1}`, `link ${n1}`])
+      // The slot holds a record, so nothing is aimed back and the reasons gain nothing.
+      expect(dropped[0]?.reasons).toEqual([expect.stringContaining(`archived to ${slot}`)])
+      expect(await treeOf(repo)).toContain(harbor)
+      expect(await htmlAt(repo, slot)).toBe(earlier)
+      expect(await linksAt(repo, n1)).toEqual([edge("relates-to", harbor)])
+      expect(await linksAt(repo, succ)).toContain(edge("supersedes", slot))
+    }, 120_000)
+
+    it("takes a dropped move's pairs when its destination holds a record", async () => {
+      const repo = await corpus()
+      await commitFiles(repo, [cites(n1, "Note one", glacier)], "a citer")
+      await writeLog(repo.root, 3, [
+        { kind: "unlink", path: n1, rel: "relates_to", href: `/${glacier}` },
+        { kind: "link", path: n1, rel: "relates_to", href: `/${orchard}` },
+        { kind: "label", path: n1, entity: "system:ice" },
+        { kind: "move", path: glacier, to: orchard, html: await htmlAt(repo, glacier) }
+      ])
+      const orchardHtml = await htmlAt(repo, orchard)
+      const dropped = await dropRefused(repo)
+      expect(kindsOf(dropped)).toEqual([`move ${glacier}`, `unlink ${n1}`, `link ${n1}`])
+      expect(dropped[0]?.reasons).toEqual([
+        expect.stringContaining("move destination already holds a record")
+      ])
+      expect(await htmlAt(repo, orchard)).toBe(orchardHtml)
+      expect(await linksAt(repo, n1)).toEqual([edge("relates-to", glacier)])
+      expect(await htmlAt(repo, n1)).toContain(`<meta name="memhtml-entity" content="system:ice">`)
+    }, 120_000)
+
+    it("takes each move's pairs when a chain of moves ends on a held path", async () => {
+      const repo = await corpus()
+      const trees = "areas/inbox/orchard-trees.html"
+      await commitFiles(
+        repo,
+        [cites(n1, "Note one", glacier), cites(n2, "Note two", orchard)],
+        "two citers"
+      )
+      await writeLog(repo.root, 3, [
+        { kind: "unlink", path: n2, rel: "relates_to", href: `/${orchard}` },
+        { kind: "link", path: n2, rel: "relates_to", href: `/${trees}` },
+        { kind: "unlink", path: n1, rel: "relates_to", href: `/${glacier}` },
+        { kind: "link", path: n1, rel: "relates_to", href: `/${orchard}` },
+        { kind: "move", path: orchard, to: trees, html: await htmlAt(repo, orchard) },
+        { kind: "move", path: glacier, to: orchard, html: await htmlAt(repo, glacier) }
+      ])
+      const dropped = await dropRefused(repo)
+      expect(kindsOf(dropped).sort()).toEqual(
+        [
+          `move ${orchard}`,
+          `move ${glacier}`,
+          `unlink ${n2}`,
+          `link ${n2}`,
+          `unlink ${n1}`,
+          `link ${n1}`
+        ].sort()
+      )
+      const paths = await treeOf(repo)
+      expect(paths).toEqual(expect.arrayContaining([glacier, orchard]))
+      expect(paths).not.toContain(trees)
+      expect(await linksAt(repo, n1)).toEqual([edge("relates-to", glacier)])
+      expect(await linksAt(repo, n2)).toEqual([edge("relates-to", orchard)])
+    }, 120_000)
+
+    it("takes the pairs of a dropped archive of a record the log put, and keeps the holder's label", async () => {
+      const repo = await corpus()
+      const ghost = "areas/inbox/ghost.html"
+      const ghostSlot = archivePathFor(ghost, 2031)
+      // The note cites a path the version does not hold; the log writes a record there and
+      // archives it, 199 ops, until another writer cites the path too.
+      await commitFiles(repo, [cites(n1, "Note one", ghost)], "a citer of an empty path")
+      const ghostHtml = renderTemplate({
+        title: "Ghost",
+        claim: "Ghost records are written and retired in one log.",
+        memoryType: "semantic",
+        at: AT,
+        entities: ["system:fixture"]
+      })
+      await writeLog(repo.root, 194, [
+        { kind: "put", path: ghost, html: ghostHtml },
+        { kind: "unlink", path: n1, rel: "relates_to", href: `/${ghost}` },
+        { kind: "link", path: n1, rel: "relates_to", href: `/${ghostSlot}` },
+        { kind: "label", path: n1, entity: "system:ghost" },
+        { kind: "archive", path: ghost, to: ghostSlot, html: ghostHtml }
+      ])
+      await raceACiter(repo, `/${ghost}`)
+      const dropped = await dropRefused(repo)
+      expect(kindsOf(dropped)).toEqual([
+        `put ${ghost}`,
+        `archive ${ghost}`,
+        `unlink ${n1}`,
+        `link ${n1}`
+      ])
+      const paths = await treeOf(repo)
+      expect(paths).not.toContain(ghost)
+      expect(paths).not.toContain(ghostSlot)
+      expect(await linksAt(repo, n1)).toEqual([edge("relates-to", ghost)])
+      expect(await htmlAt(repo, n1)).toContain(
+        `<meta name="memhtml-entity" content="system:ghost">`
+      )
+    }, 120_000)
+
+    // Mutation: stop the chain at the vacate's own source in `afterDroppedVacates` and the kept
+    // edge to the chain's last path lands naming a path nothing wrote.
+    it("aims an edge to the end of a chain of two dropped moves at the record", async () => {
+      const repo = await corpus()
+      const placed = "resources/acme-gadget/glacier.html"
+      const further = "resources/acme-gadget/ice/glacier.html"
+      const p = "resources/acme-widget/p.html"
+      await commitFiles(repo, [cites(n1, "Note one", glacier)], "a citer")
+      await writeLog(repo.root, 3, [
+        { kind: "put", ...cites(p, "Note p", further) },
+        { kind: "unlink", path: n1, rel: "relates_to", href: `/${glacier}` },
+        { kind: "link", path: n1, rel: "relates_to", href: `/${placed}` },
+        { kind: "move", path: glacier, to: placed, html: await htmlAt(repo, glacier) },
+        { kind: "move", path: placed, to: further, html: await htmlAt(repo, glacier) }
+      ])
+      const dropped = await dropRefused(repo)
+      expect(kindsOf(dropped)).toEqual([
+        `move ${glacier}`,
+        `move ${placed}`,
+        `unlink ${n1}`,
+        `link ${n1}`
+      ])
+      expect(dropped[1]?.reasons.at(-1)).toBe(
+        `the edges kept ops aimed at /${further} now name /${glacier}, where the record still is: ${p} relates_to`
+      )
+      const paths = await treeOf(repo)
+      expect(paths).toContain(glacier)
+      expect(paths).not.toContain(placed)
+      expect(paths).not.toContain(further)
+      expect(await linksAt(repo, p)).toEqual([edge("relates-to", glacier)])
+      expect(await linksAt(repo, n1)).toEqual([edge("relates-to", glacier)])
+    }, 120_000)
+
+    it("aims a successor's edge to the slot of a dropped move and archive at the record", async () => {
+      const repo = await corpus()
+      const placed = "resources/acme-gadget/harbor.html"
+      const placedSlot = archivePathFor(placed, 2031)
+      await writeLog(repo.root, 3, [
+        {
+          kind: "put",
+          path: succ,
+          html: note(
+            "Harbor, revised",
+            "Harbor pilots now board at the inner buoy.",
+            "supersedes",
+            `/${placedSlot}`
+          )
+        },
+        { kind: "move", path: harbor, to: placed, html: await htmlAt(repo, harbor) },
+        { kind: "archive", path: placed, to: placedSlot, html: await htmlAt(repo, harbor) }
+      ])
+      const dropped = await dropRefused(repo)
+      expect(kindsOf(dropped)).toEqual([`move ${harbor}`, `archive ${placed}`])
+      expect(dropped[1]?.reasons.at(-1)).toBe(
+        `the edges kept ops aimed at /${placedSlot} now name /${harbor}, where the record still is: ${succ} supersedes`
+      )
+      const paths = await treeOf(repo)
+      expect(paths).toContain(harbor)
+      expect(paths).not.toContain(placed)
+      expect(paths).not.toContain(placedSlot)
+      const links = await linksAt(repo, succ)
+      expect(links).toContain(edge("supersedes", harbor))
+      expect(links).not.toContain(edge("supersedes", placedSlot))
+    }, 120_000)
+
+    // Mutation: let a path two dropped moves aim at count as one record's in `afterDroppedVacates`
+    // and the note lands citing the second record moved there, a wrong edge nothing reports.
+    it("leaves an edge to the end of a chain through a path two dropped moves aim at as written", async () => {
+      const repo = await corpus()
+      const shared = "areas/inbox/x.html"
+      const further = "areas/inbox/y.html"
+      const p = "resources/acme-widget/p.html"
+      await writeLog(repo.root, 3, [
+        { kind: "put", ...cites(p, "Note p", further) },
+        { kind: "move", path: glacier, to: shared, html: await htmlAt(repo, glacier) },
+        { kind: "move", path: orchard, to: shared, html: await htmlAt(repo, orchard) },
+        { kind: "move", path: shared, to: further, html: await htmlAt(repo, glacier) }
+      ])
+      const dropped = await dropRefused(repo)
+      expect(kindsOf(dropped)).toEqual([`move ${glacier}`, `move ${orchard}`, `move ${shared}`])
+      for (const op of dropped) {
+        expect(op.reasons.some((reason) => reason.startsWith("the edges kept ops"))).toBe(false)
+      }
+      expect(await linksAt(repo, p)).toEqual([edge("relates-to", further)])
+      // The edge names a path nothing wrote, so doctor reports it.
+      await run_(repo.git.run(["reset", "-q", "--hard", "main"]))
+      expect((await cli(repo.root, ["index", "update"])).exitCode).toBe(0)
+      const doctor = dataOf((await cli(repo.root, ["doctor"])).body)
+      expect(doctor.dangling).toEqual([
+        expect.objectContaining({ srcPath: p, rel: "relates_to", dstPath: further })
+      ])
+    }, 120_000)
+
+    // Mutation: count a path two dropped ops leave as naming no record whatever else aims at it,
+    // or count the same move written twice as two, and the successor lands naming a path nothing
+    // wrote while the label goes to the next round.
+    for (const variant of ["moved and archived", "moved twice"] as const) {
+      it(`aims a successor and a label back at a record the round dropped ${variant}`, async () => {
+        const repo = await corpus()
+        const placed = "resources/acme-gadget/harbor.html"
+        const target = variant === "moved and archived" ? slot : placed
+        const harborHtml = await htmlAt(repo, harbor)
+        const second =
+          variant === "moved and archived"
+            ? { kind: "archive", path: harbor, to: slot, html: harborHtml }
+            : { kind: "move", path: harbor, to: placed, html: harborHtml }
+        await writeLog(repo.root, 3, [
+          {
+            kind: "put",
+            path: succ,
+            html: note(
+              "Harbor, revised",
+              "Harbor pilots now board at the inner buoy.",
+              "supersedes",
+              `/${target}`
+            )
+          },
+          { kind: "move", path: harbor, to: placed, html: harborHtml },
+          { kind: "label", path: placed, entity: "system:ice" },
+          second
+        ])
+        const dropped = await dropRefused(repo)
+        expect(kindsOf(dropped)).toEqual([`move ${harbor}`, `${second.kind} ${harbor}`])
+        const paths = await treeOf(repo)
+        expect(paths).toContain(harbor)
+        expect(paths).not.toContain(placed)
+        expect(paths).not.toContain(slot)
+        const links = await linksAt(repo, succ)
+        expect(links).toContain(edge("supersedes", harbor))
+        expect(links).not.toContain(edge("supersedes", target))
+        expect(await htmlAt(repo, harbor)).toContain(
+          `<meta name="memhtml-entity" content="system:ice">`
+        )
+        await run_(repo.git.run(["reset", "-q", "--hard", "main"]))
+        expect((await cli(repo.root, ["index", "update"])).exitCode).toBe(0)
+        expect(dataOf((await cli(repo.root, ["doctor"])).body).dangling).toEqual([])
+      }, 120_000)
+    }
+
+    // Mutation: key a dropped op in the drop loop by kind and path alone, or leave out its rel or
+    // its href, and `dropped` loses one of the note's own edits to the pair the completion adds.
+    it("lists a dropped edit on a holder whose new repoint shares its kind and path", async () => {
+      const repo = await corpus()
+      const p = "resources/acme-widget/p.html"
+      const placed = "resources/acme-gadget/p.html"
+      // A note citing the harbor and the glacier, cited by two others, so its move needs four ops.
+      await commitFiles(
+        repo,
+        [
+          {
+            path: p,
+            html: addLink(
+              note("Note p", "Note p cites the harbor.", "relates_to", `/${harbor}`),
+              "relates_to",
+              `/${glacier}`
+            )
+          },
+          cites(n1, "Note one", p),
+          cites(n2, "Note two", p)
+        ],
+        "a note and two citers"
+      )
+      // The note's own edits (an unlink with the rel of the pair the archive needs, a link to the
+      // slot with another rel), its move, and the archive: 198 ops. The move's four repoint ops
+      // would pass the cap, so the completion names it and appends nothing; once it is dropped,
+      // the archive's pair for the note fits, at the note's own path.
+      await writeLog(repo.root, 194, [
+        { kind: "unlink", path: p, rel: "relates_to", href: `/${glacier}` },
+        { kind: "link", path: p, rel: "part_of", href: `/${slot}` },
+        { kind: "move", path: p, to: placed, html: await htmlAt(repo, p) },
+        { kind: "archive", path: harbor, to: slot, html: await htmlAt(repo, harbor) }
+      ])
+      const dropped = await dropRefused(repo)
+      expect(kindsOf(dropped)).toEqual([`unlink ${p}`, `link ${p}`, `move ${p}`])
+      expect(await treeOf(repo)).toContain(slot)
+      expect(await linksAt(repo, p)).toEqual([
+        edge("relates-to", glacier),
+        edge("relates-to", slot)
+      ])
+    }, 120_000)
+
+    // Mutation: key a dropped pair by its own path in the drop loop and `dropped` lists the pair
+    // the round took at the move's destination, though it lands at the holder's path.
+    it("does not list a pair the round took at a dropped move's destination that comes back where the holder stays", async () => {
+      const repo = await corpus()
+      await writeStoreConfig(repo.root, { commit: true })
+      // A project record, anchored by its path, that the log moves where nothing anchors it.
+      const project = "projects/acme/p.html"
+      const moved = "areas/inbox/p.html"
+      const projectHtml = addLink(
+        renderTemplate({
+          title: "Project note",
+          claim: "The project note cites the harbor.",
+          memoryType: "semantic",
+          at: AT,
+          entities: []
+        }),
+        "relates_to",
+        `/${harbor}`
+      )
+      await commitFiles(repo, [{ path: project, html: projectHtml }], "a project citer")
+      await writeLog(repo.root, 3, [
+        { kind: "move", path: project, to: moved, html: projectHtml },
+        { kind: "archive", path: harbor, to: slot, html: await htmlAt(repo, harbor) },
+        { kind: "unlink", path: moved, rel: "relates_to", href: `/${harbor}` },
+        { kind: "link", path: moved, rel: "relates_to", href: `/${slot}` }
+      ])
+      const dropped = await dropRefused(repo)
+      expect(kindsOf(dropped)).toEqual([`move ${project}`])
+      const paths = await treeOf(repo)
+      expect(paths).toContain(slot)
+      expect(paths).not.toContain(harbor)
+      expect(paths).toContain(project)
+      expect(paths).not.toContain(moved)
+      expect(await linksAt(repo, project)).toEqual([edge("relates-to", slot)])
+    }, 120_000)
+  })
 })
 
 describe("a commit of a log with no ops", () => {

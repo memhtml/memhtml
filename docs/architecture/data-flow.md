@@ -32,7 +32,7 @@ An agent runs `memhtml write --title … --claim … --type semantic`. The proce
 16. The format check follows. `renderChecked` renders the article and rejects it with `InvalidMemory` on any `checkMemory` violation, before the file is written, staged, or committed `packages/store/src/store.ts:727`, `packages/store/src/store.ts:676-683`.
 17. The duplicate check follows the format check. The store hashes the rendered bytes and asks the injected `dedupeLookup`, and an existing active path is returned with `deduped: true` and no commit `packages/store/src/store.ts:728-744`.
 18. The lookup is the index recorder's `activePathForHash`, one query for a live, non-archived, non-task row with that content hash `apps/cli/src/api-layer.ts:196`, `packages/index/src/traces-persist.ts:196-203`.
-19. The store picks a free path, then writes the file, stages it with `git add`, and makes one commit with provenance trailers, all under a journal that compensates a failure `packages/store/src/store.ts:746-773`. `Git.commit` takes the checkout lock too, and the lock is reentrant within one fiber, so the nested take runs at once `packages/store/src/git.ts:403-422`, `packages/contracts/src/checkout-lock.ts:88-97`.
+19. The store picks a free path, then writes the file, stages it with `git add`, and makes one commit with provenance trailers, all under a journal that compensates a failure `packages/store/src/store.ts:746-773`. `Git.commit` takes the checkout lock too, and the lock is reentrant within one fiber, so the nested take runs at once `packages/store/src/git.ts:470-489`, `packages/contracts/src/checkout-lock.ts:88-97`.
 20. Back in the operation, only a created file triggers `reindex`, because a dedupe changed nothing `apps/cli/src/operations.ts:350`.
 21. `reindex` calls `indexer.update({ embed: true })` over the whole commit rather than a list of paths, because a rename is only expressible as a diff and the watermark is what makes freshness answerable `apps/cli/src/operations.ts:248-271`.
 22. `update` falls through to a full reprojection when no watermark row exists, and refuses with `IndexStale` when a rebuild died before writing one `packages/index/src/indexer.ts:808-846`.
@@ -186,19 +186,19 @@ The session commands resolve the root themselves and never build `layerApp`, bec
 `session commit` lands the log as one commit.
 
 1. `sessionCommit` reads the policy before it asks the server, so a malformed `memhtml.config.json` fails with `ERR_STORE_CONFIG` on either path `apps/cli/src/v2.ts:1114-1116`.
-2. It posts `{ id, message, dropRefused }` to `/v1/commit` and waits for the answer up to `MEMHTML_COMMIT_DEADLINE_MS`, 60000 by default `apps/cli/src/v2.ts:1117-1126`, `apps/cli/src/head-protocol.ts:373-376`.
-3. The server runs one commit or rebase at a time and declines `busy` after a 20 s wait `apps/cli/src/head-server.ts:1232-1241`, `apps/cli/src/head-protocol.ts:384`. It reads the policy per request, declines a session on another ref or one whose log doesn't read, builds the version at the session's base, and runs `commitOverHead` `apps/cli/src/head-server.ts:1243-1290`.
+2. It posts `{ id, message, dropRefused }` to `/v1/commit` and waits for the answer up to `MEMHTML_COMMIT_DEADLINE_MS`, 60000 by default `apps/cli/src/v2.ts:1117-1126`, `apps/cli/src/head-protocol.ts:379-382`.
+3. The server runs one commit or rebase at a time and declines `busy` after a 20 s wait `apps/cli/src/head-server.ts:1232-1241`, `apps/cli/src/head-protocol.ts:390`. It reads the policy per request, declines a session on another ref or one whose log doesn't read, builds the version at the session's base, and runs `commitOverHead` `apps/cli/src/head-server.ts:1243-1290`.
 4. A served answer comes back with `via: "server"` `apps/cli/src/v2.ts:1127-1135`.
 5. A decline, a 4xx, or no server sends the commit to the local path. A 5xx or a lost answer fails with `ERR_STORAGE` and isn't retried locally, because the ref may already have moved `apps/cli/src/v2.ts:1039-1077`, `apps/cli/src/v2.ts:1136-1139`.
 6. Locally, the CLI resumes the session, loads the head at its base, and runs the same `commitOverHead` `apps/cli/src/v2.ts:1141-1150`.
 7. `commitOverHead` calls `commitSession`, repeats it with the refused ops dropped under `--drop-refused`, and writes the new commit's snapshot on `committed` `apps/cli/src/v2.ts:944-996`.
-8. `commitSession` holds the session's lock and refuses a log that changed since it was read `packages/session/src/commit.ts:520-527`.
-9. It settles a `pending` commit an earlier call left, answering `committed` with `recovered: true` when that commit landed `packages/session/src/commit.ts:465-491`.
-10. It validates the ops, answers `refused` on any violation, and answers `rebase-needed` when the ref moved past the base `packages/session/src/commit.ts:566-581`.
-11. It marks frame-key contradictions, builds the blobs and the tree in a temporary index under the OS temp directory, and writes the commit object `packages/session/src/commit.ts:583-608`, `packages/session/src/commit.ts:289-313`.
+8. `commitSession` holds the session's lock and refuses a log that changed since it was read `packages/session/src/commit.ts:570-577`.
+9. It settles a `pending` commit an earlier call left, answering `committed` with `recovered: true` when that commit landed `packages/session/src/commit.ts:536-563`.
+10. It validates the ops, answers `refused` on any violation, and answers `rebase-needed` when the ref moved past the base `packages/session/src/commit.ts:621-636`.
+11. It marks frame-key contradictions, builds the blobs and the tree in a temporary index under the OS temp directory, and writes the commit object `packages/session/src/commit.ts:638-663`, `packages/session/src/commit.ts:336-360`.
 12. It saves `pending` before it touches anything shared `packages/session/src/commit.ts:536-537`.
-13. `landOnRef` takes the checkout lock, checks that the ref still names the base, moves the checkout when `HEAD` is the ref, and compare-and-swaps the ref. A lost swap rolls the checkout back `packages/session/src/commit.ts:539-567`, `packages/session/src/commit.ts:351-400`.
-14. The log is saved on the new commit with zero ops, and the commit's `Memhtml-Session` trailer records the session id `packages/session/src/commit.ts:569-580`, `packages/session/src/commit.ts:89-107`.
+13. `landOnRef` takes the checkout lock, checks that the ref still names the base, moves the checkout when `HEAD` is the ref, and compare-and-swaps the ref. A lost swap rolls the checkout back `packages/session/src/commit.ts:594-622`, `packages/session/src/commit.ts:398-447`.
+14. The log is saved on the new commit with zero ops, and the commit's `Memhtml-Session` trailer records the session id `packages/session/src/commit.ts:624-635`, `packages/session/src/commit.ts:97-115`.
 15. On the server path, the server moves the version it holds to the new commit and writes its snapshot before it answers `apps/cli/src/head-server.ts:1198-1230`.
 
 ```mermaid

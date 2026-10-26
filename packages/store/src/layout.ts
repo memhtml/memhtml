@@ -106,6 +106,39 @@ sitemap.xml merge=ours
 export const MERGE_OURS_DRIVER = { key: "merge.ours.driver", value: "true" } as const
 
 /**
+ * The config that keeps git from reading an archive move as a directory rename.
+ *
+ * Archiving is a per-file `git mv` into `archive/<YYYY>/<the same path>`. When that move takes a
+ * directory's last file, a merge sees the whole directory reappear under `archive/` and infers a
+ * rename, so a record another clone wrote into the old directory follows it. Probed with git
+ * 2.50.1: under git's default the merge stops with `CONFLICT (file location)` and suggests the
+ * archive path, and under `true` the live record lands in the archive with no conflict at all.
+ * Every store move names its own destination, so there is no directory rename for git to find.
+ * Per clone, like {@link MERGE_OURS_DRIVER}.
+ */
+export const MERGE_DIRECTORY_RENAMES = { key: "merge.directoryRenames", value: "false" } as const
+
+/**
+ * Set a per-clone config value only when the clone does not already hold it.
+ *
+ * Config never travels with a clone, and a clone keeps whatever its own `memhtml init` wrote, so a
+ * setting that {@link initRepo} gained later reaches an existing clone only through a command that
+ * puts it there. Reading first costs one `git config` call and leaves `.git/config` untouched when
+ * the value is already in place.
+ */
+export const ensureConfig = (
+  git: GitShape,
+  setting: { readonly key: string; readonly value: string }
+): Effect.Effect<void, GitFailure> =>
+  git
+    .run(["config", "--local", "--default", "", "--get", setting.key])
+    .pipe(
+      Effect.flatMap((current) =>
+        current.trim() === setting.value ? Effect.void : git.setConfig(setting.key, setting.value)
+      )
+    )
+
+/**
  * The root `README.html`, browsable with no server. Deliberately a memory-shaped document
  * rather than Markdown, so the repo's own entry point demonstrates the format it stores.
  */
@@ -223,8 +256,10 @@ export const initRepo = (git: GitShape): Effect.Effect<InitResult, GitFailure | 
     }
 
     // Config is per-clone, so this is re-set on every init. A fresh clone of a memory repo
-    // inherits `.gitattributes` but not the driver that makes `merge=ours` mean anything.
+    // inherits `.gitattributes` but not the driver that makes `merge=ours` mean anything, nor the
+    // setting that keeps an archive move from reading as a directory rename.
     yield* git.setConfig(MERGE_OURS_DRIVER.key, MERGE_OURS_DRIVER.value)
+    yield* git.setConfig(MERGE_DIRECTORY_RENAMES.key, MERGE_DIRECTORY_RENAMES.value)
 
     const wrote: Array<string> = []
     for (const [path, contents] of SCAFFOLD_FILES) {

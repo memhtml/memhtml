@@ -11,7 +11,15 @@ import {
   StorageFailure
 } from "@memhtml/contracts"
 import { frameGroupAgrees, frameKeyOf } from "@memhtml/domain"
-import { addLink, addMeta, parseMemory, removeLink, removeMeta, setMeta } from "@memhtml/html"
+import {
+  addLink,
+  addMeta,
+  parseMemory,
+  readLinks,
+  removeLink,
+  removeMeta,
+  setMeta
+} from "@memhtml/html"
 import { Effect } from "effect"
 
 import { withCheckoutLock } from "./checkout-lock.js"
@@ -126,7 +134,26 @@ export const archiveBody = (html: string, archivedAt: string): string =>
 interface StagedTree {
   readonly writes: Map<string, string>
   readonly removes: Set<string>
+  /** A violation per head op whose editor left its file unchanged ({@link changedNothing}). */
+  readonly unchanged: ReadonlyArray<Violation>
 }
+
+/**
+ * A head op that was meant to change its file and left it as it found it. `validateOps` passes an
+ * `unlink` only when the file as the batch left it carries the edge, a `label` only when it lacks
+ * the entity, and an `unlabel` only when it carries the entity, so an editor that changes nothing
+ * there disagrees with the reader about what the file holds. A `link` of an edge the file already
+ * carries is idempotent by design, so a `link` counts only when the reader does not find the edge
+ * on the bytes it was given. Landing such an op would commit a change the log describes and the
+ * tree does not hold.
+ */
+const changedNothing = (path: string, what: string): Violation => ({
+  kind: "format",
+  path,
+  reasons: [
+    `${what} changed nothing in the file, so the commit would not make the change its log describes`
+  ]
+})
 
 /**
  * Fold the ops into a set of writes and removes. A `link`, `unlink`, `label`, or `unlabel` reads the
@@ -136,10 +163,15 @@ interface StagedTree {
  * batch, else the head at the commit's parent), never over the bytes the op carries: those name
  * which article is meant (validateOps checks the hash), and a link the source gained since the op
  * was minted must travel with the archived copy.
+ *
+ * Each head op is judged against the bytes it was handed, not the path's final bytes against the
+ * head's: a batch that links an edge and unlinks it again changes the file twice and ends where it
+ * began, and an op that changes nothing beside one that changes the same file is still caught.
  */
 const stage = (head: HeadView, ops: ReadonlyArray<OverlayOp>, archivedAt: string): StagedTree => {
   const writes = new Map<string, string>()
   const removes = new Set<string>()
+  const unchanged: Array<Violation> = []
   for (const op of ops) {
     switch (op.kind) {
       case "put":
@@ -160,7 +192,14 @@ const stage = (head: HeadView, ops: ReadonlyArray<OverlayOp>, archivedAt: string
         // validateOps refused a link whose source is absent and a rel outside the vocabulary,
         // so both branches below are unreachable after step 1; they keep the fold total.
         if (current === undefined || !isEdgeRel(op.rel)) break
-        writes.set(op.path, addLink(current, op.rel, op.href))
+        const linked = addLink(current, op.rel, op.href)
+        if (
+          linked === current &&
+          !readLinks(current).some((link) => link.rel === op.rel && link.href === op.href)
+        ) {
+          unchanged.push(changedNothing(op.path, `link ${op.rel} -> ${op.href}`))
+        }
+        writes.set(op.path, linked)
         break
       }
       case "unlink": {
@@ -168,7 +207,11 @@ const stage = (head: HeadView, ops: ReadonlyArray<OverlayOp>, archivedAt: string
         // built later in the batch reads `writes`, so it carries the removal.
         const current = writes.get(op.path) ?? head.get(op.path)?.html
         if (current === undefined || !isEdgeRel(op.rel)) break
-        writes.set(op.path, removeLink(current, op.rel, op.href))
+        const cut = removeLink(current, op.rel, op.href)
+        if (cut === current) {
+          unchanged.push(changedNothing(op.path, `unlink ${op.rel} -> ${op.href}`))
+        }
+        writes.set(op.path, cut)
         break
       }
       case "label": {
@@ -176,13 +219,17 @@ const stage = (head: HeadView, ops: ReadonlyArray<OverlayOp>, archivedAt: string
         // later in the batch reads `writes`, so the archived copy carries the label.
         const current = writes.get(op.path) ?? head.get(op.path)?.html
         if (current === undefined) break
-        writes.set(op.path, addMeta(current, "memhtml-entity", op.entity))
+        const labeled = addMeta(current, "memhtml-entity", op.entity)
+        if (labeled === current) unchanged.push(changedNothing(op.path, `label ${op.entity}`))
+        writes.set(op.path, labeled)
         break
       }
       case "unlabel": {
         const current = writes.get(op.path) ?? head.get(op.path)?.html
         if (current === undefined) break
-        writes.set(op.path, removeMeta(current, "memhtml-entity", op.entity))
+        const unlabeled = removeMeta(current, "memhtml-entity", op.entity)
+        if (unlabeled === current) unchanged.push(changedNothing(op.path, `unlabel ${op.entity}`))
+        writes.set(op.path, unlabeled)
         break
       }
       case "move": {
@@ -198,7 +245,7 @@ const stage = (head: HeadView, ops: ReadonlyArray<OverlayOp>, archivedAt: string
       }
     }
   }
-  return { writes, removes }
+  return { writes, removes, unchanged }
 }
 
 /**
@@ -430,7 +477,10 @@ const overlappingPaths = (
  *    `rebase-needed` whether or not the changed paths overlap: duplicate hashes and frame keys are
  *    collisions between different paths, so a path-disjoint advance can still carry one, and only
  *    a head rebuilt at the tip can judge it. `overlapping` still names the path collisions.
- * 3. Frame-key contradictions, marked on the new file's head before hashing. A rival that agrees
+ * 3. Stage the ops over the head. A head op the validator passed as a change whose editor hands
+ *    back its file unchanged ({@link changedNothing}) is `refused` as a `format` violation and
+ *    writes nothing, so an editor that disagrees with the reader cannot land an empty commit. Then
+ *    frame-key contradictions, marked on the new file's head before hashing. A rival that agrees
  *    with the put, that the put supersedes, or that the batch archives is reported under
  *    `restatements` and left unlinked.
  * 4. Blobs, index, tree, commit object, through a temporary index file removed on every outcome.
@@ -529,8 +579,13 @@ export const commitSession = (input: {
         return { kind: "rebase-needed", overlapping, mainSha } as const
       }
 
-      // 3. Frame-key contradictions, marked on the new file's head before hashing.
+      // 3. Stage the ops. A head op that changed nothing refuses the batch the way a step-1
+      //    violation does; then frame-key contradictions, marked on the new file's head before
+      //    hashing.
       const staged = stage(head, session.ops, input.archivedAt ?? nowIso())
+      if (staged.unchanged.length > 0) {
+        return { kind: "refused", violations: staged.unchanged } as const
+      }
       const { contradictions, restatements } = yield* markContradictions(
         head,
         session.ops,

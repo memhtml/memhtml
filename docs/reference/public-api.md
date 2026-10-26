@@ -154,9 +154,9 @@ One entry in a session's overlay log. There are seven kinds. A `put` writes a ne
 export const makeGit = (root: string): GitShape => ({
 ```
 
-Builds the `GitShape` service over the `git` binary. It runs every call as `git -C <root>` through `execFile` (`packages/store/src/git.ts:222-257`). Each spawn sets `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`, and `LC_ALL=C`, and removes the repository-selecting variables such as `GIT_DIR`, so a call made from inside a git hook still targets `root` (`packages/store/src/git.ts:174-207`). The user's own git config is still read, which is why every parsed call states its output format with explicit flags. `layerGit` wraps it as a layer (`packages/store/src/git.ts:493`). The CLI's v2 code calls it directly when it needs git for a root it already holds, as `loadVersion` does to load a head version (`apps/cli/src/head-cache.ts:177-183`). Tests use it to drive the real binary against a temporary repository.
+Builds the `GitShape` service over the `git` binary. It runs every call as `git -C <root>` through `execFile` (`packages/store/src/git.ts:262-298`). Each spawn sets `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`, and `LC_ALL=C`, sets `GIT_LITERAL_PATHSPECS`, `GIT_NOGLOB_PATHSPECS`, `GIT_GLOB_PATHSPECS`, and `GIT_ICASE_PATHSPECS` to `0` so a pathspec matches as git's default does whatever the calling shell exports, and removes the repository-selecting variables such as `GIT_DIR`, so a call made from inside a git hook still targets `root` (`packages/store/src/git.ts:184-221`). The user's own git config is still read, which is why every parsed call states its output format with explicit flags. `layerGit` wraps it as a layer (`packages/store/src/git.ts:560`). The CLI's v2 code calls it directly when it needs git for a root it already holds, as `loadVersion` does to load a head version (`apps/cli/src/head-cache.ts:177-183`). Tests use it to drive the real binary against a temporary repository.
 
-`packages/store/src/git.ts:292-467`, 16 importer files
+`packages/store/src/git.ts:356-534`, 16 importer files
 
 ### parseMemory
 
@@ -297,7 +297,7 @@ export const addLink = (html: string, rel: EdgeRel, href: string): string => {
 }
 ```
 
-Appends one `<link>` edge line to a memory's head. The rel token is `memhtml-` plus the rel with underscores written as hyphens, which `relTokenFor` builds (`packages/contracts/src/edges.ts:106-110`). It's idempotent on the `(rel, href)` pair, so a second call with the same edge returns the input. The new line goes after the last `memhtml-` link, else after the last `memhtml-` meta, else at `</head>` (`packages/html/src/editors.ts:102-128`). It splices bytes by source offset and never touches the article, so the content hash doesn't change. It never fails. A file with no `<head>`, or a parse with no source location, comes back unchanged. The store calls it to add a link and to record a correction's `supersedes` edge (`packages/store/src/store.ts:1339`, `packages/store/src/store.ts:1094`). The overlay's `link` op and the session commit call it too (`packages/head/src/overlay.ts:57`, `packages/session/src/commit.ts:158-165`). The commit also uses it to mark a frame-key rival with a `contradicts` edge (`packages/session/src/commit.ts:255-274`).
+Appends one `<link>` edge line to a memory's head. The rel token is `memhtml-` plus the rel with underscores written as hyphens, which `relTokenFor` builds (`packages/contracts/src/edges.ts:106-110`). It's idempotent on the `(rel, href)` pair, so a second call with the same edge returns the input. The new line goes after the last `memhtml-` link, else after the last `memhtml-` meta, else at `</head>` (`packages/html/src/editors.ts:102-128`). It splices bytes by source offset and never touches the article, so the content hash doesn't change. It never fails. A file with no `<head>`, or a parse with no source location, comes back unchanged. The store calls it to add a link and to record a correction's `supersedes` edge (`packages/store/src/store.ts:1339`, `packages/store/src/store.ts:1094`). The overlay's `link` op and the session commit call it too (`packages/head/src/overlay.ts:57`, `packages/session/src/commit.ts:190-204`). The commit also uses it to mark a frame-key rival with a `contradicts` edge (`packages/session/src/commit.ts:302-321`).
 
 `packages/html/src/editors.ts:226-238`, 8 importer files
 
@@ -318,7 +318,7 @@ export const frameKeyOf = (gist: string): string | null => {
 }
 ```
 
-Returns a claim's frame key. The key is the text up to the last linking word (`of`, `is`, `in`, `to`, `by`, `as`) that a value follows, lowercased. Two claims that write different values into the same slot share a key. Whitespace runs collapse before the match. It returns `null` when the claim has no such split, when the frame has fewer than three tokens, or when the value has more than six (`packages/domain/src/frame.ts:48-54`). The source comment calls the key case-insensitive. The linking-word pattern has no `i` flag and runs before the lowercasing, though. So `The Capital Of India Is X` returns `null`, and `the capital of India is Y` keys on `the capital of india is`. The head indexes active records by it in `byFrameKey` (`packages/head/src/indexes.ts:100-101`). A session commit links each new put to every active record with the same key that it disagrees with through a `contradicts` edge, and reports a record that agrees with it, that it supersedes, or that the batch archives under `restatements` (`packages/session/src/commit.ts:204-278`).
+Returns a claim's frame key. The key is the text up to the last linking word (`of`, `is`, `in`, `to`, `by`, `as`) that a value follows, lowercased. Two claims that write different values into the same slot share a key. Whitespace runs collapse before the match. It returns `null` when the claim has no such split, when the frame has fewer than three tokens, or when the value has more than six (`packages/domain/src/frame.ts:48-54`). The source comment calls the key case-insensitive. The linking-word pattern has no `i` flag and runs before the lowercasing, though. So `The Capital Of India Is X` returns `null`, and `the capital of India is Y` keys on `the capital of india is`. The head indexes active records by it in `byFrameKey` (`packages/head/src/indexes.ts:100-101`). A session commit links each new put to every active record with the same key that it disagrees with through a `contradicts` edge, and reports a record that agrees with it, that it supersedes, or that the batch archives under `restatements` (`packages/session/src/commit.ts:251-325`).
 
 `packages/domain/src/frame.ts:67-78`, 8 importer files
 
@@ -400,16 +400,7 @@ The path of one session's log, `.memhtml/sessions/<id>.json` under the root (`pa
 
 ```ts
 export const slugify = (title: string): string => {
-  const folded = title
-    .normalize("NFKD")
-    .replace(/\p{Mn}+/gu, "")
-    .toLowerCase()
-
-  const kebab = folded
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+/, "")
-    .replace(/-+$/, "")
-
+  const kebab = kebabOf(title)
   if (kebab === "") return SLUG_FALLBACK
 
   return kebab.length <= SLUG_MAX_LENGTH
@@ -418,9 +409,23 @@ export const slugify = (title: string): string => {
 }
 ```
 
-Kebab-cases a title into `[a-z0-9-]`. It applies NFKD, strips combining marks so diacritics fold to base letters, and lowercases. Then it replaces each run of other characters with one hyphen and trims hyphens from both ends. A title that reduces to nothing returns `SLUG_FALLBACK`, which is `untitled`. A result longer than `SLUG_MAX_LENGTH` (80) is cut there, and any exposed trailing hyphen is trimmed (`packages/contracts/src/slug.ts:7-15`). A slug fed back in comes out unchanged.
+Kebab-cases a title into `[a-z0-9-]`. `kebabOf` applies NFKD, strips combining marks so diacritics fold to base letters, and lowercases. Then it replaces each run of other characters with one hyphen and trims hyphens from both ends (`packages/contracts/src/slug.ts:36-44`). A title that reduces to nothing returns `SLUG_FALLBACK`, which is `untitled`. A result longer than `SLUG_MAX_LENGTH` (80) is cut there, and any exposed trailing hyphen is trimmed (`packages/contracts/src/slug.ts:7-22`). A slug fed back in comes out unchanged. This is the slug of every name that is recomputed each time it's used, such as a workspace's `projects/<slug>/` folder and a tag's `resources/<slug>/`, so its cut never changes and a long workspace or tag stays one folder. A new record's filename stem is `slugifyStem`'s.
 
-`packages/contracts/src/slug.ts:28-44`, 7 importer files
+`packages/contracts/src/slug.ts:62-69`, 5 importer files
+
+### slugifyStem
+
+```ts
+export const slugifyStem = (title: string): string => {
+  const kebab = kebabOf(title)
+  if (kebab === "") return SLUG_FALLBACK
+  return cutAtWord(kebab, SLUG_MAX_LENGTH) || SLUG_FALLBACK
+}
+```
+
+The filename stem a new record takes from its title, which `memoryPathFor` and both collision loops use (`packages/contracts/src/paths.ts:200`, `packages/store/src/store.ts:460`, `apps/cli/src/v2.ts:341`). It kebab-cases as `slugify` does, and a result longer than 80 is cut at its last hyphen at or before 80 when that leaves at least `SLUG_MIN_WORD_CUT` (60) characters, so it ends on a whole word, and at 80 otherwise (`cutAtWord` at `packages/contracts/src/slug.ts:24-34`). It equals `slugify` for every title whose slug fits the budget. `withCollisionOrdinal` cuts its stem by the same rule to make room for a `-N` suffix. A stem is computed only when a record is minted, and the path is the record's id from then on, so the rule decides new filenames and never moves an existing file.
+
+`packages/contracts/src/slug.ts:82-86`, 2 importer files
 
 ### DirtyTree
 
@@ -430,7 +435,7 @@ export class DirtyTree extends Schema.TaggedError<DirtyTree>()("DirtyTree", {
 }) {}
 ```
 
-The typed failure for an operation that needs a clean tree and found uncommitted changes. It carries the dirty `paths`, and the CLI maps it to `ERR_DIRTY_TREE` (`apps/cli/src/errors.ts:55-56`). When the target ref is checked out, `landOnRef` checks the paths a landing changes and answers `worktree-dirty` when any of them has uncommitted state (`packages/session/src/commit.ts:374-379`). `curate merge` turns that answer into `DirtyTree` on both its fast-forward and its replay (`apps/cli/src/v2.ts:1741-1743`, `apps/cli/src/v2.ts:1843-1844`). `curate run` does the same when it lands (`apps/cli/src/curate-run.ts:511-512`). Nothing moves in either case. `session commit` reports the same case as its `worktree-dirty` outcome (`apps/cli/src/v2.ts:1085-1090`). The store's `requireCleanTree` raises it over every dirty path that isn't ignored (`packages/store/src/store.ts:1360-1373`).
+The typed failure for an operation that needs a clean tree and found uncommitted changes. It carries the dirty `paths`, and the CLI maps it to `ERR_DIRTY_TREE` (`apps/cli/src/errors.ts:55-56`). When the target ref is checked out, `landOnRef` checks the paths a landing changes and answers `worktree-dirty` when any of them has uncommitted state (`packages/session/src/commit.ts:421-426`). `curate merge` turns that answer into `DirtyTree` on both its fast-forward and its replay (`apps/cli/src/v2.ts:1741-1743`, `apps/cli/src/v2.ts:1843-1844`). `curate run` does the same when it lands (`apps/cli/src/curate-run.ts:511-512`). Nothing moves in either case. `session commit` reports the same case as its `worktree-dirty` outcome (`apps/cli/src/v2.ts:1085-1090`). The store's `requireCleanTree` raises it over every dirty path that isn't ignored (`packages/store/src/store.ts:1360-1373`).
 
 `packages/contracts/src/errors.ts:67-69`, 6 importer files
 
@@ -474,7 +479,7 @@ export type Violation =
   | { readonly kind: "write-bar"; readonly path: string; readonly reasons: ReadonlyArray<string> }
 ```
 
-One mechanical refusal from `validateOps`, the check a session commit runs before it writes anything. The check reads only the view and the ops, with no model call and no I/O (`packages/session/src/validate.ts:19-22`). There are six kinds. A batch over `BATCH_CAP`, which is 200 ops, gets a single `batch-cap` violation, and nothing else is judged (`packages/session/src/validate.ts:45`, `packages/session/src/validate.ts:181-189`). For a put, a path or format problem is `format`. A content hash that an active record or an earlier put in the batch holds is `duplicate`, and a different article at an active path is `claim-edit` (`packages/session/src/validate.ts:264-279`). `reserved-path` covers `.memhtml/`, the policy file, `index.html`, and `sitemap.xml` under every scope, plus the arcs and people prefixes outside the `curate` scope (`packages/session/src/validate.ts:86-97`). `write-bar` carries the store policy's reasons for a new record. A commit refuses the whole batch on any violation and writes nothing (`packages/session/src/commit.ts:568-573`). `session put` and `session exec` refuse a call only for `batch-cap` or for a blocking kind on a path the call touches. The blocking kinds are `format`, `reserved-path`, `batch-cap`, and `write-bar`, plus `duplicate` and `claim-edit` in a session bound by `MEMHTML_SESSION` (`apps/cli/src/v2.ts:333-354`).
+One mechanical refusal from `validateOps`, the check a session commit runs before it writes anything. The check reads only the view and the ops, with no model call and no I/O (`packages/session/src/validate.ts:19-22`). There are six kinds. A batch over `BATCH_CAP`, which is 200 ops, gets a single `batch-cap` violation, and nothing else is judged (`packages/session/src/validate.ts:45`, `packages/session/src/validate.ts:181-189`). For a put, a path or format problem is `format`. A content hash that an active record or an earlier put in the batch holds is `duplicate`, and a different article at an active path is `claim-edit` (`packages/session/src/validate.ts:264-279`). `reserved-path` covers `.memhtml/`, the policy file, `index.html`, and `sitemap.xml` under every scope, plus the arcs and people prefixes outside the `curate` scope (`packages/session/src/validate.ts:86-97`). `write-bar` carries the store policy's reasons for a new record. A commit refuses the whole batch on any violation and writes nothing (`packages/session/src/commit.ts:623-628`). `session put` and `session exec` refuse a call only for `batch-cap` or for a blocking kind on a path the call touches. The blocking kinds are `format`, `reserved-path`, `batch-cap`, and `write-bar`, plus `duplicate` and `claim-edit` in a session bound by `MEMHTML_SESSION` (`apps/cli/src/v2.ts:333-354`).
 
 `packages/session/src/validate.ts:24-42`, 6 importer files
 
@@ -547,7 +552,7 @@ export const setMeta = (html: string, name: string, value: string): string => {
 }
 ```
 
-Sets one head meta to one value. It replaces the first `<meta>` of that name in place, or it inserts a new line at the name's position in `META_ORDER` (`packages/html/src/editors.ts:74-100`). Exactly one line changes, and the article stays outside the edited range, so the content hash is the same before and after for every name (`packages/html/src/editors.ts:145-154`). On a repeatable key it sets the first value, and `addMeta` is the append. A name outside the meta vocabulary that `isMemoryMetaName` checks returns the input unchanged (`packages/html/src/vocabulary.ts:89-91`), and so does a file with no `<head>`. It never fails. A session commit stamps an archived copy's `memhtml-status` and `memhtml-archived` through it (`packages/session/src/commit.ts:117-122`). The CLI's `task status` stamps `memhtml-task-status` and `memhtml-updated` through it (`apps/cli/src/operations.ts:2009-2013`).
+Sets one head meta to one value. It replaces the first `<meta>` of that name in place, or it inserts a new line at the name's position in `META_ORDER` (`packages/html/src/editors.ts:74-100`). Exactly one line changes, and the article stays outside the edited range, so the content hash is the same before and after for every name (`packages/html/src/editors.ts:145-154`). On a repeatable key it sets the first value, and `addMeta` is the append. A name outside the meta vocabulary that `isMemoryMetaName` checks returns the input unchanged (`packages/html/src/vocabulary.ts:89-91`), and so does a file with no `<head>`. It never fails. A session commit stamps an archived copy's `memhtml-status` and `memhtml-archived` through it (`packages/session/src/commit.ts:125-130`). The CLI's `task status` stamps `memhtml-task-status` and `memhtml-updated` through it (`apps/cli/src/operations.ts:2009-2013`).
 
 `packages/html/src/editors.ts:155-170`, 6 importer files
 

@@ -326,7 +326,7 @@ The fixed half holds in every store:
 
 - `format`: the file has to parse as a memory, with exactly one claim.
 - `duplicate`: the article already exists in an active record.
-- `claim-edit`: a put over an active record with a different article. Write the new fact under its own title with a `memhtml-supersedes` link.
+- `claim-edit`: a put over an active record with a different article. Write the new fact under its own title with a `memhtml-supersedes` link. When the same batch archives the old record, the link names its archive path, `/archive/<YYYY>/<its path>`.
 - `reserved-path`: `.memhtml/`, `memhtml.config.json`, and any `index.html` or `sitemap.xml` are never writable. `areas/arcs/` and `resources/people/` are writable only by curation.
 - `batch-cap`: one commit holds at most 200 operations.
 

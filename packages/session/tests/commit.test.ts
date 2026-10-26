@@ -31,6 +31,7 @@ import {
   loadHead,
   type MapHead,
   makeRepo,
+  mapHead,
   memory,
   type Repo,
   treePaths
@@ -70,6 +71,12 @@ import {
  * - stage label: the `label` case left out of `stage` -> "a label and an unlabel edit the head's
  *   copy, and an archive after them carries both" (alpha on main lacks the new entity); the
  *   `unlabel` case left out -> the same test (the dropped entity is still on the archived copy).
+ * - stage guard: `staged.unchanged` not returned as `refused` -> "refuses a head op the validator
+ *   accepts but whose editor leaves the file unchanged" (an empty commit lands); the `link` case's
+ *   `readLinks` check dropped, so every unchanged link refuses -> "a link of an edge the file
+ *   carries in the underscored spelling ... is not refused"; the `link` case's whole check dropped,
+ *   so no link refuses -> "refuses a head op the validator accepts ..." (the delta link is missing
+ *   from the violations).
  * - step 6 (`landOnRef`): drop the `dirtyPaths` check -> "refuses to move a checked-out ref over ...".
  * - step 6 (`landOnRef`): drop `readTreeIntoWorktree` -> "a checked-out ref follows ..." and "a
  *   v1-style commit from the shared index keeps ...".
@@ -857,6 +864,207 @@ describe("commitSession", () => {
     expect(await readFile(join(root, "areas/inbox/alpha.html"), "utf8")).toBe(alpha)
   })
 
+  it("an unlink cuts an edge spelled with the rel's underscores, so the commit changes the file", async () => {
+    const repo = await makeRepo()
+    repos.push(repo)
+    const root = repo.root
+    // The reader takes `memhtml-part_of` as `part_of`, so the head lists the edge and the validator
+    // passes an unlink of it; the commit has to cut that same line.
+    const underscored = '<link rel="memhtml-part_of" href="/areas/inbox/capital.html">'
+    await commitFiles(root, {
+      "areas/inbox/capital.html": CAPITAL,
+      "areas/inbox/alpha.html": ALPHA.replace("</head>", `${underscored}\n</head>`)
+    })
+    const head = await loadHead(root)
+    expect(head.get("areas/inbox/alpha.html")?.links).toEqual([
+      { rel: "part_of", href: "/areas/inbox/capital.html" }
+    ])
+    const session = await run(
+      startSession({ root, id: "unlink-underscored", base: head }).pipe(
+        Effect.flatMap((s) =>
+          appendOps(s, [
+            {
+              kind: "unlink",
+              path: "areas/inbox/alpha.html",
+              rel: "part_of",
+              href: "/areas/inbox/capital.html"
+            }
+          ])
+        )
+      )
+    )
+    const outcome = await run(commitSession({ session, head, message: "drop part_of" }))
+    if (outcome.kind !== "committed") throw new Error(JSON.stringify(outcome))
+    expect(await fileAt(root, outcome.sha, "areas/inbox/alpha.html")).toBe(ALPHA)
+    expect(await git(root, ["rev-parse", `${outcome.sha}^{tree}`])).not.toBe(
+      await git(root, ["rev-parse", `${outcome.sha}^^{tree}`])
+    )
+  })
+
+  it("a link of an edge the file carries in the underscored spelling adds no second line and is not refused", async () => {
+    const repo = await makeRepo()
+    repos.push(repo)
+    const root = repo.root
+    const alpha = ALPHA.replace(
+      "</head>",
+      '<link rel="memhtml-part_of" href="/areas/inbox/capital.html">\n</head>'
+    )
+    await commitFiles(root, {
+      "areas/inbox/capital.html": CAPITAL,
+      "areas/inbox/alpha.html": alpha
+    })
+    const head = await loadHead(root)
+    const beta = memory("Beta", "Beta is the second letter of the Greek alphabet.")
+    const session = await run(
+      startSession({ root, id: "link-carried", base: head }).pipe(
+        Effect.flatMap((s) =>
+          appendOps(s, [
+            // The edge is already there, so the link stages the file unchanged, which is what an
+            // idempotent link is for: the commit guard leaves it alone.
+            {
+              kind: "link",
+              path: "areas/inbox/alpha.html",
+              rel: "part_of",
+              href: "/areas/inbox/capital.html"
+            },
+            putOp("areas/inbox/beta.html", beta)
+          ])
+        )
+      )
+    )
+    const outcome = await run(commitSession({ session, head, message: "relink" }))
+    if (outcome.kind !== "committed") throw new Error(JSON.stringify(outcome))
+    expect(await fileAt(root, outcome.sha, "areas/inbox/alpha.html")).toBe(alpha)
+    expect(await fileAt(root, outcome.sha, "areas/inbox/beta.html")).toBe(beta)
+  })
+
+  it("a link and an unlink of one edge in one batch are not refused, though the file ends as it began", async () => {
+    const { root, head } = await seeded()
+    const beta = memory("Beta", "Beta is the second letter of the Greek alphabet.")
+    const edge = {
+      path: "areas/inbox/alpha.html",
+      rel: "relates_to",
+      href: "/areas/inbox/capital.html"
+    } as const
+    const session = await run(
+      startSession({ root, id: "link-unlink", base: head }).pipe(
+        Effect.flatMap((s) =>
+          appendOps(s, [
+            { kind: "link", ...edge },
+            { kind: "unlink", ...edge },
+            putOp("areas/inbox/beta.html", beta)
+          ])
+        )
+      )
+    )
+    const outcome = await run(commitSession({ session, head, message: "net nothing on alpha" }))
+    if (outcome.kind !== "committed") throw new Error(JSON.stringify(outcome))
+    expect(await fileAt(root, outcome.sha, "areas/inbox/alpha.html")).toBe(ALPHA)
+  })
+
+  it("refuses a head op the validator accepts but whose editor leaves the file unchanged, and writes nothing", async () => {
+    const repo = await makeRepo()
+    repos.push(repo)
+    const root = repo.root
+    const base = await commitFiles(root, {
+      "areas/inbox/capital.html": CAPITAL,
+      "areas/inbox/alpha.html": ALPHA,
+      "areas/inbox/beta.html": memory("Beta", "Beta is the second letter of the Greek alphabet."),
+      "areas/inbox/gamma.html": memory("Gamma", "Gamma is the third letter of the Greek alphabet.")
+    })
+    const loaded = await loadHead(root)
+    // A record whose head is implicit (no `<head>` tag and no memhtml line in it): `addLink` finds
+    // no offset to write at and hands the file back, while `readLinks` finds no edge on it. It does
+    // not parse as a memory, so a head loaded from git skips it; a hand-built view can hold it.
+    const delta = "areas/inbox/delta.html"
+    const deltaClaim = "Delta is the fourth letter of the Greek alphabet."
+    const implicitHead = [
+      "<!doctype html>",
+      '<html lang="en">',
+      "<title>Delta</title>",
+      `<article><p><mark>${deltaClaim}</mark></p></article>`,
+      "</html>",
+      ""
+    ].join("\n")
+    const capital = loaded.get("areas/inbox/capital.html")
+    if (capital === undefined) throw new Error("capital.html is not in the head")
+    // A view whose reading of four records disagrees with their bytes, the shape a reader and an
+    // editor that disagree on a spelling leave: the validator judges each op against the view, and
+    // the editor, run over the bytes, finds nothing to change.
+    const head = mapHead(loaded.sha, [
+      ...[...loaded.records()].map((record) => {
+        switch (record.path) {
+          case "areas/inbox/alpha.html":
+            return { ...record, links: [{ rel: "supports", href: "/areas/inbox/capital.html" }] }
+          case "areas/inbox/beta.html":
+            return { ...record, entities: [] }
+          case "areas/inbox/gamma.html":
+            return { ...record, entities: [...record.entities, "topic:greek"] }
+          default:
+            return record
+        }
+      }),
+      {
+        ...capital,
+        path: delta,
+        html: implicitHead,
+        contentHash: contentHash(implicitHead),
+        frameKey: null,
+        title: "Delta",
+        claim: deltaClaim,
+        links: [],
+        entities: []
+      }
+    ])
+    const session = await run(
+      startSession({ root, id: "unchanged", base: head }).pipe(
+        Effect.flatMap((s) =>
+          appendOps(s, [
+            {
+              kind: "unlink",
+              path: "areas/inbox/alpha.html",
+              rel: "supports",
+              href: "/areas/inbox/capital.html"
+            },
+            { kind: "label", path: "areas/inbox/beta.html", entity: "system:fixture" },
+            { kind: "unlabel", path: "areas/inbox/gamma.html", entity: "topic:greek" },
+            { kind: "link", path: delta, rel: "relates_to", href: "/areas/inbox/capital.html" }
+          ])
+        )
+      )
+    )
+    const outcome = await run(commitSession({ session, head, message: "nothing changes" }))
+    const unchanged = (what: string) =>
+      `${what} changed nothing in the file, so the commit would not make the change its log describes`
+    expect(outcome).toEqual({
+      kind: "refused",
+      violations: [
+        {
+          kind: "format",
+          path: "areas/inbox/alpha.html",
+          reasons: [unchanged("unlink supports -> /areas/inbox/capital.html")]
+        },
+        {
+          kind: "format",
+          path: "areas/inbox/beta.html",
+          reasons: [unchanged("label system:fixture")]
+        },
+        {
+          kind: "format",
+          path: "areas/inbox/gamma.html",
+          reasons: [unchanged("unlabel topic:greek")]
+        },
+        {
+          kind: "format",
+          path: delta,
+          reasons: [unchanged("link relates_to -> /areas/inbox/capital.html")]
+        }
+      ]
+    })
+    expect(await commitOf(root, "refs/heads/main")).toBe(base)
+    expect((await run(resumeSession({ root, id: "unchanged" }))).ops).toHaveLength(4)
+  })
+
   it("a label and an unlabel edit the head's copy, and an archive after them carries both", async () => {
     const repo = await makeRepo()
     repos.push(repo)
@@ -1084,6 +1292,29 @@ describe("commitSession", () => {
     const resumed = await run(resumeSession({ root, id: "clash" }))
     expect(resumed.ops).toHaveLength(2)
     expect(resumed.pending).toBeUndefined()
+  })
+
+  it("lands a put whose name is a glob pattern beside an untracked file the pattern matches", async () => {
+    /**
+     * The dirty check hands git the paths the commit changes. Read as a pattern,
+     * `areas/inbox/a[b].html` also matches an untracked `areas/inbox/ab.html` the commit never
+     * touches, and the commit refused as `worktree-dirty` over it. Each path is read as itself.
+     */
+    const { root, base, head } = await seeded()
+    const draft = "<!-- a draft -->\n"
+    await writeFile(join(root, "areas/inbox/ab.html"), draft, "utf8")
+    const html = memory("Bracket", "A fact filed under a bracketed name.")
+    const session = await start(root, "glob", head, [putOp("areas/inbox/a[b].html", html)])
+
+    const outcome = await run(commitSession({ session, head, message: "add a bracketed name" }))
+
+    expect(outcome.kind).toBe("committed")
+    if (outcome.kind !== "committed") return
+    expect(outcome.paths).toEqual(["areas/inbox/a[b].html"])
+    expect(await git(root, ["rev-parse", `${outcome.sha}^`])).toBe(base)
+    expect(await readFile(join(root, "areas/inbox/a[b].html"), "utf8")).toBe(html)
+    expect(await readFile(join(root, "areas/inbox/ab.html"), "utf8")).toBe(draft)
+    expect(await git(root, ["status", "--porcelain"])).toBe("?? areas/inbox/ab.html")
   })
 
   it("creates a curator ref that does not exist yet", async () => {

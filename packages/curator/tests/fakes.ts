@@ -206,6 +206,8 @@ export const emptyBriefing: Briefing = {
   supersededActiveTotal: 0,
   danglingEdges: [],
   danglingEdgesTotal: 0,
+  mootDetectedTasks: [],
+  mootDetectedTasksTotal: 0,
   placementQuota: 60,
   inbox: [],
   inboxTotal: 0,

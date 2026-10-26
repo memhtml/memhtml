@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process"
 import { lstat, mkdir, mkdtemp, rename, rm, stat, writeFile } from "node:fs/promises"
-import { request } from "node:http"
+import { createServer, request } from "node:http"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 
@@ -419,6 +419,10 @@ describe("the head server", () => {
     expect(answered?.data.appended).toEqual(expected.appended)
     expect(answered?.data.appended.map((op) => op.kind)).toEqual(["put", "label"])
     expect(answered?.data.puts).toEqual(expected.puts)
+    expect(answered?.data.placements).toEqual(expected.placements)
+    expect(answered?.data.placements).toEqual([
+      { path: "areas/inbox/orchard-pruning.html", ordinal: 1 }
+    ])
     expect(answered?.data.neighbors).toEqual(expected.neighbors)
     expect(answered?.data.violations).toEqual(expected.violations)
     expect(answered?.data.blocking).toEqual([])
@@ -470,11 +474,25 @@ describe("the head server", () => {
         ""
       ].join("\n")
     )
+    // A dry run through the server answers the same placements and appends nothing.
+    const preview = await cli(repo.root, [
+      ...["session", "put", "--id", "s1", "--file", ops, "--dry-run"]
+    ])
+    expect(preview.exitCode).toBe(0)
+    expect(headOf(preview.body)).toMatchObject({ sha: base, source: "server" })
+    expect(dataOf(preview.body)).toMatchObject({
+      dryRun: true,
+      appended: 0,
+      ops: 0,
+      placements: [{ path: "areas/inbox/orchard-pruning.html", ordinal: 1 }]
+    })
     const put = await cli(repo.root, ["session", "put", "--id", "s1", "--file", ops])
     expect(put.exitCode).toBe(0)
     expect(headOf(put.body)).toMatchObject({ sha: base, source: "server" })
     expect(dataOf(put.body)).toMatchObject({
+      dryRun: false,
       appended: 2,
+      placements: [{ path: "areas/inbox/orchard-pruning.html", ordinal: 1 }],
       labels: [{ kind: "label", path: "areas/inbox/orchard.html", entity: "system:orchard" }],
       vector: { used: true, reason: null }
     })
@@ -885,7 +903,14 @@ describe("the wire's op schema", () => {
 
   it("decodes every op kind a log holds, unchanged, in a neighbors request and its answer", () => {
     for (const op of ops) {
-      const request = { sha: "0".repeat(40), ops: [op], lines: [], at: "2026-10-18T12:00:00Z" }
+      // `placements` is the marker this client always sends; a current server decodes it.
+      const request = {
+        sha: "0".repeat(40),
+        ops: [op],
+        lines: [],
+        at: "2026-10-18T12:00:00Z",
+        placements: true as const
+      }
       const decoded = Schema.decodeUnknownSync(NeighborsRequest, { onExcessProperty: "error" })(
         request
       )
@@ -894,6 +919,7 @@ describe("the wire's op schema", () => {
       const answer = {
         appended: [op],
         puts: [],
+        placements: [],
         neighbors: [],
         violations: [],
         blocking: [],
@@ -979,5 +1005,150 @@ describe("the store's policy source", () => {
         )
       )
     ).toHaveLength(1)
+  })
+})
+
+/**
+ * A server built before `placements` existed, faked on the store's socket: it places a long title by
+ * the plain 80-character cut and answers without `placements`, and in its strict form it decodes the
+ * request with the shape it knew and refuses an unknown key, as `head-server.ts` does. Either way the
+ * client must place the puts itself, by the current rule, and never take the server's paths.
+ *
+ * Mutations, each run once with the change applied and the named case red:
+ * - `head-protocol.ts` `NeighborsAnswer`: `placements` optional -> "places the puts here when a
+ *   server answers without placements" (the put takes the server's `-staged-ro` path).
+ * - `v2.ts` `sessionPut`: drop the `placements: true` marker -> "refuses a strict older server
+ *   before it computes" (the strict fake computes an answer).
+ */
+describe("a head server that predates placements", () => {
+  const TITLE =
+    "The acme-widget release checklist covers signing, packaging, smoke tests, staged rollout and rollback drills for every region"
+  const OLD_CUT =
+    "areas/inbox/the-acme-widget-release-checklist-covers-signing-packaging-smoke-tests-staged-ro.html"
+  const NEW_CUT =
+    "areas/inbox/the-acme-widget-release-checklist-covers-signing-packaging-smoke-tests-staged.html"
+
+  /** The neighbors request a server without `placements` decodes, strictly. */
+  const OlderRequest = Schema.Struct({
+    sha: Schema.String,
+    ops: Schema.Array(Schema.Unknown),
+    lines: Schema.Array(Schema.Unknown),
+    at: Schema.String,
+    runBound: Schema.optionalKey(Schema.Boolean)
+  })
+
+  const fakeOlderServer = async (root: string, strict: boolean) => {
+    const bodies: Array<Record<string, unknown>> = []
+    let computed = 0
+    await mkdir(join(root, ".memhtml"), { recursive: true })
+    const socket = headSocketPath(root)
+    const html = renderTemplate({
+      title: TITLE,
+      claim: "The checklist has six steps.",
+      memoryType: "semantic",
+      at: "2031-03-01T12:00:00Z",
+      entities: ["project:acme-widget"]
+    })
+    const server = createServer((req, res) => {
+      let text = ""
+      req.on("data", (chunk: Buffer) => {
+        text += chunk.toString("utf8")
+      })
+      req.on("end", () => {
+        const body = JSON.parse(text) as Record<string, unknown>
+        bodies.push(body)
+        if (strict) {
+          try {
+            Schema.decodeUnknownSync(OlderRequest, { onExcessProperty: "error" })(body)
+          } catch (error) {
+            res.writeHead(400, { "content-type": "application/json" })
+            res.end(
+              JSON.stringify({
+                error: `request refused: ${String(error)}`,
+                code: "ERR_INVALID_FLAG"
+              })
+            )
+            return
+          }
+        }
+        computed += 1
+        const put = { kind: "put", path: OLD_CUT, html }
+        res.writeHead(200, { "content-type": "application/json" })
+        res.end(
+          JSON.stringify({
+            appended: [put],
+            puts: [put],
+            neighbors: [{ path: OLD_CUT, hits: [] }],
+            violations: [],
+            blocking: [],
+            vector: null,
+            head: { sha: body.sha, ref: "refs/heads/main", records: WORDS.length, skipped: null }
+          })
+        )
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(socket, resolve))
+    return {
+      bodies,
+      computed: () => computed,
+      close: async () => {
+        await new Promise<void>((resolve) => server.close(() => resolve()))
+        await rm(socket, { force: true })
+      }
+    }
+  }
+
+  const opsFile = async (root: string): Promise<string> => {
+    const file = join(root, "ops.jsonl")
+    await writeFile(
+      file,
+      `${JSON.stringify({ op: "write", title: TITLE, type: "semantic", body: "The checklist has six steps.", entity: "project:acme-widget" })}\n`
+    )
+    return file
+  }
+
+  it("places the puts here when a server answers without placements", async () => {
+    const { repo } = await corpus()
+    expect((await cli(repo.root, ["session", "start", "--id", "s1"])).exitCode).toBe(0)
+    const file = await opsFile(repo.root)
+    const older = await fakeOlderServer(repo.root, false)
+    try {
+      const put = await cli(repo.root, ["session", "put", "--id", "s1", "--file", file])
+      expect(put.exitCode, JSON.stringify(put.body)).toBe(0)
+      expect(older.computed()).toBe(1)
+      expect(headOf(put.body).source).not.toBe("server")
+      expect(dataOf(put.body).paths).toEqual([NEW_CUT])
+      expect(dataOf(put.body).placements).toEqual([{ path: NEW_CUT, ordinal: 1 }])
+    } finally {
+      await older.close()
+    }
+    const status = await cli(repo.root, ["session", "status", "--id", "s1"])
+    expect(dataOf(status.body).paths).toEqual([NEW_CUT])
+  })
+
+  it("refuses a strict older server before it computes", async () => {
+    const { repo } = await corpus()
+    expect((await cli(repo.root, ["session", "start", "--id", "s1"])).exitCode).toBe(0)
+    const file = await opsFile(repo.root)
+    const older = await fakeOlderServer(repo.root, true)
+    try {
+      const put = await cli(repo.root, [
+        "session",
+        "put",
+        "--id",
+        "s1",
+        "--file",
+        file,
+        "--dry-run"
+      ])
+      expect(put.exitCode, JSON.stringify(put.body)).toBe(0)
+      expect(older.bodies).toHaveLength(1)
+      expect(older.bodies[0]?.placements).toBe(true)
+      expect(older.computed()).toBe(0)
+      expect(headOf(put.body).source).not.toBe("server")
+      expect(dataOf(put.body).placements).toEqual([{ path: NEW_CUT, ordinal: 1 }])
+    } finally {
+      await older.close()
+    }
   })
 })

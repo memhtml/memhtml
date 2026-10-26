@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises"
+
 import { DEFAULT_V1_DOORS, type V1DoorMode } from "@memhtml/contracts"
 import { CURATOR_MODEL_VAR, DEFAULT_CURATOR_MODEL_ID, modelSpecOf } from "@memhtml/curator"
 import { DiscriminationFailed, type EvalMode, runDiscrimination } from "@memhtml/eval"
@@ -99,7 +101,14 @@ import { publish } from "./publish.js"
 import { serveMcp } from "./serve.js"
 import { stateExport, stateImport } from "./state.js"
 import { guardV1Door, loadStorePolicy, v1DoorState } from "./store-config.js"
-import { parseOlderThan, qualifyRef, runV2, sessionPrune } from "./v2.js"
+import {
+  claimedPathsOf,
+  parseOlderThan,
+  pathPreview,
+  qualifyRef,
+  runV2,
+  sessionPrune
+} from "./v2.js"
 import { indexReport } from "./views.js"
 
 export interface Parsed {
@@ -1020,6 +1029,18 @@ const sessionBoundRefusal = (
   return fail("ERR_SESSION_BOUND", bound.error, bound.suggestions)
 }
 
+/** `memhtml path`: a blank `--title` is refused, as a write line refuses one. */
+const pathFlags = (parsed: Parsed): Failure | undefined => {
+  if (parsed.command !== "path") return undefined
+  const title = str(parsed, "title")
+  if (title === undefined || title.trim() !== "") return undefined
+  return fail(
+    "ERR_INVALID_FLAG",
+    "--title must be a non-empty string, as a write line's title is",
+    ["memhtml path --title 'A fact' --type semantic"]
+  )
+}
+
 /** `memhtml session prune`: `--older-than` is a duration with a unit (`parseOlderThan`). */
 const sessionPruneFlags = (parsed: Parsed): Failure | undefined => {
   if (parsed.command !== "session prune") return undefined
@@ -1273,12 +1294,16 @@ const surplusArgs = (parsed: Parsed, spec: CommandSpec): Failure | undefined => 
 const ROOT_WITHOUT_LAYER: ReadonlySet<string> = new Set(["serve mcp", "exec", "config"])
 
 /**
- * The v2 arms (`v2.ts`) resolve the root themselves too: every `session` and `head` command reads
- * git and a session's own files under `.memhtml/sessions/`, and none opens `index.db`, so the app
- * layer is never built for them and an injected one is not a door to the root.
+ * The v2 arms (`v2.ts`) resolve the root themselves too: every `session`, `head`, and `curate`
+ * command, and `path`, reads git and a session's own files under `.memhtml/sessions/`, and none
+ * opens `index.db`, so the app layer is never built for them and an injected one is not a door to
+ * the root.
  */
 const isV2Command = (command: string): boolean =>
-  command.startsWith("session ") || command.startsWith("head ") || command.startsWith("curate ")
+  command.startsWith("session ") ||
+  command.startsWith("head ") ||
+  command.startsWith("curate ") ||
+  command === "path"
 
 /**
  * The v2 arms that embed (`docs/design.md` §16, "The vector arm"): the only ones that bind an
@@ -1541,6 +1566,9 @@ const validateAgainst = (
 
   const prune = sessionPruneFlags(parsed)
   if (prune !== undefined) return prune
+
+  const pathAsk = pathFlags(parsed)
+  if (pathAsk !== undefined) return pathAsk
 
   const serve = headServeFlags(parsed)
   if (serve !== undefined) return serve
@@ -2188,6 +2216,39 @@ export const run = async (
       if (!decoded.ok) return emit(decoded.failure, EXIT_USAGE)
       sessionOps = decoded.ops
     }
+    /**
+     * `path --claimed`: the paths pending elsewhere, one per line, read and judged here so an
+     * unreadable file or a line that is not a memory path is exit 2 with nothing opened.
+     */
+    let claimed: ReadonlySet<string> = new Set()
+    const claimedFile = parsed.command === "path" ? str(parsed, "claimed") : undefined
+    if (claimedFile !== undefined) {
+      let text: string
+      try {
+        text = claimedFile === "-" ? await stdin() : await readFile(claimedFile, "utf8")
+      } catch (error) {
+        return emit(
+          fail(
+            "ERR_PATH_NOT_FOUND",
+            `path cannot read --claimed ${claimedFile}: ${error instanceof Error ? error.message : String(error)}`,
+            [`ls ${claimedFile}`, "memhtml path --title 'A fact' --type semantic --claimed -"]
+          ),
+          EXIT_USAGE
+        )
+      }
+      const decoded = claimedPathsOf(text)
+      if (!decoded.ok) {
+        return emit(
+          fail(
+            "ERR_INVALID_FLAG",
+            `path --claimed ${claimedFile}: line ${String(decoded.line)}: ${decoded.reason}. The file holds one repo-relative memory path per line`,
+            ["printf '%s\\n' areas/inbox/a-fact.html > claimed.txt"]
+          ),
+          EXIT_USAGE
+        )
+      }
+      claimed = decoded.paths
+    }
 
     /**
      * `MEMHTML_EMBED_DEADLINE_MS` for `head search` and `head serve`, `MEMHTML_EMBED_WARM_IDLE_MS`
@@ -2397,6 +2458,18 @@ export const run = async (
           })
           return ["session.pruned", data] as const
         }
+        if (parsed.command === "path") {
+          const data = yield* pathPreview({
+            root,
+            title: str(parsed, "title") ?? "",
+            memoryType: str(parsed, "type") ?? "",
+            workspace: str(parsed, "workspace"),
+            tags: list(parsed, "tag"),
+            path: str(parsed, "path"),
+            claimed
+          })
+          return ["memory.path", data] as const
+        }
         const session = sessionIdOf(parsed)
         return yield* runV2(parsed.command, {
           root,
@@ -2404,6 +2477,7 @@ export const run = async (
           implicitStart: session.implicit,
           runBound: session.runBound,
           dropRefused: bool(parsed, "drop-refused", false),
+          dryRun: bool(parsed, "dry-run", false),
           ref: str(parsed, "ref"),
           message: str(parsed, "message") ?? "",
           force: bool(parsed, "force", false),

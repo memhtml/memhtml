@@ -1,4 +1,5 @@
-import type { OverlayOp } from "@memhtml/contracts"
+import { archivePathFor, type OverlayOp } from "@memhtml/contracts"
+import { addLink } from "@memhtml/html"
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
 
@@ -75,6 +76,15 @@ import { mapHead, memory, recordFrom, STRICT_BAR } from "./helpers.js"
  *   comes off with no violation).
  * - unlabel anchor, archives: the `archived.has(...)` exemption removed -> the same case (an
  *   unlabel followed by an archive of its record is refused).
+ * - archive inbound (2026-10-26): the closing `danglingAt(archive, "archived")` loop dropped -> "an
+ *   archive that leaves a live edge to its path behind is refused, naming the holder" (the bare
+ *   archive passes).
+ * - archive scope (2026-10-26): the `verb === "archived" && isReservedPath(...)` skip dropped -> "an
+ *   archive leaves the edge of a holder its scope may not write, and a move does not" (the
+ *   session-scope archive is refused on the arc).
+ * - archive of a batch put (2026-10-26): the `verb === "moved"` guard dropped from the put and
+ *   move-in exemption -> "an archive of a record the batch put is held to the edges the batch aimed
+ *   at it" (the dangling link passes).
  */
 
 const CAPITAL = memory("Capital", "The capital of India is New Delhi.")
@@ -340,6 +350,150 @@ describe("validateOps", () => {
     }
     expect(validateOps(view, [archive, supersedes])).toEqual([])
     expect(validateOps(view, [supersedes, archive])).toEqual([])
+  })
+
+  it("an archive that leaves a live edge to its path behind is refused, naming the holder", async () => {
+    const retired = "resources/acme-widget/b.html"
+    const successor = "resources/acme-widget/a.html"
+    const slot = archivePathFor(retired, 2031)
+    const retiredHtml = memory("Widget batch size", "The acme widget ships in batches of twelve.")
+    const view = mapHead("0".repeat(40), [
+      await recordFrom(retired, retiredHtml),
+      await recordFrom(
+        successor,
+        addLink(
+          memory("Widget batch size, revised", "The acme widget ships in batches of twenty."),
+          "supersedes",
+          `/${retired}`
+        )
+      ),
+      await recordFrom(
+        archivePathFor("resources/acme-widget/c.html", 2030),
+        addLink(memory("Old widget note", "An older widget fact."), "relates_to", `/${retired}`)
+      )
+    ])
+    const archive: OverlayOp = { kind: "archive", path: retired, to: slot, html: retiredHtml }
+    const dangling = (holder: string, rel: string) => ({
+      kind: "format",
+      path: retired,
+      reasons: [
+        `archived to ${slot}, but ${holder} still carries ${rel} -> /${retired}: repoint it with an unlink of that edge and a link of the same rel to /${slot} in the same batch`
+      ]
+    })
+    // The bare archive: the live successor's edge would dangle. The archived holder keeps its edge
+    // as history and is never asked to move it.
+    expect(validateOps(view, [archive])).toEqual([dangling(successor, "supersedes")])
+    // The repoint may come before or after the archive in the order.
+    const repoint: ReadonlyArray<OverlayOp> = [
+      { kind: "unlink", path: successor, rel: "supersedes", href: `/${retired}` },
+      { kind: "link", path: successor, rel: "supersedes", href: `/${slot}` }
+    ]
+    expect(validateOps(view, [...repoint, archive])).toEqual([])
+    expect(validateOps(view, [archive, ...repoint])).toEqual([])
+    // A holder the batch archives too keeps the edge in its archived copy.
+    const both: OverlayOp = {
+      kind: "archive",
+      path: successor,
+      to: archivePathFor(successor, 2031),
+      html: view.get(successor)?.html ?? ""
+    }
+    expect(validateOps(view, [both, archive])).toEqual([])
+    // An edge the batch's own put or link aims at the archived path dangles the same way.
+    const fresh = "resources/acme-widget/e.html"
+    const aimed = addLink(
+      memory("Widget crate", "A widget crate holds four batches."),
+      "relates_to",
+      `/${retired}`
+    )
+    expect(validateOps(view, [...repoint, put(fresh, aimed), archive])).toEqual([
+      dangling(fresh, "relates_to")
+    ])
+    expect(
+      validateOps(view, [
+        ...repoint,
+        { kind: "link", path: successor, rel: "relates_to", href: `/${retired}` },
+        archive
+      ])
+    ).toEqual([dangling(successor, "relates_to")])
+  })
+
+  it("an archive of a record the batch put is held to the edges the batch aimed at it", async () => {
+    const holder = "resources/acme-widget/a.html"
+    const fresh = "resources/acme-widget/f.html"
+    const slot = archivePathFor(fresh, 2031)
+    const freshHtml = memory("Widget pallet load", "A widget pallet carries six crates.")
+    const view = mapHead("0".repeat(40), [
+      await recordFrom(holder, memory("Widget pallet note", "Widget pallets are wrapped twice."))
+    ])
+    const archive: OverlayOp = { kind: "archive", path: fresh, to: slot, html: freshHtml }
+    // The put is the record the archive moves, so the path ends empty and the edge to it dangles.
+    expect(
+      validateOps(view, [
+        put(fresh, freshHtml),
+        { kind: "link", path: holder, rel: "relates_to", href: `/${fresh}` },
+        archive
+      ])
+    ).toEqual([
+      {
+        kind: "format",
+        path: fresh,
+        reasons: [
+          `archived to ${slot}, but ${holder} still carries relates_to -> /${fresh}: repoint it with an unlink of that edge and a link of the same rel to /${slot} in the same batch`
+        ]
+      }
+    ])
+    // Linked to the slot instead, the batch passes.
+    expect(
+      validateOps(view, [
+        put(fresh, freshHtml),
+        { kind: "link", path: holder, rel: "relates_to", href: `/${slot}` },
+        archive
+      ])
+    ).toEqual([])
+  })
+
+  it("an archive leaves the edge of a holder its scope may not write, and a move does not", async () => {
+    const retired = "resources/acme-widget/b.html"
+    const slot = archivePathFor(retired, 2031)
+    const arc = "areas/arcs/acme-widget-arc.html"
+    const retiredHtml = memory("Widget batch size", "The acme widget ships in batches of twelve.")
+    const view = mapHead("0".repeat(40), [
+      await recordFrom(retired, retiredHtml),
+      await recordFrom(
+        arc,
+        addLink(
+          memory("Widget arc", "Four widget facts show how batches grew."),
+          "part_of",
+          `/${retired}`
+        )
+      )
+    ])
+    const archive: OverlayOp = { kind: "archive", path: retired, to: slot, html: retiredHtml }
+    // Under `session` no batch can edit the arc, so the archive leaves its edge to the curator.
+    expect(validateOps(view, [archive])).toEqual([])
+    // Under `curate` the arc is writable, and its edge is held like any other.
+    expect(validateOps(view, [archive], { scope: "curate" })).toEqual([
+      {
+        kind: "format",
+        path: retired,
+        reasons: [
+          `archived to ${slot}, but ${arc} still carries part_of -> /${retired}: repoint it with an unlink of that edge and a link of the same rel to /${slot} in the same batch`
+        ]
+      }
+    ])
+    // A move is placement, and is held to the arc under either scope.
+    const moved = "resources/acme-gadget/b.html"
+    expect(
+      validateOps(view, [{ kind: "move", path: retired, to: moved, html: retiredHtml }])
+    ).toEqual([
+      {
+        kind: "format",
+        path: retired,
+        reasons: [
+          `moved to ${moved}, but ${arc} still carries part_of -> /${retired}: repoint it with an unlink of that edge and a link of the same rel to /${moved} in the same batch`
+        ]
+      }
+    ])
   })
 
   it("refuses an archive op whose article is not the source's, and takes one whose head differs", async () => {
