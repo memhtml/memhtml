@@ -30,10 +30,11 @@ const STRICT_PLAN = {
  * tokens, and author metas are the ones the head would compute.
  *
  * Mutations, each run once with the change applied and the named case red (2026-09-24):
- * - `plan.ts` `frameGroupAgrees`: return `true` -> "a frame-key group whose values disagree is kept
- *   as a contradiction candidate, never folded" (the Freedonia group comes back as `fold`).
- * - `plan.ts` `frameGroupAgrees`: drop the verdict-title clause -> "two verdicts with one claim and
- *   two titles disagree" (the pair comes back as `fold`).
+ * - `frameGroupAgrees` (`@memhtml/domain`, `agreement.ts`): return `true` -> "a frame-key group whose
+ *   values disagree is kept as a contradiction candidate, never folded" (the Freedonia group comes
+ *   back as `fold`).
+ * - `frameGroupAgrees` (`@memhtml/domain`, `agreement.ts`): drop the verdict-title clause -> "two
+ *   verdicts with one claim and two titles disagree" (the pair comes back as `fold`).
  * - `plan.ts` `partitionKey`: drop `sourceOf(record)` -> "records from another source never share a
  *   cluster" (the agent:sleep restatements join the (none) community).
  * - `plan.ts` cut 0: treat a `keep` ruling like no ruling -> "a keep ruling takes a record out of

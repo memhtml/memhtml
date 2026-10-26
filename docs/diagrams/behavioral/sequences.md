@@ -258,17 +258,17 @@ The second `Server->>Server`: `landed` builds the version at the new commit from
 
 The `else` branch: no server, a 4xx, or a decline sends the commit to the local path (`apps/cli/src/v2.ts:1245-1283`, `apps/cli/src/v2.ts:1349-1351`). A 5xx or a lost answer fails with `ERR_STORAGE` instead, because the ref may already have moved. Locally, `sessionCommit` resumes the session, loads the head at its base, and runs the same `commitOverHead` (`apps/cli/src/v2.ts:1353-1362`).
 
-`Caller->>Commit` and `Commit->>Log`: `commitSession` holds the session's lock for the whole call and refuses a log that changed since the caller read it (`packages/session/src/commit.ts:451-458`).
+`Caller->>Commit` and `Commit->>Log`: `commitSession` holds the session's lock for the whole call and refuses a log that changed since the caller read it (`packages/session/src/commit.ts:570-577`).
 
-The `opt` block: a `pending` commit an earlier call left is settled first. It answers `committed` with `recovered: true` when that commit landed, and otherwise it undoes the checkout and goes on (`packages/session/src/commit.ts:465-491`, `packages/session/src/commit.ts:335-383`).
+The `opt` block: a `pending` commit an earlier call left is settled first. It answers `committed` with `recovered: true` when that commit landed, and otherwise it undoes the checkout and goes on (`packages/session/src/commit.ts:536-563`, `packages/session/src/commit.ts:448-501`).
 
-`Commit->>Commit`, validate, and the first `Commit->>Git`: the ops are judged against the write bar, and the ref must still be at the validated version (`packages/session/src/commit.ts:493-508`).
+`Commit->>Commit`, validate, and the first `Commit->>Git`: the ops are judged against the write bar, and the ref must still be at the validated version (`packages/session/src/commit.ts:621-636`).
 
-`Commit->>Commit`, contradictions, and the temporary index: frame-key contradictions are marked, then the blobs, the tree, and the commit are built through an index file of the call's own under the OS temp directory (`packages/session/src/commit.ts:510-534`, `packages/session/src/commit.ts:223-247`). The commit message carries the `Memhtml-Session` trailer (`packages/session/src/commit.ts:62-80`).
+`Commit->>Commit`, contradictions, and the temporary index: frame-key contradictions are marked, then the blobs, the tree, and the commit are built through an index file of the call's own under the OS temp directory (`packages/session/src/commit.ts:638-663`, `packages/session/src/commit.ts:336-360`). The commit message carries the `Memhtml-Session` trailer (`packages/session/src/commit.ts:97-115`).
 
 `Commit->>Log`, pending: the intent is saved before anything shared is touched (`packages/session/src/commit.ts:536-537`).
 
-`Commit->>Lock` through `Commit->>Lock`, release: `landOnRef` runs under the checkout lock and is uninterruptible once it holds it. The ref must still name the base, a checked-out ref with a dirty path answers `worktree-dirty`, `read-tree -m -u` moves the checkout, and `update-ref` swaps the ref. A lost swap rolls the checkout back (`packages/session/src/commit.ts:284-333`, `packages/session/src/commit.ts:539-567`).
+`Commit->>Lock` through `Commit->>Lock`, release: `landOnRef` runs under the checkout lock and is uninterruptible once it holds it. The ref must still name the base, a checked-out ref with a dirty path answers `worktree-dirty`, `read-tree -m -u` moves the checkout, and `update-ref` swaps the ref. A lost swap rolls the checkout back (`packages/session/src/commit.ts:398-447`, `packages/session/src/commit.ts:594-622`).
 
 `Commit->>Log`, final save, and `Commit-->>Caller`: the log is saved on the new commit with zero ops, and the outcome names the commit, its paths, and whether the checkout followed (`packages/session/src/commit.ts:569-580`).
 
