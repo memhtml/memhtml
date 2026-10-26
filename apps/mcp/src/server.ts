@@ -24,7 +24,7 @@ export const SERVER_VERSION = "0.17.0" // x-release-please-version
  *
  * **There is no server-level `instructions` here yet.** MCP defines an `instructions` field on the
  * initialize response for exactly the cross-tool guidance this server wants to give (when to batch,
- * the three doors, the commit duty). effect wires it: verified against effect 4.0.5 in the
+ * the three doors, the commit duty). effect wires it: verified against effect 4.0.6 in the
  * dependency's own source, `layerStdio` takes an `instructions` option and the initialize handler
  * returns it on `InitializeResult`. The call below passes none, so the initialize response carries
  * no `instructions`.
@@ -43,7 +43,7 @@ export const layerServer = (repoOverride?: string | undefined) =>
       McpServer.layerStdio({
         name: SERVER_NAME,
         version: SERVER_VERSION,
-        // The protocol revision is the caller's to state. effect 4.0.5 ships five adapters
+        // The protocol revision is the caller's to state. effect 4.0.6 ships five adapters
         // (`v2024_11_05`, `v2025_03_26`, `v2025_06_18`, `v2025_11_25`, `v2026_07_28`), and this
         // server names one. Naming it here keeps another revision an explicit, reviewable choice
         // rather than a default that moves the wire format under a shipped client.

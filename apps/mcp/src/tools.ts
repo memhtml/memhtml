@@ -207,7 +207,7 @@ const PATH_OVERRIDE_CONTRACT =
  * one workflow drift the first time the semantics move. Written once, appended twice.
  *
  * And it lives in a DESCRIPTION because this server sets nothing else an agent reads. MCP has a
- * server-level `instructions` field for exactly this kind of cross-tool guidance, and effect 4.0.5's
+ * server-level `instructions` field for exactly this kind of cross-tool guidance, and effect 4.0.6's
  * `layerStdio` takes one, but this server passes none. See the comment in `server.ts` next to
  * `layerStdio`. Tool descriptions are the only channel today, so a workflow rule that is not in one is
  * a rule no agent reads.

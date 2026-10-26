@@ -70,7 +70,7 @@ REMAINING, in rough order of pull:
 
 ## Upstream watch
 
-- The server sends no MCP `instructions` initialize field. The catalog pins effect 4.0.5, whose `layerStdio` takes an `instructions` option and returns it from initialize (probed 2026-10-26 in the installed package), so the guide's `write-surfaces`/`when-to-batch` prose can move into it. The comment at `apps/mcp/src/server.ts::layerServer` marks the spot.
+- The server sends no MCP `instructions` initialize field. The catalog pins effect 4.0.6, whose `layerStdio` takes an `instructions` option and returns it from initialize (probed 2026-10-26 in the installed package), so the guide's `write-surfaces`/`when-to-batch` prose can move into it. The comment at `apps/mcp/src/server.ts::layerServer` marks the spot.
 - effect masks handler errors unless a `failure:` schema is declared — any NEW tool must declare `failure: ToolFailure` or its errors read "internal server error". Locked by wire tests; the lesson is `.lessons/solutions/api-patterns/xor-params-and-mcp-error-masking.md`.
 
 ## Code-mode (recorded 2026-08-06)

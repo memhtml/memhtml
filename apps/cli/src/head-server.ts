@@ -1,7 +1,8 @@
 import { access, chmod, lstat, mkdir, rm, stat } from "node:fs/promises"
-import { createServer, type IncomingMessage } from "node:http"
+import { createServer } from "node:http"
 import { createConnection } from "node:net"
 import { dirname } from "node:path"
+import type { Readable } from "node:stream"
 
 import type { InvalidMemory, ModelUnavailable, StoreConfigInvalid } from "@memhtml/contracts/errors"
 import { StorageFailure } from "@memhtml/contracts/errors"
@@ -221,7 +222,7 @@ const EXEC_DRAIN_MAX_BYTES = 64 * EXEC_BODY_MAX_BYTES
  * open, until {@link EXEC_DRAIN_MAX_BYTES} have come in, where the request is destroyed.
  */
 const readCapped = (
-  incoming: IncomingMessage,
+  incoming: Readable,
   cap: number
 ): Promise<{ readonly text: string } | { readonly tooLarge: true } | { readonly bad: string }> =>
   new Promise((resolve) => {
