@@ -1,4 +1,4 @@
-import { filenameFor, slugify } from "./slug.js"
+import { filenameFor, slugify, slugifyStem } from "./slug.js"
 import { PARA_BUCKETS, type ParaBucket } from "./types.js"
 
 /**
@@ -189,14 +189,15 @@ export const placementFor = (input: PlacementInput): string => {
 /**
  * The full path for a new memory. An explicit valid `path` is authoritative and returned
  * verbatim in canonical form; otherwise the directory comes from {@link placementFor} and
- * the filename from {@link filenameFor}, which date-prefixes an episodic entry.
+ * the filename from {@link filenameFor} over the title's {@link slugifyStem} stem, which
+ * date-prefixes an episodic entry.
  */
 export const memoryPathFor = (
   input: PlacementInput & { readonly title: string; readonly at: Date }
 ): string => {
   if (input.path !== undefined && isValidMemoryPath(input.path)) return normalizePath(input.path)
   const filename = filenameFor({
-    slug: slugify(input.title),
+    slug: slugifyStem(input.title),
     episodic: input.memoryType === "episodic",
     at: input.at
   })
@@ -236,3 +237,34 @@ export const archiveYearOf = (path: string): number | undefined => {
   const match = /^archive\/(\d{4,})\//.exec(normalizePath(path))
   return match?.[1] === undefined ? undefined : Number(match[1])
 }
+
+/**
+ * The filename prefix that makes a detected task recognizable from its path alone: a task a
+ * detector minted at `det-<digest>-<slug>.html`, with no `author` column and no commit message to
+ * read.
+ * `memhtml task list --detected` filters on it and the curator's briefing reads it, so both agree
+ * about what a detected path is.
+ */
+export const DETECTION_PREFIX = "det-"
+
+/**
+ * Hex characters of the digest carried in a detected task's path.
+ *
+ * Twelve, which is git's own abbreviated-sha width. It leaves 48 bits against a queue whose size a cap
+ * holds in the tens, and it costs 17 characters of the 80-character slug budget rather than 68.
+ */
+export const DETECTION_DIGEST_CHARS = 12
+
+const DETECTION_KEY = new RegExp(
+  `^(${DETECTION_PREFIX}[0-9a-f]{${String(DETECTION_DIGEST_CHARS)}})-`
+)
+
+/**
+ * The key a detected task's path carries, or `undefined` when the path is not one. The filename is
+ * read, not the directory, so an archived detected task under `archive/<YYYY>/` keeps its key.
+ */
+export const detectionKeyOf = (path: string): string | undefined =>
+  DETECTION_KEY.exec(path.slice(path.lastIndexOf("/") + 1))?.[1]
+
+/** True when a path, live or archived, is a detected task's. */
+export const isDetectedTaskPath = (path: string): boolean => detectionKeyOf(path) !== undefined
