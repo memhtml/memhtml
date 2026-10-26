@@ -78,9 +78,9 @@ The five write tools are `memory_write`, `memory_write_batch`, `memory_correct`,
 
 A blind retry after a phase-3 failure can store the memory twice. Dedupe reads the index through `activePathForHash`, and the index hasn't caught up with the commit (`packages/index/src/traces-persist.ts:196-203`). `memory_status` shows the gap as `index_fresh: false`.
 
-The commit is a plain `git commit -m`, so it also commits any path that was already staged in the root (`packages/store/src/git.ts:445-464`).
+The commit is a plain `git commit -m`, so it also commits any path that was already staged in the root (`packages/store/src/git.ts:453-472`).
 
-Writes in one process take turns behind one permit, `oneWriterAtATime`, and reads don't wait for it. Inside the permit, each write holds the checkout lock, the directory `.memhtml/checkout.lock`, for the whole operation (`packages/store/src/store.ts:1397-1424`). `git commit` takes the same lock as a backstop (`packages/store/src/git.ts:445-448`). The lock is shared across processes, so a CLI command beside the server and a session commit in any process take turns with the server's writes. A write that waits 15 s for the lock fails with `ERR_STORAGE` (`checkout.locked`) before anything is written (`packages/store/src/checkout-lock.ts:31-44`). `docs/design.md` §17 gives the lock's timings.
+Writes in one process take turns behind one permit, `oneWriterAtATime`, and reads don't wait for it. Inside the permit, each write holds the checkout lock, the directory `.memhtml/checkout.lock`, for the whole operation (`packages/store/src/store.ts:1397-1424`). `git commit` takes the same lock as a backstop (`packages/store/src/git.ts:453-456`). The lock is shared across processes, so a CLI command beside the server and a session commit in any process take turns with the server's writes. A write that waits 15 s for the lock fails with `ERR_STORAGE` (`checkout.locked`) before anything is written (`packages/store/src/checkout-lock.ts:31-44`). `docs/design.md` §17 gives the lock's timings.
 
 ### The store policy and the record-creating tools
 

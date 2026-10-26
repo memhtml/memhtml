@@ -92,6 +92,12 @@ export interface GitShape {
   readonly statusPorcelainV2: () => Effect.Effect<ReadonlyArray<StatusEntry>, GitFailure>
   /** The blob sha a working-tree file would hash to. Equals its sha in the tree once committed. */
   readonly hashObject: (path: string) => Effect.Effect<string, GitFailure>
+  /**
+   * `git add` of exactly these paths. Each is passed as `:(literal)`, because `git add` reads its
+   * arguments as pathspecs and `[`, `*` and `?` are ordinary characters in a record's path: a bare
+   * `resources/a[b]/index.html` also stages an untracked `resources/ab/index.html`. A directory
+   * still stages what is under it, and a tracked path missing from the tree stages its removal.
+   */
   readonly add: (paths: ReadonlyArray<string>) => Effect.Effect<void, GitFailure>
   /** `git mv`. The destination's parent directory must already exist, since git will not make it. */
   readonly mv: (from: string, to: string) => Effect.Effect<void, GitFailure>
@@ -438,7 +444,9 @@ export const makeGit = (root: string): GitShape => ({
   add: (paths) =>
     paths.length === 0
       ? Effect.void
-      : git(root, "add", ["add", "--", ...paths]).pipe(Effect.asVoid),
+      : git(root, "add", ["add", "--", ...paths.map((path) => `:(literal)${path}`)]).pipe(
+          Effect.asVoid
+        ),
 
   mv: (from, to) => git(root, "mv", ["mv", "--", from, to]).pipe(Effect.asVoid),
 

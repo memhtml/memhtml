@@ -667,6 +667,45 @@ describe("the environment cannot change how a pathspec matches", () => {
   })
 })
 
+describe("add stages the paths it is given and no others", () => {
+  /**
+   * Every caller hands `add` the concrete paths it wrote, and `[`, `*` and `?` are ordinary
+   * characters in a record's path. Read as pathspecs, `probe/a[b].html` would also stage an
+   * untracked `probe/ab.html` and `probe/*.html` every untracked page beside it.
+   */
+  it("stages a path whose name is a glob pattern, and not the files the pattern matches", async () => {
+    const repo = await fixture()
+    for (const path of ["probe/a[b].html", "probe/ab.html", "probe/*.html", "probe/c.html"]) {
+      await put(repo.root, path, "probe")
+    }
+
+    await run(repo.git.add(["probe/a[b].html", "probe/*.html"]))
+
+    const staged = await run(repo.git.run(["diff", "--cached", "--name-only", "-z"]))
+    expect(parseNulPathList(staged)).toEqual(["probe/*.html", "probe/a[b].html"])
+  })
+
+  it("still stages a directory's contents and a tracked file's removal", async () => {
+    const repo = await fixture()
+    await put(repo.root, "probe/gone.html", "probe")
+    await run(repo.git.add(["probe/gone.html"]))
+    await run(repo.git.commit("memhtml(write): probe"))
+    await rm(join(repo.root, "probe/gone.html"))
+    await put(repo.root, "probe/dir/x.html", "probe")
+
+    await run(repo.git.add(["probe/gone.html", "probe/dir"]))
+
+    const status = ["diff", "--cached", "--name-status", "--no-renames", "-z"]
+    const staged = await run(repo.git.run(status))
+    expect(staged.split("\0").filter(Boolean)).toEqual([
+      "A",
+      "probe/dir/x.html",
+      "D",
+      "probe/gone.html"
+    ])
+  })
+})
+
 /** True when `path` exists on disk. */
 const exists = (path: string): Promise<boolean> =>
   access(path).then(

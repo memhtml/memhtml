@@ -202,6 +202,34 @@ describe("memhtml publish removes a listing whose directory holds no record", ()
     expect(await exists(cli, "resources/ab/index.html")).toBe(true)
   })
 
+  it("stages exactly its own listing when its directory name is a glob pattern", async () => {
+    /**
+     * The same character class on the staging side: a bare `resources/a[b]/index.html` handed to
+     * `git add` also matches an untracked `resources/ab/index.html` written by hand. Staged once, it
+     * is a tracked listing in a directory with no record, which the next publish would remove. Each
+     * staged path is a literal one, so the hand-written page is never committed and never removed.
+     */
+    const cli = await store()
+    await write(cli, "resources/a[b]/live.html", "The live widget fact")
+    const handWritten = "<!doctype html>\n<title>ab</title>\n<p>Written by hand.</p>\n"
+    await mkdir(join(cli.root, "resources/ab"), { recursive: true })
+    await writeFile(join(cli.root, "resources/ab/index.html"), handWritten, "utf8")
+
+    const first = await publish(cli)
+
+    expect(first.paths).toContain("resources/a[b]/index.html")
+    expect(await headPaths(cli)).toContain("resources/a[b]/index.html")
+    expect(await headPaths(cli)).not.toContain("resources/ab/index.html")
+    expect((await git(cli, "status", "--porcelain", "--", "resources/ab")).trim()).toBe(
+      "?? resources/ab/"
+    )
+
+    const second = await publish(cli)
+
+    expect(second.removed).toEqual([])
+    expect(await readFile(join(cli.root, "resources/ab/index.html"), "utf8")).toBe(handWritten)
+  })
+
   it("stages no removal when a write fails, so the next commit cannot carry one", async () => {
     /**
      * Every store write commits the whole shared git index (`git commit` with no pathspec), so a
