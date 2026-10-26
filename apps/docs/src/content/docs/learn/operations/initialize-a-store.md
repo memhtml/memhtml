@@ -9,7 +9,7 @@ memhtml init
 memhtml index rebuild --embed
 ```
 
-`memhtml init` asks the repository what is already there and writes only what is missing (`packages/store/src/layout.ts:183`). It reaches the same end state from an empty directory, from a fully scaffolded repository, and from one an interrupted run left half-finished. Re-running it is always safe, and on a store that already has everything it writes nothing:
+`memhtml init` asks the repository what is already there and writes only what is missing (`packages/store/src/layout.ts:246`). It reaches the same end state from an empty directory, from a fully scaffolded repository, and from one an interrupted run left half-finished. Re-running it is always safe, and on a store that already has everything it writes nothing:
 
 ```json
 {
@@ -41,6 +41,18 @@ true
 ```
 
 Anything other than `true` means you still need to run `memhtml init`. If a merge has already written conflict markers into a generated file, run `memhtml publish` and let it regenerate the file rather than editing it by hand.
+
+`memhtml init` sets a second value beside the driver: `merge.directoryRenames=false`. Archiving moves a record to `archive/<YYYY>/` under its same path, one file at a time. When that move takes the last file out of a directory, git's merge reads it as the whole directory moving, and a record another clone wrote into that directory meanwhile follows it into `archive/`, or the merge stops with `CONFLICT (file location)`. Every move the store makes names its own destination, so the setting costs nothing:
+
+```bash
+git -C "$MEMHTML_ROOT" config --get merge.directoryRenames
+```
+
+```
+false
+```
+
+A clone initialized before `memhtml init` set this value prints nothing. The setting protects the clone that runs the merge, so after an upgrade, run `memhtml init` again in every existing clone, including one that only writes and pulls. On a scaffolded store it changes nothing else. `memhtml publish` sets the value too, but only in the clone that publishes, so it is a fallback for publishing clones alone.
 
 The scaffolded `.gitattributes` is three lines:
 

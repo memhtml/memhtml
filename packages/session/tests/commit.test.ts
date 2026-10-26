@@ -1049,6 +1049,29 @@ describe("commitSession", () => {
     expect(resumed.pending).toBeUndefined()
   })
 
+  it("lands a put whose name is a glob pattern beside an untracked file the pattern matches", async () => {
+    /**
+     * The dirty check hands git the paths the commit changes. Read as a pattern,
+     * `areas/inbox/a[b].html` also matches an untracked `areas/inbox/ab.html` the commit never
+     * touches, and the commit refused as `worktree-dirty` over it. Each path is read as itself.
+     */
+    const { root, base, head } = await seeded()
+    const draft = "<!-- a draft -->\n"
+    await writeFile(join(root, "areas/inbox/ab.html"), draft, "utf8")
+    const html = memory("Bracket", "A fact filed under a bracketed name.")
+    const session = await start(root, "glob", head, [putOp("areas/inbox/a[b].html", html)])
+
+    const outcome = await run(commitSession({ session, head, message: "add a bracketed name" }))
+
+    expect(outcome.kind).toBe("committed")
+    if (outcome.kind !== "committed") return
+    expect(outcome.paths).toEqual(["areas/inbox/a[b].html"])
+    expect(await git(root, ["rev-parse", `${outcome.sha}^`])).toBe(base)
+    expect(await readFile(join(root, "areas/inbox/a[b].html"), "utf8")).toBe(html)
+    expect(await readFile(join(root, "areas/inbox/ab.html"), "utf8")).toBe(draft)
+    expect(await git(root, ["status", "--porcelain"])).toBe("?? areas/inbox/ab.html")
+  })
+
   it("creates a curator ref that does not exist yet", async () => {
     const { root, base, head } = await seeded()
     const ref = "refs/heads/curate/2026-09-23"
