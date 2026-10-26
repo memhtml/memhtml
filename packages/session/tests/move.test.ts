@@ -59,9 +59,6 @@ import {
  * - commit, step 3 (2026-10-26): the `archiving` skip dropped from `markContradictions` -> "marks no
  *   contradiction against a rival the same batch archives" (the successor is marked against the
  *   path the archive empties).
- * - withRepoints, reoccupied (2026-10-26): the `op.kind === "move"` guard dropped from the skip of
- *   a source the batch puts at again -> "repoints a holder of an archived record even when the
- *   batch puts at its path again" (the archive comes back alone).
  * - withRepoints, moved holders (2026-10-26): batch unlinks keyed by the path they name, not the
  *   path the holder had when the batch began -> "takes an unlink at the path the batch moved a
  *   holder to as that holder's repoint" (a second pair is added at the old path).
@@ -440,26 +437,6 @@ describe("withRepoints completes an archive", () => {
       link(SUCCESSOR, "supersedes", `/${SLOT}`)
     ])
     expect(validateOps(head, travels)).toEqual([])
-  })
-
-  it("repoints a holder of an archived record even when the batch puts at its path again", async () => {
-    const head = mapHead(SHA, [
-      await recordFrom(SUCCESSOR, SUCCESSOR_HTML),
-      await recordFrom(RETIRED, RETIRED_HTML)
-    ])
-    // The successor's edge names the record that moves to the slot, not whatever the path holds next.
-    const archived = retire(RETIRED, RETIRED_HTML)
-    const again: OverlayOp = {
-      kind: "put",
-      path: RETIRED,
-      html: memory("Widget batch size, again", "The acme widget ships in batches of thirty.")
-    }
-    expect(withRepoints(head, [archived, again])).toEqual([
-      unlink(SUCCESSOR, "supersedes", `/${RETIRED}`),
-      link(SUCCESSOR, "supersedes", `/${SLOT}`),
-      archived,
-      again
-    ])
   })
 
   it("leaves a holder the scope may not write to the curator, and repoints it under curate", async () => {

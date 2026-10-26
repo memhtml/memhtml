@@ -20,7 +20,7 @@ import { type CommitScope, isReservedPath } from "./validate.js"
  * moves is edited at its old path and the edit travels with it. A holder the batch archives is left
  * alone (its archived copy keeps the edge as history, which `validateOps` allows), an edge the batch
  * already unlinks (at the holder's path, or at the path the batch moved it to) is left to the batch,
- * and a move's source the batch puts a new record at again needs nothing. So is a holder `scope`
+ * and a source the batch puts a new record at again needs nothing. So is a holder `scope`
  * may not write ({@link isReservedPath}: an arc or a people record under `session`), whose edge is
  * the curator's to repoint; `validateOps` lets an archive leave it and names it on a move. Edges a
  * batch's own puts or `link`s aim at the old path are not the view's to know; `validateOps` names
@@ -57,9 +57,9 @@ export const withRepoints = (
   for (const op of ops) {
     if (op.kind !== "move" && op.kind !== "archive") continue
     const from = normalizePath(op.path)
-    // A put at a move's source is a new record there, which the edges may name; a put before an
-    // archive is the record it archives, so its edges follow it to the slot.
-    if (op.kind === "move" && reoccupied.has(from)) continue
+    // A put at the source is a new record there, which the edges may name. (After an archive the put
+    // is a claim edit, so that batch is refused whatever its edges.)
+    if (reoccupied.has(from)) continue
     const href = pathToHref(from)
     for (const holder of [...view.inbound(href)].sort()) {
       const record = view.get(holder)
