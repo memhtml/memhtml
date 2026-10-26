@@ -7,36 +7,50 @@
  * every edit that keeps the declaration, and when the declaration goes, this check fails at the
  * commit that removed it.
  *
- * The hand docs are every Markdown file under `docs/` except `docs/codebase/` (generated at a
- * commit), `docs/reference/` (generated from the code), `docs/rfcs/` (frozen proposals) and
- * `docs/bugs/` (dated reports), plus `README.md`, `CLAUDE.md`, and the docs site's authored pages
- * under `apps/docs/src/content/docs/` except the generated `api/` and `agents.md`. In each of them a
- * code span is checked by what it holds:
+ * The hand docs are every Markdown file at the repository root except the generated `AGENTS.md`
+ * and `CHANGELOG.md`; every one under `docs/` except `docs/codebase/` (generated at a commit),
+ * `docs/reference/` (generated from the code), `docs/rfcs/` (frozen proposals) and `docs/bugs/`
+ * (dated reports); and the docs site's authored pages under `apps/docs/src/content/docs/`, except
+ * the generated `api/`. In each of them a code span is checked by what it holds:
  *
- * - `path:N`, `path:N-M`, or a bare `:N` that continues one is a line citation, and it fails.
+ * - `path:N`, `path:N-M`, `path:N:C`, `path#LN`, a list such as `path:N, :M`, or any of those
+ *   followed by a name, is a line citation, and it fails. So does a bare `:N` that continues a
+ *   span naming a file earlier in the same paragraph or table. A bare `:N` with no file before
+ *   it, such as a port, is not a citation.
  * - `path::Symbol` must name a file that declares `Symbol` at its top level: a function, class,
- *   const, let, var, interface, type, enum or namespace, exported or not. `path::Outer::inner` must
- *   also find `inner` declared inside `Outer`: a member of a class, interface or object literal, or
- *   a function or const nested in its body. That last form exists because most of this codebase is
- *   Effect closures, where the code a sentence means is a const inside `makeStore`, not
- *   `makeStore` itself.
- * - A repository path (`apps/…`, `packages/…`, `scripts/…`, `tests-integration/…`) must exist.
- *   A glob or a `<placeholder>` is checked up to the directory before it, and a build output such as
- *   `dist/` up to the package that builds it, so the check never depends on a build having run.
+ *   const, let, var, interface, type, enum or namespace, exported or not. `path::Outer::inner`
+ *   must find `inner` declared directly in `Outer`, and each further link directly in the one
+ *   before it: a member of a class, interface or enum, a key of an object or type literal in
+ *   `Outer`'s own value (call arguments included, as in `Tool.make("name", { parameters })`), or
+ *   a declaration in `Outer`'s body. A name that only appears deeper is not one: a key of an
+ *   object built inside a function body, a destructured parameter, a type parameter, or a const
+ *   in a nested function, which is cited through that function. The nested form exists because
+ *   most of this codebase is Effect closures, where the code a sentence means is a const inside
+ *   `makeStore`, not `makeStore` itself.
+ * - A repository path (`apps/…`, `packages/…`, `scripts/…`, `tests-integration/…`, `docs/…`)
+ *   must exist. A glob or a `<placeholder>` is checked up to the directory before it, and a build
+ *   output such as `dist/` up to the package that builds it, so the check never depends on a
+ *   build having run. A bare file name is a root-level file when the root holds it or held it at
+ *   a commit in HEAD's history, and then it must exist: a renamed `RUNBOOK.md` fails every doc
+ *   that still names it, while `index.html`, which this repository's root never held, names a
+ *   store's file.
  *
  * Every page under `docs/codebase/` is generated against one commit, and its line citations are
- * true for that commit, so they are never read against HEAD. The one rule there is that each page
- * names its commit, as `commit: <40-hex sha>` in its front matter or else on its
- * `> Built from commit` line, and that the commit exists in this clone (`git cat-file -e`). CI
- * therefore checks out full history: a shallow clone holds no commit but its own.
+ * true for that commit, so they are never read against HEAD. Each page names its commit, as
+ * `commit: <40-hex sha>` in its front matter or else on its `> Built from commit` line. The
+ * commit must exist in this clone (`git cat-file -e`) and be an ancestor of HEAD (`git
+ * merge-base --is-ancestor`), and every line citation on the page must name a file that commit
+ * holds, with its lines inside that file's length there; a bare `:N` reads as it does in a hand
+ * doc. CI therefore checks out full history in every job that runs `check`: a shallow clone
+ * holds no commit but its own.
  *
  * Declarations are read by a small scanner rather than a parser. TypeScript 7, which the repository
  * compiles with, has no in-process compiler API, and a parser would be a new dependency for a
  * question this narrow. The scanner drops comments, strings, template text and regular expressions,
  * tracks bracket nesting, and reads the declaration forms above. It relies on the formatting biome
  * enforces, where a statement or member ends at the next line that starts at its own depth and
- * indentation. A file whose brackets do not balance after scanning is reported as unreadable
- * rather than guessed at.
+ * indentation. A file whose brackets do not balance after scanning, or close with the wrong kind,
+ * is reported as unreadable rather than guessed at.
  *
  *   node scripts/doc-citations.mjs              check this repository
  *   node scripts/doc-citations.mjs --root DIR   check the git checkout at DIR
@@ -74,24 +88,21 @@ const repositoryFiles = () => {
 
 const MARKDOWN = /\.mdx?$/
 const SITE = "apps/docs/src/content/docs/"
+/** The root-level Markdown a command writes: `mise run agents-doc` and release-please. */
+const GENERATED_AT_ROOT = new Set(["AGENTS.md", "CHANGELOG.md"])
+/** The directories under `docs/` whose pages are generated, frozen, or dated. */
+const NOT_HAND_WRITTEN = ["docs/codebase/", "docs/reference/", "docs/rfcs/", "docs/bugs/"]
 
 /** A dot-directory under `docs/` holds a generator's working files, not pages. */
 const isPage = (file) =>
   MARKDOWN.test(file) && !file.split("/").some((part) => part.startsWith("."))
 
 const isHandDoc = (file) => {
-  if (file === "README.md" || file === "CLAUDE.md") return true
   if (!isPage(file)) return false
-  if (file.startsWith(SITE)) {
-    const page = file.slice(SITE.length)
-    return !page.startsWith("api/") && page !== "agents.md"
-  }
-  return (
-    file.startsWith("docs/") &&
-    !["docs/codebase/", "docs/reference/", "docs/rfcs/", "docs/bugs/"].some((dir) =>
-      file.startsWith(dir)
-    )
-  )
+  if (!file.includes("/")) return !GENERATED_AT_ROOT.has(file)
+  // The site's pages are authored, `agents.md` included; the TypeDoc tier under `api/` is generated.
+  if (file.startsWith(SITE)) return !file.slice(SITE.length).startsWith("api/")
+  return file.startsWith("docs/") && !NOT_HAND_WRITTEN.some((dir) => file.startsWith(dir))
 }
 
 const isCodebasePage = (file) => file.startsWith("docs/codebase/") && isPage(file)
@@ -99,7 +110,8 @@ const isCodebasePage = (file) => file.startsWith("docs/codebase/") && isPage(fil
 // --- code spans in Markdown ----------------------------------------------------------------------
 
 /**
- * Every inline code span in a Markdown file, with the line its opening backticks sit on.
+ * Every inline code span in a Markdown file, with the line its opening backticks sit on and the
+ * index of the block (paragraph, list, or table) it sits in.
  *
  * Front matter and fenced blocks are skipped: a fence holds an example, not a citation. A span is
  * closed by the next backtick run of the same length inside the same block, as CommonMark reads it,
@@ -115,8 +127,9 @@ export const codeSpans = (text) => {
   }
   let fence = null
   let block = []
+  let blocks = 0
   const flush = () => {
-    if (block.length > 0) spans.push(...spansInBlock(block))
+    if (block.length > 0) spans.push(...spansInBlock(block, blocks++))
     block = []
   }
   for (let index = start; index < lines.length; index++) {
@@ -140,7 +153,7 @@ export const codeSpans = (text) => {
   return spans
 }
 
-const spansInBlock = (block) => {
+const spansInBlock = (block, blockIndex) => {
   const text = block.map((entry) => entry.text).join("\n")
   const lineAt = (offset) => {
     let seen = 0
@@ -177,7 +190,7 @@ const spansInBlock = (block) => {
     }
     let content = text.slice(index + run, close).replace(/\n/g, " ")
     if (/^ .*[^ ].* $/.test(content)) content = content.slice(1, -1)
-    spans.push({ content, line: lineAt(index) })
+    spans.push({ content, line: lineAt(index), block: blockIndex })
     index = close + run
   }
   return spans
@@ -443,9 +456,28 @@ const isNameish = (token) =>
   token !== undefined && (token.type === "name" || (token.type === "string" && token.value !== "`"))
 
 /**
- * Every declaration in a source file, each with the declaration it sits inside. Returns `null` when
- * the brackets do not balance, which means the scanner misread the file and nothing it found can
- * be trusted.
+ * Whether `token` sits on `previous`'s line with no space between them. Only for a name or
+ * punctuation before it, whose value is its source text; a string token's value drops its quotes.
+ */
+const touching = (previous, token) =>
+  previous !== undefined &&
+  previous.line === token.line &&
+  previous.column + previous.value.length === token.column
+
+/** The bracket that closes each opening one. */
+const CLOSER = { "{": "}", "${": "}", "(": ")", "[": "]" }
+
+/**
+ * Every declaration in a source file, each with the declaration it sits directly inside. Returns
+ * `null` when the brackets do not balance, which means the scanner misread the file and nothing it
+ * found can be trusted.
+ *
+ * Three things that look like members are not recorded, because none of them declares anything
+ * its owner exposes: a key of an object literal inside a function body (a call's argument, a
+ * returned object), which belongs to the expression rather than to the function; anything inside a
+ * parameter list, so a destructured parameter or a parameter's type literal; and a type parameter,
+ * which sits inside angle brackets. A parameter list is told from a call by what follows its `)`:
+ * `=>`, a body, or a return type.
  */
 export const declarationsIn = (source) => {
   const tokens = tokenize(source)
@@ -461,11 +493,29 @@ export const declarationsIn = (source) => {
   const declarations = []
   let header = -1
   let label = -1
+  // The token after the newest declaration's name and type parameters: a `(` there opens its
+  // parameters, even written flush against the name like a call.
+  let paramsAt = -1
+  let balanced = true
+  const afterTypeParameters = (name) => {
+    let at = name + 1
+    if (tokens[at]?.value !== "<") return at
+    for (let angles = 0; at < tokens.length; at++) {
+      if (tokens[at].value === "<") angles++
+      else if (tokens[at].value === ">" && --angles === 0) return at + 1
+    }
+    return at
+  }
   const record = (name, kind, at) => {
     const depth = stack.length
     while ((open.at(-1)?.depth ?? -1) >= depth) open.pop()
-    const declaration = { name, kind, line: tokens[at].line, depth, indent: indentOf[at] }
-    declaration.parent = open.at(-1) ?? null
+    const parent = open.at(-1) ?? null
+    paramsAt = afterTypeParameters(at)
+    // A key counts only in its owner's own value. Once a function body opens between the owner and
+    // the object, the object is something the function builds, not something it declares.
+    const frames = stack.slice(parent?.depth ?? 0)
+    if (kind === "member" && frames.some((frame) => frame.kind === "block")) return
+    const declaration = { name, kind, line: tokens[at].line, depth, indent: indentOf[at], parent }
     declarations.push(declaration)
     open.push(declaration)
   }
@@ -489,27 +539,50 @@ export const declarationsIn = (source) => {
         if (body) header = -1
         // The colon that ends a `case` label opens a block, not a property value.
         const members = body || (MEMBERS_AFTER.has(previous?.value ?? ";") && !previous?.label)
-        stack.push({ kind: members ? "members" : "block", angles: 0 })
+        stack.push({ kind: members ? "members" : "block", angles: 0, closer: "}" })
         continue
       }
-      if (token.value === "${" || token.value === "(" || token.value === "[") {
-        stack.push({ kind: "expression", angles: 0 })
+      if (token.value === "(") {
+        // A call is written flush against its callee; `if (`, `= (` and `: (` are spaced.
+        const call =
+          touching(previous, token) &&
+          (previous.type === "name" || [")", "]", "?."].includes(previous.value))
+        stack.push({
+          kind: "expression",
+          angles: 0,
+          closer: ")",
+          from: declarations.length,
+          params: at === paramsAt,
+          call
+        })
+        continue
+      }
+      if (token.value === "${" || token.value === "[") {
+        stack.push({ kind: "expression", angles: 0, closer: CLOSER[token.value] })
         continue
       }
       if (token.value === ":" && label === depth) {
         token.label = true
         label = -1
       }
-      // A `<` written flush against a name opens type arguments (biome spaces a comparison), and
-      // the commas inside `Map<K, V>` separate arguments, not members.
-      const flush =
-        previous?.type === "name" &&
-        previous.line === token.line &&
-        previous.column + previous.value.length === token.column
-      if (container !== undefined && token.value === "<" && flush) container.angles++
+      // A `<` flush against a name opens type arguments (biome spaces a comparison), and so does
+      // one after punctuation such as `:` or `=`, where no comparison can start, as in
+      // `run: <A, E>(...)`. Inside them, the commas of `Map<K, V>` separate arguments, not members.
+      const typeArguments =
+        (previous?.type === "name" && touching(previous, token)) ||
+        (previous?.type === "punct" && ![")", "]", "}"].includes(previous.value))
+      if (container !== undefined && token.value === "<" && typeArguments) container.angles++
       if (container !== undefined && token.value === ">" && container.angles > 0) container.angles--
       if (token.value === "}" || token.value === ")" || token.value === "]") {
-        stack.pop()
+        const frame = stack.pop()
+        if (frame?.closer !== token.value) balanced = false
+        const parameters =
+          frame?.closer === ")" &&
+          (next?.value === "=>" ||
+            ((frame.params || !frame.call) && (next?.value === "{" || next?.value === ":")))
+        // A parameter list, or the head of an `if`, `for` or `catch`: what it binds is not a
+        // declaration of the scope around it.
+        if (parameters) declarations.length = frame.from
         while ((open.at(-1)?.depth ?? -1) > stack.length) open.pop()
         continue
       }
@@ -550,34 +623,61 @@ export const declarationsIn = (source) => {
     record(declared.value, enumerated ? "enum" : token.value, name)
     at = name
   }
-  return stack.length === 0 ? declarations : null
+  return balanced && stack.length === 0 ? declarations : null
 }
 
-const within = (declaration, ancestor) => {
-  for (let at = declaration.parent; at !== null; at = at.parent) if (at === ancestor) return true
-  return false
-}
-
-/** Whether `chain` (`["Outer", "inner"]`) names a top-level declaration and, in turn, ones inside it. */
+/**
+ * Whether `chain` (`["Outer", "inner"]`) names a top-level declaration and then, link by link, a
+ * declaration directly inside the one before it. Directly: `inner` declared three functions down
+ * inside `Outer` is not `Outer::inner`.
+ */
 export const declares = (declarations, chain) => {
   let found = declarations.filter((d) => d.depth === 0 && d.name === chain[0])
   for (const name of chain.slice(1)) {
-    found = declarations.filter((d) => d.name === name && found.some((outer) => within(d, outer)))
+    found = declarations.filter((d) => d.name === name && found.includes(d.parent))
   }
   return found.length > 0
 }
 
 // --- the rules -----------------------------------------------------------------------------------
 
-const EXTENSIONS =
-  "ts|tsx|mts|cts|js|mjs|cjs|json|jsonc|sql|md|mdx|yml|yaml|toml|d2|html|css|astro|sh"
-const PATH = `[\\w@.\\/-]*(?:\\.(?:${EXTENSIONS}))`
-const RANGE = "\\d+(?:-\\d+)?"
-const LINE_CITATION = new RegExp(`^(?:${PATH})?:${RANGE}(?:\\s*,\\s*:?${RANGE})*$`)
+const EXTENSIONS = [
+  "ts|tsx|mts|cts|js|mjs|cjs",
+  "json|jsonc|jsonl|yml|yaml|toml|lock",
+  "sql|md|mdx|txt|d2|html|css|astro|sh"
+].join("|")
+/** A file: a name with one of those extensions, or any path with a directory in it. */
+const PATH = `(?:[\\w@.\\/-]*\\.(?:${EXTENSIONS})|[\\w@.-]+(?:\\/[\\w@.-]+)+)`
+/** One cited line or range: `:12`, `:12-20`, `:12:5` (with a column), `#L12`, or `#L12-L20`. */
+const LINES = ":\\d+(?::\\d+)?(?:-\\d+(?::\\d+)?)?|#L\\d+(?:C\\d+)?(?:-L?\\d+(?:C\\d+)?)?"
+/** A line citation: an optional path, its lines, more after commas, and any trailing name. */
+const LINE_CITATION = new RegExp(
+  `^(${PATH})?((?:${LINES})(?:\\s*,\\s*(?:${LINES}|\\d+(?:-\\d+)?))*)(?:\\s.*)?$`
+)
+/** A span that starts by naming a file, which a following bare `:N` continues. */
+const NAMES_FILE = new RegExp(`^${PATH}(?=$|[:#\\s])`)
 const SYMBOL_CITATION = /^(?<path>[\w@./-]+)::(?<chain>[#$\w]+(?:::[#$\w]+)*)$/
-const REPO_PATH = /^(?:apps|packages|scripts|tests-integration)\/\S*$/
+const REPO_PATH = /^(?:apps|packages|scripts|tests-integration|docs)\/\S*$/
+/** A bare file name, which is a repository path only when it names a root-level file. */
+const BARE_FILE = new RegExp(`^[\\w.-]+\\.(?:${EXTENSIONS})$`)
 /** Directories a build writes, which a clean checkout does not have. */
 const OUTPUTS = new Set(["dist", "dist-package", "node_modules", "coverage", ".turbo", ".astro"])
+
+/**
+ * The path and the cited line ranges of a line citation, or `null` for a span that is not one.
+ * `path` is `null` for a bare `:N`, which continues whatever file the text named before it.
+ */
+export const lineCitation = (content) => {
+  const match = LINE_CITATION.exec(content)
+  if (match === null) return null
+  // A column after either end (`:12:5`, `#L12C5`) is read past, never as a line of its own.
+  const ends = /(\d+)(?:[:C]\d+)?(?:-L?(\d+)(?:[:C]\d+)?)?/g
+  const ranges = [...(match[2] ?? "").matchAll(ends)].map((range) => {
+    const first = Number(range[1])
+    return [first, range[2] === undefined ? first : Number(range[2])]
+  })
+  return { path: match[1] ?? null, ranges }
+}
 
 /** The part of a repository path a clean checkout must hold: up to a glob, a placeholder, or a build output. */
 const checkablePrefix = (path) => {
@@ -613,11 +713,18 @@ const failures = []
 const fail = (file, line, problem) => failures.push({ file, line, problem })
 let symbols = 0
 let paths = 0
+/** Bare file names the root does not hold now, each with every span that names it. */
+const absentNames = new Map()
 
 const checkHandDoc = (file) => {
+  // The block of the last span that named a file: a bare `:N` in that block continues it.
+  let namedIn = -1
   for (const span of codeSpans(readFileSync(join(ROOT, file), "utf8"))) {
     const content = span.content.trim()
-    if (LINE_CITATION.test(content)) {
+    const cited = lineCitation(content)
+    const continues = cited?.path === null && namedIn === span.block
+    if (NAMES_FILE.test(content)) namedIn = span.block
+    if (cited !== null && (cited.path !== null || continues)) {
       fail(file, span.line, `\`${content}\` cites a line; cite \`path::Symbol\` or the bare path`)
       continue
     }
@@ -639,6 +746,30 @@ const checkHandDoc = (file) => {
       if (!existsSync(join(ROOT, checkablePrefix(content)))) {
         fail(file, span.line, `\`${content}\` names a path that does not exist`)
       }
+      continue
+    }
+    if (BARE_FILE.test(content)) {
+      if (existsSync(join(ROOT, content))) paths++
+      else
+        absentNames.set(content, [...(absentNames.get(content) ?? []), { file, line: span.line }])
+    }
+  }
+}
+
+/**
+ * Fail every bare name that HEAD's history held at the root and the root no longer holds. One
+ * `git log` over all of them, each as a literal root-level pathspec, lists the ones it touched.
+ */
+const checkRootFiles = () => {
+  if (absentNames.size === 0) return
+  const pathspecs = [...absentNames.keys()].map((name) => `:(top,literal)${name}`)
+  const listed = git(["log", "--format=", "--name-only", "-z", "HEAD", "--", ...pathspecs])
+  const held = new Set(listed.stdout.split(/[\0\n]/).filter((name) => name !== ""))
+  for (const [name, spans] of absentNames) {
+    if (!held.has(name)) continue
+    paths += spans.length
+    for (const { file, line } of spans) {
+      fail(file, line, `\`${name}\` names a root-level file that does not exist`)
     }
   }
 }
@@ -651,6 +782,15 @@ const commitOf = (sha) => {
     commits.set(sha, exists ? git(["rev-parse", `${sha}^{commit}`]).stdout.trim() : null)
   }
   return commits.get(sha)
+}
+
+const ancestry = new Map()
+/** Whether a commit is HEAD or one of its ancestors, so that the page describes this history. */
+const isAncestor = (sha) => {
+  if (!ancestry.has(sha)) {
+    ancestry.set(sha, git(["merge-base", "--is-ancestor", sha, "HEAD"]).status === 0)
+  }
+  return ancestry.get(sha)
 }
 
 /** The commit a generated page says it describes, from its front matter or its `Built from` line. */
@@ -675,20 +815,92 @@ const stampOf = (text) => {
   }
 }
 
+const stamps = new Set()
+/** Every line citation on a stamped page, to be read at the page's commit. */
+const pageCitations = []
+
+const checkCodebasePage = (file) => {
+  const text = readFileSync(join(ROOT, file), "utf8")
+  const stamp = stampOf(text)
+  const sha = stamp.problem === undefined ? commitOf(stamp.sha) : null
+  if (stamp.problem !== undefined) fail(file, 1, stamp.problem)
+  else if (sha === null) fail(file, stamp.line, `commit ${stamp.sha} does not exist in this clone`)
+  else if (!isAncestor(sha)) {
+    fail(file, stamp.line, `commit ${stamp.sha} is not an ancestor of HEAD`)
+  }
+  // A page whose commit cannot be read has no lines to read its citations against.
+  if (sha === null || !isAncestor(sha)) return
+  stamps.add(sha)
+  // The file the block last named, which a bare `:N` continues, as in a hand doc.
+  let named = { block: -1, path: "" }
+  for (const span of codeSpans(text)) {
+    const content = span.content.trim()
+    const cited = lineCitation(content)
+    const path = cited?.path ?? (named.block === span.block ? named.path : null)
+    const naming = NAMES_FILE.exec(content)?.[0]
+    if (naming !== undefined) named = { block: span.block, path: naming }
+    if (cited !== null && path !== null) {
+      pageCitations.push({ file, line: span.line, content, sha, path, ranges: cited.ranges })
+    }
+  }
+}
+
+/**
+ * The line count of each `sha:path` object, or `null` where the commit holds no file at that path.
+ * One `git cat-file --batch` reads them all: each answer is `<oid> <type> <size>` and the bytes, or
+ * `<object> missing`.
+ */
+const lineCountsAt = (objects) => {
+  const run = spawnSync("git", ["cat-file", "--batch"], {
+    cwd: ROOT,
+    input: `${objects.join("\n")}\n`,
+    maxBuffer: 1 << 30
+  })
+  const out = run.stdout ?? Buffer.alloc(0)
+  const counts = new Map()
+  let at = 0
+  for (const object of objects) {
+    const end = out.indexOf(10, at)
+    if (end === -1) break
+    const header = out.toString("utf8", at, end).split(" ")
+    at = end + 1
+    const size = Number(header[2])
+    if (header.length !== 3 || !Number.isInteger(size)) {
+      counts.set(object, null)
+      continue
+    }
+    let lines = 0
+    for (let byte = at; byte < at + size; byte++) if (out[byte] === 10) lines++
+    if (size > 0 && out[at + size - 1] !== 10) lines++
+    counts.set(object, header[1] === "blob" ? lines : null)
+    at += size + 1
+  }
+  return counts
+}
+
+/** Read every stamped page's line citations at that page's commit. */
+const checkPageCitations = () => {
+  const objects = [...new Set(pageCitations.map(({ sha, path }) => `${sha}:${path}`))]
+  const counts = lineCountsAt(objects)
+  for (const { file, line, content, sha, path, ranges } of pageCitations) {
+    const lines = counts.get(`${sha}:${path}`) ?? null
+    const at = sha.slice(0, 12)
+    if (lines === null) fail(file, line, `\`${content}\`: ${path} is not a file at ${at}`)
+    else if (ranges.some(([first, last]) => first < 1 || last < first || last > lines)) {
+      fail(file, line, `\`${content}\`: ${path} has ${lines} lines at ${at}`)
+    }
+  }
+}
+
 /** Check every hand doc and every codebase page, report, and exit. */
 const main = () => {
   const files = repositoryFiles()
   const handDocs = files.filter(isHandDoc)
   const codebasePages = files.filter(isCodebasePage)
   for (const file of handDocs) checkHandDoc(file)
-  const stamps = new Set()
-  for (const file of codebasePages) {
-    const stamp = stampOf(readFileSync(join(ROOT, file), "utf8"))
-    if (stamp.problem !== undefined) fail(file, 1, stamp.problem)
-    else if (commitOf(stamp.sha) === null) {
-      fail(file, stamp.line, `commit ${stamp.sha} does not exist in this clone`)
-    } else stamps.add(commitOf(stamp.sha))
-  }
+  checkRootFiles()
+  for (const file of codebasePages) checkCodebasePage(file)
+  checkPageCitations()
 
   if (failures.length > 0) {
     for (const { file, line, problem } of failures) console.error(`${file}:${line}: ${problem}`)
@@ -702,7 +914,8 @@ const main = () => {
   console.log(
     `doc citations ok: ${symbols} symbol citations and ${paths} repository paths in ` +
       `${handDocs.length} hand docs; ${codebasePages.length} codebase pages stamped at ` +
-      `${stamps.size} commit${stamps.size === 1 ? "" : "s"}`
+      `${stamps.size} commit${stamps.size === 1 ? "" : "s"}, ` +
+      `${pageCitations.length} line citations read there`
   )
 }
 
