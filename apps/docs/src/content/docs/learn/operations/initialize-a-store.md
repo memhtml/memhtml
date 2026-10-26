@@ -52,7 +52,7 @@ git -C "$MEMHTML_ROOT" config --get merge.directoryRenames
 false
 ```
 
-A clone initialized before `memhtml init` set this value prints nothing. Run `memhtml init` again, which changes nothing else on a scaffolded store, or let the next `memhtml publish` set it.
+A clone initialized before `memhtml init` set this value prints nothing. The setting protects the clone that runs the merge, so after an upgrade, run `memhtml init` again in every existing clone, including one that only writes and pulls. On a scaffolded store it changes nothing else. `memhtml publish` sets the value too, but only in the clone that publishes, so it is a fallback for publishing clones alone.
 
 The scaffolded `.gitattributes` is three lines:
 

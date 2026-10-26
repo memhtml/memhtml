@@ -143,7 +143,8 @@ const subjectFor = (artifacts: number, removed: number): string => {
  * merge would read the archive moves out of it as a directory rename and carry another clone's
  * new record there into `archive/` (`MERGE_DIRECTORY_RENAMES`). `memhtml init` sets it, and
  * publish sets it too when the clone lacks it, so a clone whose init predates the setting gets it
- * on its next publish.
+ * on its next publish. The setting protects the clone that runs the merge, so this covers only a
+ * clone that publishes; one that only writes and pulls gets it from running `memhtml init` again.
  */
 export const publish = () =>
   Effect.gen(function* () {
