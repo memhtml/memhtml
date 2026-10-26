@@ -55,6 +55,14 @@ export interface GitShape {
   readonly root: string
   /** `HEAD`'s commit sha, or `null` in a repo with no commit yet. */
   readonly revParseHead: () => Effect.Effect<string | null, GitFailure>
+  /**
+   * The commit `ref` resolves to, as a full sha, or `null` when it does not resolve. `ref` may be a
+   * branch, a full ref, or an abbreviated sha, and is passed after `--end-of-options`, so a value
+   * that starts with `-` is never read as a flag.
+   */
+  readonly revParse: (ref: string) => Effect.Effect<string | null, GitFailure>
+  /** The branch `HEAD` points at as a full ref (`refs/heads/...`), or `null` when detached. */
+  readonly headRef: () => Effect.Effect<string | null, GitFailure>
   /** True when `root` is inside a git work tree with `root` as its top level. */
   readonly isRepo: () => Effect.Effect<boolean, GitFailure>
   /** Every blob in a commit's tree, recursively. One subprocess for the whole corpus. */
@@ -119,6 +127,10 @@ export interface GitShape {
     options?: { readonly create?: boolean | undefined }
   ) => Effect.Effect<void, GitFailure>
   readonly branchExists: (branch: string) => Effect.Effect<boolean, GitFailure>
+  /** True when `sha` is reachable from `ref` (`merge-base --is-ancestor`). */
+  readonly isAncestor: (sha: string, ref: string) => Effect.Effect<boolean, GitFailure>
+  /** The best common ancestor of two commits, or `null` when their histories share no commit. */
+  readonly mergeBase: (a: string, b: string) => Effect.Effect<string | null, GitFailure>
   /** Fast-forward `HEAD` to `commitish`, or fail. This never creates a merge commit. */
   readonly mergeFastForward: (commitish: string) => Effect.Effect<void, GitFailure>
   /**
@@ -141,7 +153,11 @@ export interface GitShape {
   ) => Effect.Effect<ReadonlyArray<TrailerRecord>, GitFailure>
   /** Set a repository-local config value. */
   readonly setConfig: (key: string, value: string) => Effect.Effect<void, GitFailure>
-  /** Run any subcommand. The escape hatch for a one-off; every routine call has a method. */
+  /**
+   * Run any subcommand. The escape hatch for a one-off; every routine call has a method. Any
+   * non-zero exit is logged at Error and fails, so a command whose non-zero exit is an answer gets
+   * a method that accepts it rather than a caller that catches the failure after the log.
+   */
   readonly run: (args: ReadonlyArray<string>) => Effect.Effect<string, GitFailure>
 }
 
@@ -223,7 +239,10 @@ const gitChildEnv = (): Record<string, string | undefined> => {
 /** 64 MiB. A `cat-file --batch` over a whole corpus is the one call with a large stdout. */
 const MAX_BUFFER = 64 * 1024 * 1024
 
-/** A full 40-hex object name, which is the only form {@link GitShape.diffTreeNames} accepts. */
+/**
+ * A full 40-hex object name, which is the only form {@link GitShape.diffTreeNames} accepts and the
+ * form a resolved commit takes in {@link GitShape.revParse} and {@link GitShape.mergeBase}.
+ */
 const FULL_OBJECT_NAME = /^[0-9a-f]{40}$/
 
 /**
@@ -323,7 +342,10 @@ const awaitChildExit = (child: ChildProcess): Effect.Effect<void> =>
 /**
  * Run git and fail on a non-zero exit. `command` names the subcommand for the typed failure, and
  * `okExitCodes` widens the accepted set for the calls where non-zero is an answer rather than
- * an error (`rev-parse --verify --quiet` on an unborn HEAD, `merge` on a conflict).
+ * an error (`rev-parse --verify --quiet` on an unborn HEAD, `merge` on a conflict,
+ * `merge-base --is-ancestor` on a commit off the history). Any other exit is logged at Error with
+ * git's stderr before the failure, so an answer that is an exit code belongs in `okExitCodes`,
+ * where it logs nothing.
  */
 const git = (
   root: string,
@@ -365,6 +387,31 @@ export const makeGit = (root: string): GitShape => ({
       Effect.map((result) => {
         const sha = text(result).trim()
         return sha === "" ? null : sha
+      })
+    ),
+
+  revParse: (ref) =>
+    git(
+      root,
+      "rev-parse",
+      ["rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`],
+      // Exit 1 with empty output is a ref that does not resolve, an answer rather than a failure.
+      { okExitCodes: [0, 1] }
+    ).pipe(
+      Effect.map((result) => {
+        const sha = text(result).trim()
+        return FULL_OBJECT_NAME.test(sha) ? sha : null
+      })
+    ),
+
+  headRef: () =>
+    git(root, "symbolic-ref", ["symbolic-ref", "-q", "HEAD"], {
+      // `-q` exits 1 with empty output for a detached HEAD, which is "no branch".
+      okExitCodes: [0, 1]
+    }).pipe(
+      Effect.map((result) => {
+        const ref = text(result).trim()
+        return ref === "" ? null : ref
       })
     ),
 
@@ -497,6 +544,24 @@ export const makeGit = (root: string): GitShape => ({
     git(root, "show-ref", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
       okExitCodes: [0, 1]
     }).pipe(Effect.map((result) => result.exitCode === 0)),
+
+  isAncestor: (sha, ref) =>
+    git(root, "merge-base", ["merge-base", "--is-ancestor", sha, ref], {
+      // Exit 1 is "not an ancestor", an answer rather than a failure. A commit git does not have
+      // is exit 128, which stays a GitFailure.
+      okExitCodes: [0, 1]
+    }).pipe(Effect.map((result) => result.exitCode === 0)),
+
+  mergeBase: (a, b) =>
+    git(root, "merge-base", ["merge-base", a, b], {
+      // Exit 1 with empty output is "no common ancestor", an answer rather than a failure.
+      okExitCodes: [0, 1]
+    }).pipe(
+      Effect.map((result) => {
+        const sha = text(result).trim()
+        return FULL_OBJECT_NAME.test(sha) ? sha : null
+      })
+    ),
 
   mergeFastForward: (commitish) =>
     git(root, "merge-ff", ["merge", "--ff-only", commitish]).pipe(Effect.asVoid),
