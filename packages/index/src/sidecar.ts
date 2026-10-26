@@ -18,9 +18,10 @@ import { STATE_SCHEMA } from "./schema-const.js"
  * and `memhtml state export` commits nothing. Without that, the widest-churn table in the system would
  * produce a commit every time the sidecar was refreshed, whether or not anything was read.
  *
- * Four decimals because that is the grid the outcome EWMA lives on. `@memhtml/domain`'s fixed-point scale
- * is 10^4, so a fourth-decimal value is exact on the grid and a fifth-decimal digit would be float
- * noise that changes the file's bytes without changing its meaning.
+ * Four decimals is this export's own rounding, not a grid the score lives on. `reinforce` computes the
+ * outcome EWMA in float SQL, so a stored score can carry digits past the fourth, and the sidecar drops
+ * them; `memhtml state import` restores the rounded value. The width matches `@memhtml/domain`'s
+ * fixed-point scale of 10^4, the grid of the reference EWMA the SQL is checked against.
  */
 
 /** One path's durable access bookkeeping. Absent from the result means it was not accessed. */

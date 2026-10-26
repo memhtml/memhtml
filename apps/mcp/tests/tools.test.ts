@@ -245,9 +245,9 @@ describe("tool surface", () => {
 
   it("states the conflict assist's PROPOSE-ONLY contract and its reason, in the batch only", () => {
     /**
-     * Tool descriptions are this server's only guidance channel — effect 4.0.0-rc.109 never emits MCP's
-     * server-level `instructions` (see the note in `server.ts`) — so a semantics not stated in one is a
-     * semantics no agent reads. That makes each clause below a behavior lock, not documentation polish.
+     * Tool descriptions are this server's only guidance channel, because it passes no MCP server-level
+     * `instructions` (see the note in `server.ts`), so a semantics not stated in one is a semantics no
+     * agent reads. That makes each clause below a behavior lock, not documentation polish.
      *
      * The propose-only clause is the one that matters most, WITH its reason. An agent told only "this
      * does not block" concludes it is a v1 gap and hand-rolls the archiving the design deliberately

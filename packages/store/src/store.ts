@@ -201,8 +201,11 @@ export type DedupeLookup = (
 
 /**
  * Notified after a path moves, before the commit. This is how `state.access.path` follows an
- * archive. Cross-database foreign keys do not exist, so the mirror is an explicit call the store
- * makes at the one place a path can change.
+ * archive. Cross-database foreign keys do not exist, so the mirror is an explicit call, and the
+ * store makes it at the one place it moves a path: `stageArchive`, under `correctMemory`,
+ * `archiveMemory`, and `supersedeMemories`. A session commit moves and archives paths without this
+ * store, so it never calls the hook, and the access rows it leaves behind are orphans that
+ * `memhtml doctor` reports.
  */
 export type MoveCallback = (
   from: string,

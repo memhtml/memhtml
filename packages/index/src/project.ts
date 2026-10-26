@@ -86,9 +86,11 @@ export const disclosureTextFor = (doc: MemoryDoc): string =>
 const flag = (value: boolean | undefined): number => (value === true ? 1 : 0)
 
 /**
- * The `files` columns in bind order. One list drives the insert, the placeholder count, and the
- * upsert's assignment clause, so a new column cannot be added to one and forgotten in another.
- * A mismatch there binds every subsequent value to the wrong column and every CHECK still passes.
+ * The `files` columns in bind order. This list drives the insert's column list and the upsert's
+ * assignment clause. The placeholder count comes from the value array in `projectFile`, so a new
+ * column needs its value there too, at the same position. A count mismatch fails the statement, and
+ * `project.test.ts` checks both counts against this list. A value at the wrong position binds every
+ * subsequent value to the wrong column and every CHECK still passes.
  */
 export const FILE_COLUMNS = [
   "path",
