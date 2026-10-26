@@ -26,7 +26,7 @@ The JSONL/ops envelope carries `op: "write"` precisely so correct/link/archive c
 
 ## ~~6. Doc-sync sweep (small, hygiene)~~ — DONE (verified 2026-08-18)
 
-`docs/design.md`'s ResponseType line named 16 of 31 `RESPONSE_TYPES` (15 omissions, none spurious — T-AC-6-4 finding). Resolved: `RESPONSE_TYPES` now holds 32 members and `docs/design.md` cites the enum by path instead of enumerating, so the line can no longer drift from the constant.
+`docs/design.md`'s ResponseType line named 16 of 31 `RESPONSE_TYPES` (15 omissions, none spurious — T-AC-6-4 finding). Resolved: `docs/design.md` cites `RESPONSE_TYPES` by path instead of enumerating its members, so the line can no longer drift from the constant.
 
 ## 7. Code snippets: fences in the prose door + `data-lang` (CORE DONE 2026-08-04, fc6addb — a pre-publication-history SHA, not resolvable in this repository)
 
@@ -70,7 +70,7 @@ REMAINING, in rough order of pull:
 
 ## Upstream watch
 
-- effect `McpServer` never emits the MCP `instructions` initialize field (`McpSchema` declares it; `layerStdio`'s options are `{name, version, protocols, extensions}`, so there is no argument to supply one — re-verified on 4.0.0-beta.107; the catalog now pins 4.0.0-rc.109, and the comment at `apps/mcp/src/server.ts::layerServer` still names beta.107 as its verification version). When effect wires it, move the guide's `write-surfaces`/`when-to-batch` prose into it — comment at `apps/mcp/src/server.ts` marks the spot.
+- The server sends no MCP `instructions` initialize field. The comment at `apps/mcp/src/server.ts::layerServer` says effect gives no way to set one, verified on 4.0.0-rc.109 (`McpSchema` declares the field; `layerStdio`'s options are `{name, version, protocols, extensions}`). The catalog now pins effect 4.0.5, whose `layerStdio` takes an `instructions` option and returns it from initialize (probed 2026-10-26 in the installed package), so the guide's `write-surfaces`/`when-to-batch` prose can move into it — comment at `apps/mcp/src/server.ts` marks the spot.
 - effect masks handler errors unless a `failure:` schema is declared — any NEW tool must declare `failure: ToolFailure` or its errors read "internal server error". Locked by wire tests; the lesson is `.lessons/solutions/api-patterns/xor-params-and-mcp-error-masking.md`.
 
 ## Code-mode (recorded 2026-08-06)

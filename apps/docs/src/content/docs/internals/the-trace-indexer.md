@@ -17,7 +17,7 @@ A watermark records how far the scanner has already read, and here it is three v
 
 Splitting on the buffer means an unterminated trailing line is neither folded into a record nor counted as consumed, so the next tail re-reads it whole. Peak memory is one chunk plus one line, whatever the file's size.
 
-The parse cannot fail. A missing file, a permission rejection, a truncated line, and binary garbage all degrade to counters (`packages/traces/src/parse.ts::parseSessionFile`).
+The parse cannot fail. A truncated line and binary garbage degrade to counters. A missing file, a permission rejection, or a transient IO error is logged and returns an empty result flagged `readFailed` (`packages/traces/src/parse.ts::parseSessionFile`), and the scan then leaves that file's watermark untouched so the next run retries it (`packages/traces/src/scan.ts::scanTraceRoot`).
 
 ## 4. A type allowlist applied before any field access
 
@@ -35,9 +35,9 @@ Tail ordinals are renumbered from the end of the stored list (`packages/traces/s
 
 `text_head` caps at 200 characters and `first_prompt` at 500 (`packages/traces/src/extract.ts::TEXT_HEAD_LIMIT`, `packages/traces/src/extract.ts::FIRST_PROMPT_LIMIT`), because this is an index and not a copy.
 
-## 6. A test greps every assembled statement for the trace table names
+## 6. A test greps the assembled statements for the trace table names
 
-Nothing in the retrieval SQL assembler names `traces` or `trace_prompts`. A test asserts that by grepping every statement the module can assemble, in both the default and the scoped form, since a firewall that holds for one form and leaks in the other is no firewall at all (`packages/index/tests/retrieval-sql.test.ts`).
+Nothing in the retrieval SQL assembler names `traces` or `trace_prompts`. A test asserts that by grepping the fused statement with and without the vector and state arms under four scope shapes, default and scoped alike, since a firewall that holds for one form and leaks in the other is no firewall at all, and by grepping each arm's template and both snippet forms (`packages/index/tests/retrieval-sql.test.ts`). The all-terms probe (`packages/index/src/retrieval-sql.ts::buildFtsProbeSql`) is the one assembled statement no test greps.
 
 ## 7. What the plane is for, and who consumes it
 
