@@ -82,6 +82,9 @@ import { mapHead, memory, recordFrom, STRICT_BAR } from "./helpers.js"
  * - archive scope (2026-10-26): the `verb === "archived" && isReservedPath(...)` skip dropped -> "an
  *   archive leaves the edge of a holder its scope may not write, and a move does not" (the
  *   session-scope archive is refused on the arc).
+ * - archive of a batch put (2026-10-26): the `verb === "moved"` guard dropped from the put and
+ *   move-in exemption -> "an archive of a record the batch put is held to the edges the batch aimed
+ *   at it" (the dangling link passes).
  */
 
 const CAPITAL = memory("Capital", "The capital of India is New Delhi.")
@@ -412,6 +415,41 @@ describe("validateOps", () => {
         archive
       ])
     ).toEqual([dangling(successor, "relates_to")])
+  })
+
+  it("an archive of a record the batch put is held to the edges the batch aimed at it", async () => {
+    const holder = "resources/acme-widget/a.html"
+    const fresh = "resources/acme-widget/f.html"
+    const slot = archivePathFor(fresh, 2031)
+    const freshHtml = memory("Widget pallet load", "A widget pallet carries six crates.")
+    const view = mapHead("0".repeat(40), [
+      await recordFrom(holder, memory("Widget pallet note", "Widget pallets are wrapped twice."))
+    ])
+    const archive: OverlayOp = { kind: "archive", path: fresh, to: slot, html: freshHtml }
+    // The put is the record the archive moves, so the path ends empty and the edge to it dangles.
+    expect(
+      validateOps(view, [
+        put(fresh, freshHtml),
+        { kind: "link", path: holder, rel: "relates_to", href: `/${fresh}` },
+        archive
+      ])
+    ).toEqual([
+      {
+        kind: "format",
+        path: fresh,
+        reasons: [
+          `archived to ${slot}, but ${holder} still carries relates_to -> /${fresh}: repoint it with an unlink of that edge and a link of the same rel to /${slot} in the same batch`
+        ]
+      }
+    ])
+    // Linked to the slot instead, the batch passes.
+    expect(
+      validateOps(view, [
+        put(fresh, freshHtml),
+        { kind: "link", path: holder, rel: "relates_to", href: `/${slot}` },
+        archive
+      ])
+    ).toEqual([])
   })
 
   it("an archive leaves the edge of a holder its scope may not write, and a move does not", async () => {

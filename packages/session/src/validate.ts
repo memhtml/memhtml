@@ -455,14 +455,15 @@ export const validateOps = (
   /**
    * A `format` violation on `left.path` for every edge a live record still carries to it once the
    * whole batch is walked, so the repointing edges may come before or after the op in the order: the
-   * record went to `left.to`, and the edge would dangle. Nothing when the batch puts a new record at
-   * the path, or moves one into it.
+   * record went to `left.to`, and the edge would dangle. For a move, nothing when the batch puts a
+   * new record at the path, or moves one into it. An archive has no such exemption: a record the
+   * batch put or moved in at the path is the one it archives, and the path ends empty.
    */
   const danglingAt = (
     left: { readonly path: string; readonly to: string },
     verb: "moved" | "archived"
   ): void => {
-    if (batchPuts.has(left.path) || movedInto.has(left.path)) return
+    if (verb === "moved" && (batchPuts.has(left.path) || movedInto.has(left.path))) return
     const href = pathToHref(left.path)
     const holders = new Set<string>([...view.inbound(href), ...batchEdges.keys()])
     for (const holder of [...holders].sort()) {
