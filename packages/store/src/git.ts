@@ -165,8 +165,8 @@ interface ProcessResult {
  * headless indexer forever, `GIT_OPTIONAL_LOCKS=0` stops a read from taking the index lock, and
  * `LC_ALL=C` pins the message locale so a parsed word is the same word everywhere. The four
  * `GIT_*_PATHSPECS` variables are pinned off because each one changes how every pathspec matches:
- * literal makes `:(literal)` a plain prefix that matches nothing, noglob and glob change what `*`,
- * `?` and `[` match, and icase folds case. Every caller writes its pathspecs for git's default.
+ * literal reads `:(literal)` and all other magic as plain characters, noglob and glob change what
+ * `*`, `?` and `[` match, and icase folds case. Every caller writes pathspecs for git's default.
  *
  * **A user's own config IS read.** Nothing here neutralizes `~/.gitconfig`, so every call whose output
  * a caller parses states its format with explicit flags rather than inheriting a default: `-z` against

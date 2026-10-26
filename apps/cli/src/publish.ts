@@ -142,8 +142,8 @@ const subjectFor = (artifacts: number, removed: number): string => {
  * A removal can empty a directory, and in a clone without `merge.directoryRenames=false` the next
  * merge would read the archive moves out of it as a directory rename and carry another clone's
  * new record there into `archive/` (`MERGE_DIRECTORY_RENAMES`). `memhtml init` sets it, and
- * publish sets it too when the clone lacks it, so a clone initialized before init did gets it on
- * its next publish.
+ * publish sets it too when the clone lacks it, so a clone whose init predates the setting gets it
+ * on its next publish.
  */
 export const publish = () =>
   Effect.gen(function* () {
