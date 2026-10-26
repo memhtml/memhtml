@@ -29,6 +29,7 @@ import {
   LOG_MOVED,
   landOnRef,
   makePlumbing,
+  missingRepoints,
   pruneSessions,
   rebaseSession,
   replaceOps,
@@ -947,10 +948,9 @@ export const sessionExec = (input: {
   })
 
 /**
- * The half of `session commit` that follows the head: the log completed with the repoints its
- * archives and moves need against `base` ({@link withRepoints}), the commit algorithm against
- * `base`, the version at the session's base, with `--drop-refused`'s rounds, and the new commit's
- * snapshot. The CLI calls it with the version it loaded and the head server with the version it holds
+ * The half of `session commit` that follows the head: the repoints the log's archives and moves
+ * lack against `base` appended ({@link missingRepoints}), the commit algorithm against `base`, the
+ * version at the session's base, with `--drop-refused`'s rounds, and the new commit's snapshot. The CLI calls it with the version it loaded and the head server with the version it holds
  * (`head-server.ts`, `/v1/commit`), so the two answer with one function and cannot drift.
  * `afterCommit` is the only difference: it writes the snapshot of a `committed` outcome, which the CLI
  * builds from `base` by delta ({@link snapshotAfterCommit}, the default) and the server builds from
@@ -978,43 +978,64 @@ export const commitOverHead = (input: {
   Effect.gen(function* () {
     let session = input.session
     const scope = sessionScopeOf(session.ref)
-    // An archive or a move was completed with its repoints against the base it was appended over.
-    // A rebase since (the caller's, or the server's own rounds) can bring a record that gained an
-    // edge to the vacated path, and a log written before the completion existed carries none, so
-    // the log is completed again against the version it lands on, as a `curate merge` replay is.
-    // A log carrying `pending` is left to the commit, which settles it first.
-    if (session.pending === undefined) {
-      const completed = withRepoints(input.base, session.ops, scope)
-      if (completed.length > session.ops.length) session = yield* replaceOps(session, completed)
-    }
-    const dropped: Array<DroppedOp> = []
-    let outcome: CommitOutcome =
-      session.ops.length === 0 && session.pending === undefined
-        ? { kind: "refused", violations: [] }
-        : yield* commitSession({
-            session,
-            head: input.base,
-            message: input.message,
-            scope,
-            writeBar: input.writeBar
-          })
-    // Each round drops what the refusal names and commits again. An op that only failed because
-    // an op it depended on was dropped (a link from a dropped put) is named by the next round, so
-    // the loop ends at a clean log, an empty one, or a refusal no op carries (the batch cap).
-    while (input.dropRefused === true && outcome.kind === "refused") {
-      const round = opsToDrop(session.ops, outcome.violations)
-      if (round.drop.length === 0) break
-      dropped.push(...round.drop)
-      session = yield* replaceOps(session, round.keep)
-      yield* recordDropped(session.root, session.id, round.drop)
-      if (session.ops.length === 0) break
-      outcome = yield* commitSession({
-        session,
+    const commit = (current: Session) =>
+      commitSession({
+        session: current,
         head: input.base,
         message: input.message,
         scope,
         writeBar: input.writeBar
       })
+    // An archive or a move was completed with its repoints against the base it was appended over.
+    // A rebase since (the caller's, or the server's own rounds) can bring a record that gained an
+    // edge to the vacated path, and a log written before the completion existed carries none, so
+    // what the log lacks against the version it lands on is appended first. Judged before it is
+    // written: pairs that would take a log within the cap over it are not written, and the archive
+    // or move they belong to is refused by name, so `--drop-refused` can take it out and land the
+    // rest. A log carrying `pending` is left to the commit, which settles it first.
+    let outcome: CommitOutcome | null = null
+    if (session.ops.length === 0 && session.pending === undefined) {
+      outcome = { kind: "refused", violations: [] }
+    } else if (session.pending === undefined) {
+      const completion = missingRepoints(input.base, session.ops, scope)
+      if (completion.overflow.length > 0) {
+        outcome = { kind: "refused", violations: completion.overflow }
+      } else if (completion.ops.length > 0) {
+        session = yield* appendOps(session, completion.ops)
+      }
+    }
+    if (outcome === null) outcome = yield* commit(session)
+    const dropped: Array<DroppedOp> = []
+    // Each round drops what the refusal names and commits again. An op that only failed because
+    // an op it depended on was dropped (a link from a dropped put) is named by the next round, so
+    // the loop ends at a clean log, an empty one, or a refusal no op carries (the batch cap). A
+    // drop on a holder's path takes the holder's repoint with its other ops, so the kept ops are
+    // completed again from `base` and the pairs that come back are not reported as dropped; a
+    // round that would leave the log as it was ends the loop.
+    while (input.dropRefused === true && outcome.kind === "refused") {
+      const round = opsToDrop(session.ops, outcome.violations)
+      if (round.drop.length === 0) break
+      const again = missingRepoints(input.base, round.keep, scope)
+      const next = [...round.keep, ...again.ops]
+      if (JSON.stringify(next) === JSON.stringify(session.ops)) break
+      const back = new Map<string, number>()
+      for (const op of again.ops)
+        back.set(JSON.stringify(op), (back.get(JSON.stringify(op)) ?? 0) + 1)
+      const gone = round.drop.filter((_, at) => {
+        const key = JSON.stringify(round.ops[at])
+        const count = back.get(key) ?? 0
+        if (count === 0) return true
+        back.set(key, count - 1)
+        return false
+      })
+      dropped.push(...gone)
+      session = yield* replaceOps(session, next)
+      yield* recordDropped(session.root, session.id, gone)
+      if (session.ops.length === 0) break
+      outcome =
+        again.overflow.length > 0
+          ? { kind: "refused", violations: again.overflow }
+          : yield* commit(session)
     }
     const afterCommit =
       input.afterCommit ?? ((sha: string) => snapshotAfterCommit(session.root, sha, input.base))
@@ -1207,7 +1228,12 @@ export interface DroppedOp {
 const opsToDrop = (
   ops: ReadonlyArray<OverlayOp>,
   violations: ReadonlyArray<Violation>
-): { readonly drop: ReadonlyArray<DroppedOp>; readonly keep: ReadonlyArray<OverlayOp> } => {
+): {
+  readonly drop: ReadonlyArray<DroppedOp>
+  /** The dropped ops themselves, one for each entry of `drop`, in its order. */
+  readonly ops: ReadonlyArray<OverlayOp>
+  readonly keep: ReadonlyArray<OverlayOp>
+} => {
   const reasons = new Map<string, Array<string>>()
   for (const violation of violations) {
     if (violation.kind === "batch-cap") continue
@@ -1216,13 +1242,17 @@ const opsToDrop = (
     reasons.set(violation.path, list)
   }
   const drop: Array<DroppedOp> = []
+  const dropped: Array<OverlayOp> = []
   const keep: Array<OverlayOp> = []
   for (const op of ops) {
     const hit = touchedPaths(op).find((path) => reasons.has(path))
     if (hit === undefined) keep.push(op)
-    else drop.push({ kind: op.kind, path: op.path, reasons: reasons.get(hit) ?? [] })
+    else {
+      drop.push({ kind: op.kind, path: op.path, reasons: reasons.get(hit) ?? [] })
+      dropped.push(op)
+    }
   }
-  return { drop, keep }
+  return { drop, ops: dropped, keep }
 }
 
 /**

@@ -22,7 +22,7 @@ export {
   ensureExcludedQuietly,
   HEAD_SOCKET
 } from "./exclude.js"
-export { withRepoints } from "./moves.js"
+export { missingRepoints, withRepoints } from "./moves.js"
 export {
   GIT_REPO_SELECTION_ENV,
   gitPathOf,

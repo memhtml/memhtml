@@ -59,11 +59,15 @@ import { writeStoreConfig } from "./strict-store.js"
  *   early round dropped" (`dropped` is empty).
  * - `v2.ts` `commitOverHead`: commit a log with no ops instead of answering `refused` -> "a commit
  *   of a log with no ops ... touches nothing" (main gains an empty `memhtml(session)` commit).
- * - `v2.ts` `commitOverHead` (2026-10-26): the log committed without its `withRepoints` completion
+ * - `v2.ts` `commitOverHead` (2026-10-26): the log committed without the repoints it lacks appended
  *   -> "completes the new edge when the log is committed after a rebase here" and "completes a log
  *   an older writer left with the archive alone" (both refused, naming the note that still cites
  *   the vacated path) and "completes it in the server's rebase round under --drop-refused" (the
  *   archive and the first note's repoint are dropped and the successor lands alone).
+ * - `v2.ts` `commitOverHead` (2026-10-26): the completion's `overflow` ignored -> "refuses by name
+ *   an archive whose new repoints would pass the cap" (the commit goes on to a dangling-edge
+ *   refusal); the drop rounds without completing the kept ops again -> "puts back a repoint a drop
+ *   on its holder took" (the archive is dropped next and the successor lands alone).
  */
 
 const run_ = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect)
@@ -671,42 +675,44 @@ describe("an archive whose ref gained an edge to the archived path before the co
   const successor = "resources/acme-widget/a.html"
   const cited = "resources/acme-widget/c.html"
   const later = "resources/acme-widget/d.html"
-  const note = (title: string, claim: string, rel: "relates_to" | "supersedes", href: string) =>
+  const note = (
+    title: string,
+    claim: string,
+    rel: "relates_to" | "supersedes",
+    href: string,
+    entities: ReadonlyArray<string> = ["project:acme-widget"]
+  ) =>
     addLink(
-      renderTemplate({
-        title,
-        claim,
-        memoryType: "semantic",
-        at: AT,
-        entities: ["project:acme-widget"]
-      }),
+      renderTemplate({ title, claim, memoryType: "semantic", at: AT, entities: [...entities] }),
       rel,
       href
     )
+  const citedHtml = (entities?: ReadonlyArray<string>) =>
+    note(
+      "Orchard note",
+      "Orchard ladders are stored by the gate.",
+      "relates_to",
+      `/${retired}`,
+      entities
+    )
 
-  /**
-   * The session's exec puts a successor that supersedes the orchard record at its archive slot and
-   * archives the record, so the harvest repoints the note that cites it. Then another writer lands
-   * a second note citing the record at its live path, which the log knows nothing of.
-   */
-  const raced = async (): Promise<FixtureRepo> => {
+  /** The corpus, a note citing the orchard record, and the session `retire` started over both. */
+  const citedCorpus = async (): Promise<FixtureRepo> => {
     const repo = await corpus()
     await commitFiles(
       repo,
-      [
-        {
-          path: cited,
-          html: note(
-            "Orchard note",
-            "Orchard ladders are stored by the gate.",
-            "relates_to",
-            `/${retired}`
-          )
-        }
-      ],
+      [{ path: cited, html: citedHtml() }],
       "a note citing the orchard record"
     )
     await start(repo.root, "retire")
+    return repo
+  }
+
+  /**
+   * The session's exec puts a successor that supersedes the orchard record at its archive slot and
+   * archives the record, so the harvest repoints the note that cites it.
+   */
+  const retireByExec = async (root: string): Promise<void> => {
     const script = [
       `mkdir -p /mnt/memhtml/${dirname(successor)} /mnt/memhtml/${dirname(slot)}`,
       `cat > /mnt/memhtml/${successor} <<'HTML'`,
@@ -719,7 +725,7 @@ describe("an archive whose ref gained an edge to the archived path before the co
       "HTML",
       `mv /mnt/memhtml/${retired} /mnt/memhtml/${slot}`
     ].join("\n")
-    const harvest = await cli(repo.root, [
+    const harvest = await cli(root, [
       "session",
       "exec",
       "--id",
@@ -735,7 +741,11 @@ describe("an archive whose ref gained an edge to the archived path before the co
       { kind: "link", path: cited },
       { kind: "archive", path: retired, to: slot }
     ])
-    await commitFiles(
+  }
+
+  /** Another writer lands a second note citing the record at its live path. */
+  const anotherCites = (repo: FixtureRepo) =>
+    commitFiles(
       repo,
       [
         {
@@ -750,21 +760,32 @@ describe("an archive whose ref gained an edge to the archived path before the co
       ],
       "another writer's note citing the orchard record"
     )
+
+  /** The exec's session, then another writer's note the log knows nothing of. */
+  const raced = async (): Promise<FixtureRepo> => {
+    const repo = await citedCorpus()
+    await retireByExec(repo.root)
+    await anotherCites(repo)
     return repo
   }
 
-  /** The landed tree: the record at its slot, both notes and the successor naming the slot. */
-  const landedWhole = async (repo: FixtureRepo): Promise<void> => {
-    const paths = (await run_(repo.git.run(["ls-tree", "-r", "--name-only", "main"])))
+  const treeOf = async (repo: FixtureRepo): Promise<ReadonlyArray<string>> =>
+    (await run_(repo.git.run(["ls-tree", "-r", "--name-only", "main"])))
       .split("\n")
       .filter((path) => path.length > 0)
+
+  /** The landed tree: the record at its slot, the notes and the successor naming the slot. */
+  const landedWhole = async (
+    repo: FixtureRepo,
+    notes: ReadonlyArray<string> = [cited, later]
+  ): Promise<void> => {
+    const paths = await treeOf(repo)
     expect(paths).toContain(slot)
     expect(paths).not.toContain(retired)
     for (const [path, rel] of [
-      [cited, "relates-to"],
-      [later, "relates-to"],
-      [successor, "supersedes"]
-    ] as const) {
+      ...notes.map((one) => [one, "relates-to"] as const),
+      [successor, "supersedes"] as const
+    ]) {
       const html = await run_(repo.git.run(["show", `main:${path}`]))
       expect(html, path).toContain(`<link rel="memhtml-${rel}" href="/${slot}">`)
       expect(html, path).not.toContain(`href="/${retired}"`)
@@ -798,6 +819,84 @@ describe("an archive whose ref gained an edge to the archived path before the co
       dropped: []
     })
     await landedWhole(repo)
+  }, 60_000)
+
+  it("refuses by name an archive whose new repoints would pass the cap, writes nothing, and lets --drop-refused land the rest", async () => {
+    const repo = await citedCorpus()
+    // 195 puts and the exec's four ops: 199, one short of the cap, until the ref gains a citer.
+    await put(
+      repo.root,
+      "retire",
+      Array.from({ length: 195 }, (_, at) => ({
+        title: `Filler ${String(at)}`,
+        type: "semantic",
+        body: `Filler record ${String(at)} weighs ${String(at + 3)} grams in this fixture.`
+      }))
+    )
+    await retireByExec(repo.root)
+    await anotherCites(repo)
+    expect((await rebaseCli(repo.root, "retire", { local: true })).exitCode).toBe(0)
+    const log = await readFile(sessionStateFile(repo.root, "retire"), "utf8")
+    expect((await logOf(repo.root, "retire")).ops).toHaveLength(199)
+    const refused = dataOf((await commitCli(repo.root, "retire", { local: true })).body)
+    expect(refused).toMatchObject({
+      kind: "refused",
+      violations: [
+        {
+          kind: "format",
+          path: retired,
+          reasons: [
+            `archived to ${slot}, and repointing the 1 edge live records carry to /${retired} that the log does not repoint would take it to 201 ops, over the cap of 200: archive it in a session of its own`
+          ]
+        }
+      ]
+    })
+    expect(await readFile(sessionStateFile(repo.root, "retire"), "utf8")).toBe(log)
+    // --drop-refused takes the archive out, then the repoint of the first note, whose link names a
+    // slot nothing writes now, and lands the rest. The record stays live, so both notes still cite
+    // it where it is; the successor names the slot an archive in a session of its own will write.
+    const landed = dataOf(
+      (await commitCli(repo.root, "retire", { local: true, dropRefused: true })).body
+    )
+    expect(landed.kind, JSON.stringify(landed)).toBe("committed")
+    expect((landed.dropped as ReadonlyArray<Body>).map((op) => [op.kind, op.path])).toEqual([
+      ["archive", retired],
+      ["unlink", cited],
+      ["link", cited]
+    ])
+    expect(landed.paths).toHaveLength(196)
+    const paths = await treeOf(repo)
+    expect(paths).toContain(retired)
+    expect(paths).not.toContain(slot)
+    expect(paths).toContain(successor)
+    for (const path of [cited, later]) {
+      expect(await run_(repo.git.run(["show", `main:${path}`])), path).toContain(
+        `<link rel="memhtml-relates-to" href="/${retired}">`
+      )
+    }
+    expect((await logOf(repo.root, "retire")).ops).toEqual([])
+  }, 120_000)
+
+  it("puts back a repoint a drop on its holder took, and drops only the refused op", async () => {
+    const repo = await citedCorpus()
+    await retireByExec(repo.root)
+    await put(repo.root, "retire", [{ op: "label", path: cited, entity: "system:orchard" }])
+    // Another writer gives the note the same label, keeping its edge, so the session's label is
+    // refused, and the drop of every op on the note takes its repoint pair with the label.
+    await commitFiles(
+      repo,
+      [{ path: cited, html: citedHtml(["project:acme-widget", "system:orchard"]) }],
+      "another writer labels the note"
+    )
+    expect((await rebaseCli(repo.root, "retire", { local: true })).exitCode).toBe(0)
+    const landed = dataOf(
+      (await commitCli(repo.root, "retire", { local: true, dropRefused: true })).body
+    )
+    expect(landed.kind, JSON.stringify(landed)).toBe("committed")
+    expect((landed.dropped as ReadonlyArray<Body>).map((op) => [op.kind, op.path])).toEqual([
+      ["label", cited]
+    ])
+    await landedWhole(repo, [cited])
   }, 60_000)
 
   it("completes it in the server's rebase round under --drop-refused, and drops nothing", async () => {

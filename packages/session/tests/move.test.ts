@@ -4,7 +4,7 @@ import { Effect } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
 import { commitSession } from "../src/commit.js"
-import { withRepoints } from "../src/moves.js"
+import { missingRepoints, withRepoints } from "../src/moves.js"
 import { appendOps, startSession } from "../src/session.js"
 import { UNANCHORED_REASON, validateOps } from "../src/validate.js"
 import {
@@ -549,6 +549,67 @@ describe("withRepoints completes an archive", () => {
     const landed = await fileAt(repo.root, outcome.sha, SUCCESSOR)
     expect(landed).not.toContain("memhtml-contradicts")
     expect(landed).toContain(`<link rel="memhtml-supersedes" href="/${SLOT}">`)
+  })
+})
+
+describe("missingRepoints completes a written log by appending to it", () => {
+  const NOTE = "resources/acme-widget/c.html"
+  const NOTE_HTML = addLink(
+    memory("Widget packing note", "Widget batches are packed by hand.", {
+      entities: ["project:acme-widget"]
+    }),
+    "relates_to",
+    `/${RETIRED}`
+  )
+  const headWithCiters = async () =>
+    mapHead(SHA, [
+      await recordFrom(SUCCESSOR, SUCCESSOR_HTML),
+      await recordFrom(RETIRED, RETIRED_HTML),
+      await recordFrom(NOTE, NOTE_HTML)
+    ])
+
+  it("appends each missing pair after the log, at the path the log leaves its holder", async () => {
+    const head = await headWithCiters()
+    // A log written with no repoints: the note moves, then the record it cites is archived.
+    const placed = "resources/acme-gadget/c.html"
+    const log = [move(NOTE, placed, NOTE_HTML), retire(RETIRED, RETIRED_HTML)]
+    const completion = missingRepoints(head, log)
+    expect(completion).toEqual({
+      ops: [
+        unlink(SUCCESSOR, "supersedes", `/${RETIRED}`),
+        link(SUCCESSOR, "supersedes", `/${SLOT}`),
+        unlink(placed, "relates_to", `/${RETIRED}`),
+        link(placed, "relates_to", `/${SLOT}`)
+      ],
+      overflow: []
+    })
+    const completed = [...log, ...completion.ops]
+    expect(validateOps(head, completed)).toEqual([])
+    // Complete now, so a second pass adds nothing.
+    expect(missingRepoints(head, completed)).toEqual({ ops: [], overflow: [] })
+    // A log whose exec already repointed (withRepoints) needs nothing either.
+    expect(missingRepoints(head, withRepoints(head, log))).toEqual({ ops: [], overflow: [] })
+  })
+
+  it("names the archive whose pairs would take a log within the cap over it, and adds nothing", async () => {
+    const head = await headWithCiters()
+    const log = [retire(RETIRED, RETIRED_HTML)]
+    // Two holders: four ops, so the log of one op reaches five.
+    expect(missingRepoints(head, log, "session", 5).ops).toHaveLength(4)
+    expect(missingRepoints(head, log, "session", 4)).toEqual({
+      ops: [],
+      overflow: [
+        {
+          kind: "format",
+          path: RETIRED,
+          reasons: [
+            `archived to ${SLOT}, and repointing the 2 edges live records carry to /${RETIRED} that the log does not repoint would take it to 5 ops, over the cap of 4: archive it in a session of its own`
+          ]
+        }
+      ]
+    })
+    // A log already over the cap is refused as it stands: nothing added, nothing named.
+    expect(missingRepoints(head, log, "session", 0)).toEqual({ ops: [], overflow: [] })
   })
 })
 

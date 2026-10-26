@@ -467,8 +467,10 @@ export const saveSession = (session: Session): Effect.Effect<void, StorageFailur
  * Replace the overlay log's ops with `ops`, keeping the base and the ref. The one way ops leave a log
  * short of a commit: `session commit --drop-refused` takes out the ops a rebase revealed as
  * unlandable (a `duplicate` or a `claim-edit` against what `main` gained meanwhile) so the rest can
- * land. Refused with {@link LOG_MOVED}, like every other log write, when the log is no longer the
- * one `session` was read from, so a put or exec that landed meanwhile is never lost.
+ * land, and writes back the kept ops with the repoints a drop took from them appended again
+ * (`missingRepoints`). Short of this, ops are only ever appended. Refused with {@link LOG_MOVED},
+ * like every other log write, when the log is no longer the one `session` was read from, so a put
+ * or exec that landed meanwhile is never lost.
  *
  * Also refused, with `session.pending: ...` ({@link SESSION_PENDING}) and nothing written, when the
  * stored log carries a `pending` commit. `ops` was computed from ops that commit built, and when it
