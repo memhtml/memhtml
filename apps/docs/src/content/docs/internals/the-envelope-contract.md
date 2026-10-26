@@ -46,7 +46,7 @@ Two things about the server come from the transport and the SDK rather than from
 
 ## 5. A declared failure schema is what lets prose through
 
-Tool failures are a declared `Schema.ErrorClass` (`apps/mcp/src/failure.ts::ToolFailure`). Of the SDK's three catch branches for a failed `tools/call`, only the branch reached by a value the tool's own `failureSchema` accepts passes prose through verbatim. A generic error is rewritten to an internal-server-error sentence, which leaves an agent holding a message with nothing in it to act on.
+Tool failures are a declared `Schema.TaggedError` (`apps/mcp/src/failure.ts::ToolFailure`). Of the SDK's three catch branches for a failed `tools/call`, only the branch reached by a value the tool's own `failureSchema` accepts passes prose through verbatim. A generic error is rewritten to an internal-server-error sentence, which leaves an agent holding a message with nothing in it to act on.
 
 Code, message, and suggestions fold into `.message` at construction, because MCP's tool-error channel is one text block. The `ERR_*` code goes first so a consumer can read it back off the prefix.
 

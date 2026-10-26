@@ -5,7 +5,7 @@ description: Four rankers folded into one SQL statement, weighted rank fusion, d
 
 ## 1. One fused statement, two entry points
 
-Retrieval runs four rankers independently and merges their ordered result lists. That merge is a standard technique called reciprocal rank fusion, and this page calls each ranker an arm. `search` and `recall` sit on the same fused SQL and the same diversification pass (`packages/index/src/retrieval.ts::makeRetrieval::search`, `packages/index/src/retrieval.ts::makeRetrieval::recall`), so a ranking change cannot apply to one and miss the other.
+Retrieval runs four rankers independently and merges their ordered result lists. That merge is a standard technique called reciprocal rank fusion, and this page calls each ranker an arm. `search` and `recall` sit on the same fused SQL and the same polarity step (`packages/index/src/retrieval.ts::makeRetrieval::search`, `packages/index/src/retrieval.ts::makeRetrieval::recall`), so a fusion change cannot apply to one and miss the other. Only `search` runs the diversification pass; `recall` hands its polarity-ordered pool straight to the disclosure fold.
 
 Each arm is an entry in a registry, and `buildRrfSql` folds over that registry to assemble the statement (`packages/index/src/retrieval-sql.ts::RANK_ARMS`, `packages/index/src/retrieval-sql.ts::buildRrfSql`). Adding a fifth arm therefore means adding a table entry, and dropping one means filtering the registry. Each arm returns exactly `(path, rank)`, with rank counted from 1.
 
@@ -29,7 +29,7 @@ Figure 1 draws the whole path, and labels the diversification pass by its usual 
 
 ### 2.1. fts
 
-`packages/index/src/retrieval-sql.ts::ftsArm`. `ROW_NUMBER() OVER ()` with no `ORDER BY` captures the row order MATCH itself produced, which is the only relevance signal this driver exposes. There is no `rank` column and no `bm25()` function available. The window sits outside the `LIMIT`ed subquery, since inside it the numbering would apply to the pre-limit scan.
+`packages/index/src/retrieval-sql.ts::ftsArm`. The `LIMIT`ed MATCH subquery orders by `bm25()`, which FTS5 reports as a negative number where more negative is more relevant, so ascending order keeps the best matches. `ROW_NUMBER() OVER ()` then numbers the survivors. The window sits outside the `LIMIT`ed subquery, since inside it the numbering would apply to the pre-limit scan.
 
 ### 2.2. vector
 
@@ -47,7 +47,7 @@ The clamp on the third term is a guard against double-counting a bad outcome. A 
 
 Two exclusions belong to this arm and to no other. A `task` row and anything under `resources/people/` emit no salience row at all (`SALIENCE_EXCLUDED_TYPE`, `SALIENCE_EXCLUDED_PREFIX`). Salience ranks candidates that are interchangeable answers to a question. A task is reached by `task_status` and `due_at` instead, and ranking tasks by salience would reward staleness, letting the stuck task re-read at every triage outrank the fresh urgent one. A person-reference record is reached by entity key, and decay is the wrong model for identity, since a colleague unmentioned for six months is not less themselves.
 
-Memories about a person live outside `resources/people/` and keep their salience, which is the signal that answers which five of fifty entries about a person actually get consulted. The discriminator is a path prefix rather than a memory type because there is no `person` type: a person file is a `semantic` record that `placementFor` routes to that directory (`packages/contracts/src/paths.ts::placementFor`).
+Memories about a person live outside `resources/people/` and keep their salience, which is the signal that answers which five of fifty entries about a person actually get consulted. The discriminator is a path prefix rather than a memory type because there is no `person` type: a person file is a `semantic` record that curation writes at an explicit path under that directory, which `placementFor` never routes into (`packages/contracts/src/paths.ts::placementFor`, `packages/index/src/retrieval-sql.ts::SALIENCE_EXCLUDED_PREFIX`).
 
 Both predicates sit inside the arm and never in the shared `fileFilter` (`packages/index/src/retrieval-sql.ts::salienceArm`, `packages/index/src/scope.ts::assembleScope`). An excluded row still earns its lexical, vector, and recency ranks, so this arm holds no opinion about it while the query as a whole stays as wide as the caller asked for. The mechanism is that the arm's query emits no row for an excluded path. Leaving the row in with a zeroed access count would still rank it by write time, which is the recency arm's job counted twice.
 
@@ -61,9 +61,9 @@ The arithmetic has a pure twin in `@memhtml/domain` (`packages/domain/src/rrf.ts
 
 ## 4. Numbered placeholders and degraded mode
 
-The placeholder prefix is fixed at four positions (`packages/index/src/retrieval-sql.ts::PARAM_QUERY`, `packages/index/src/retrieval-sql.ts::PARAM_ARM_LIMIT`, `packages/index/src/retrieval-sql.ts::PARAM_FINAL_LIMIT`, `packages/index/src/retrieval-sql.ts::PARAM_QUERY_VECTOR`): `?1` is the query text, `?2` the per-arm limit, `?3` the final limit, and `?4` the query vector. Scope values bind from `?5` upward (`packages/index/src/scope.ts::assembleScope`), and the caller always binds a four-value prefix with `null` at `?4` even when the assembled SQL references no `?4` (`packages/index/src/retrieval-sql.ts::rrfParams`, `packages/index/src/retrieval.ts::makeRetrieval::fuse`).
+The placeholder prefix is fixed at four positions (`packages/index/src/retrieval-sql.ts::PARAM_QUERY`, `packages/index/src/retrieval-sql.ts::PARAM_ARM_LIMIT`, `packages/index/src/retrieval-sql.ts::PARAM_FINAL_LIMIT`, `packages/index/src/retrieval-sql.ts::PARAM_QUERY_VECTOR`): `?1` is the query text, `?2` the per-arm limit, `?3` the final limit, and `?4` the query vector. Scope values bind from `?5` upward (`packages/index/src/scope.ts::assembleScope`). The caller builds the tuple in that slot order, with `null` at `?4` when there is no query vector, and then trims it to the highest `?N` the assembled statement names, because SQLite rejects a value bound at a position no `?N` mentions (`packages/index/src/retrieval-sql.ts::rrfParams`, `packages/index/src/retrieval.ts::makeRetrieval::fuse`). So the `null` is bound only when scope values follow it.
 
-Fixed numbering is what keeps scope values at fixed positions whether or not the vector arm fired. With positional `?` markers the numbering would shift, and every remaining arm would silently read the wrong parameter. Weights are inlined as literals rather than bound, because they are trusted configuration and inlining keeps the parameter tuple at four values however many arms fire.
+Fixed numbering is what keeps scope values at fixed positions whether or not the vector arm fired. With positional `?` markers the numbering would shift, and every remaining arm would silently read the wrong parameter. Weights are inlined as literals rather than bound, because they are trusted configuration and inlining keeps the numbered prefix at four slots however many arms fire.
 
 Degradation drops arms and never fails the query. `activeArms` (`packages/index/src/retrieval-sql.ts::activeArms`) filters out any arm whose `needsEmbedding`, `needsState`, or `needsQueryTerms` precondition is unmet. An embedder failure is caught, logged, and turned into `undefined` (`packages/index/src/retrieval.ts::makeRetrieval::queryVector`), so retrieval keeps answering when the embedding provider is down. The result set gets narrower, and the response's `degraded` field says so.
 

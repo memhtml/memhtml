@@ -73,7 +73,7 @@ contracts ← integrations ← apps/cli
 
 `@memhtml/contracts` imports only `effect`. `@memhtml/domain`'s purity is a **test**, not a convention: `packages/domain/tests/layering.test.ts` greps the emitted `dist/*.js` for `node:sqlite`, `@aws-sdk`, or `node:fs`. `apps/mcp` depends on `@memhtml/cli` rather than re-composing services, so there is one answer to which database, which git root, which vector space.
 
-There is exactly one composition root: `AppLive` in `apps/cli/src/api-layer.ts`. The design's single dependency cycle is broken there — the store needs a SQL lookup for content dedup and `@memhtml/store` is SQL-free, so the lookup arrives as an injected function.
+There is exactly one composition root: `layerApp` in `apps/cli/src/api-layer.ts`. The design's single dependency cycle is broken there — the store needs a SQL lookup for content dedup and `@memhtml/store` is SQL-free, so the lookup arrives as an injected function.
 
 ### The contract surface
 

@@ -59,9 +59,11 @@ ERR_REPO_REQUIRED    ERR_PATH_NOT_FOUND    ERR_INVALID_MEMORY         ERR_DUPLIC
 ERR_WRITE_CONFLICT   ERR_DIRTY_TREE        ERR_INDEX_STALE            ERR_EMBED_MODEL_MISMATCH
 ERR_MODEL_UNAVAILABLE ERR_STORAGE          ERR_GIT                    ERR_DISCRIMINATION_FAILED
 ERR_UNKNOWN          ERR_REBUILD_NO_EMBED_REFUSED
+ERR_UNKNOWN_HOST     ERR_UNKNOWN_HOOK_EVENT ERR_INTEGRATION_MODIFIED  ERR_HEAD_SERVER_RUNNING
+ERR_SESSION_BOUND    ERR_V1_DOOR_CLOSED    ERR_STORE_CONFIG
 ```
 
-Twenty-one codes (`apps/cli/src/envelope.ts::ERROR_CODES`), append-only: a shipped code keeps its meaning forever and is never removed.
+Twenty-five codes (`apps/cli/src/envelope.ts::ERROR_CODES`), append-only: a shipped code keeps its meaning forever and is never removed.
 
 `ERR_REPO_REQUIRED` is the exit-2 refusal `MEMHTML_REFUSE_ENV_ROOT` produces for a call that opens a repo without `--repo`; see [configure the environment](/learn/operations/configure-the-environment/#memhtml_refuse_env_root-closes-the-environment-door).
 
