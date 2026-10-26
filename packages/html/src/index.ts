@@ -8,7 +8,7 @@
  */
 
 export type { BlockTagInArticle, BlockTagInRun } from "./block-tags.js"
-export { blockTagInArticle, blockTagInRun, blockTagViolation } from "./block-tags.js"
+export { blockTagInArticle, blockTagInRun } from "./block-tags.js"
 export type { CheckResult } from "./constraints.js"
 export {
   checkDocument,

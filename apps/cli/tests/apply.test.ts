@@ -1017,26 +1017,62 @@ describe("a prose body holding HTML block markup", () => {
     expect(refused.stdout.length).toBeLessThan(5000)
   }, 120_000)
 
-  it("refuses article_html whose <p> holds a block tag as text at apply, as session put does", async () => {
+  it("writes article_html whose <p> holds an escaped block tag at apply, and session put refuses it", async () => {
+    /**
+     * `article_html` on an `apply` line is verbatim markup: a caller may escape quoted text into a
+     * `<p>` on purpose, so apply writes it. A `session put` line's file is judged by `validateOps`,
+     * which holds a session's puts to the block-tag rule.
+     */
     const cli = await withApply()
-    const asText = "<p><mark>Scraped rooms are each an &lt;li&gt; with an h3 title.</mark></p>"
-    const result = await cli.fromFile([line({ title: "Rooms", article_html: asText })])
+    const asText =
+      "<p><mark>The reply opened with &lt;h1&gt;Manage API Access&lt;/h1&gt;.</mark></p>"
+    const result = await cli.fromFile([line({ title: "Quoted heading", article_html: asText })])
     expect(result.exitCode).toBe(EXIT_OK)
     const data = applied(result.stdout)
-    expect(data.results[0]?.code).toBe("ERR_INVALID_MEMORY")
-    expect(data.results[0]?.error).toContain("holds the block tag `<li>` as characters")
-    expect(data.summary.written).toBe(0)
-    expect(await htmlOnDisk(cli.root)).toEqual([])
+    expect(data.summary.written).toBe(1)
+    expect(await readFile(join(cli.root, data.results[0]?.path ?? ""), "utf8")).toContain(
+      "&lt;h1&gt;Manage API Access&lt;/h1&gt;"
+    )
 
     const session = (argv: ReadonlyArray<string>, input = "") =>
       run([...argv, "--repo", cli.root], undefined, () => Promise.resolve(input), false)
     expect((await session(["session", "start", "--id", "rooms"])).exitCode).toBe(EXIT_OK)
     const put = await session(
       ["session", "put", "--id", "rooms", "--file", "-", "--no-server"],
-      `${line({ title: "Rooms", article_html: asText })}\n`
+      `${line({ title: "Quoted heading again", article_html: asText })}\n`
     )
     expect(parse(put.stdout).code).toBe("ERR_INVALID_MEMORY")
-    expect(parse(put.stdout).error).toContain("holds the block tag `<li>` as characters")
+    expect(parse(put.stdout).error).toContain("holds the block tag `<h1>` as characters")
+  })
+
+  it("says the first sentence never ended when the claim ran on into a fence", () => {
+    /**
+     * The claim is the body's first sentence, up to the first `.`, `!`, or `?` and a space or a
+     * line break, so a body whose first sentence has no end before a fence carries the fence in
+     * its claim as text. The refusal says so, rather than advising the fence the writer used.
+     */
+    const fence = "```html\n<ul>\n  <li>x</li>\n</ul>\n```"
+    const unended = markupInProse(`The template renders this markup:\n\n${fence}`)
+    expect(unended).toMatchObject({ line: 4, tag: "<ul>", unended: true })
+    // The same body with its first sentence ended is a claim, then a figure, and writes.
+    expect(markupInProse(`The template renders this markup.\n\n${fence}`)).toBeUndefined()
+    // A body that opens with a fence has it in the claim the same way.
+    expect(markupInProse(`${fence}\n\nThe list has one item.`)).toMatchObject({
+      line: 2,
+      unended: true
+    })
+    // A tag on the claim's own first line is prose the writer typed, and gets the usual reason.
+    expect(markupInProse("Use <ul> for lists:\n\nthen more.")?.unended).toBeUndefined()
+
+    const decoded = decodeApply(
+      line({ title: "T", body: `The template renders this markup:\n\n${fence}` })
+    )
+    expect(decoded.ok).toBe(false)
+    if (decoded.ok) return
+    expect(decoded.failure.error).toContain("`<ul>` on its line 4")
+    expect(decoded.failure.error).toContain("first sentence never ends before the tag")
+    const typed = decodeApply(line({ title: "T", body: "One.\n\nThen <ul> here." }))
+    expect(!typed.ok && typed.failure.error).toContain("once the body's first sentence has ended")
   })
 })
 

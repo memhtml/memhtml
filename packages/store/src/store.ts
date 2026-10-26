@@ -21,7 +21,6 @@ import { filenameFor, slugify, withCollisionOrdinal } from "@memhtml/contracts/s
 import type { MemoryDoc, NewMemoryInput } from "@memhtml/html"
 import {
   addLink,
-  blockTagViolation,
   checkMemory,
   contentHash,
   parseMemory,
@@ -673,22 +672,11 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
    * question is asked first. A refusal leaves the tree byte-identical, with nothing to roll back.
    * `correctMemory`'s `addLink` runs after this. The link is head-plane and no article
    * constraint can see it, so gating the pre-link bytes checks everything a check could reach.
-   *
-   * Supplied markup is also held to the block-tag rule (`blockTagViolation`): a `<p>` whose text,
-   * or a `<mark>` outside a `<p>` whose text, holds a block tag such as `&lt;li&gt;` as characters
-   * outside code. That is the rule `validateOps` holds a session's puts to, so `article_html`
-   * reads the same at every door. Prose from the claim/body flags is escaped by design and is not
-   * judged here; the JSONL and MCP doors judge a `body` before it renders.
    */
   const renderChecked = (input: WriteInput, at: string): Effect.Effect<string, InvalidMemory> =>
     Effect.suspend(() => {
       const html = renderFor(input, at)
-      const supplied = input.articleHtml !== undefined && input.articleHtml.trim() !== ""
-      const markup = supplied ? blockTagViolation(html) : undefined
-      const violations = [
-        ...checkMemory(html).violations,
-        ...(markup === undefined ? [] : [markup])
-      ]
+      const { violations } = checkMemory(html)
       return violations.length > 0
         ? Effect.fail(InvalidMemory.make({ reason: violations.join(VIOLATION_SEPARATOR) }))
         : Effect.succeed(html)

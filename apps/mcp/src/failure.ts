@@ -114,7 +114,7 @@ export const mcpSuggestionsFor = (error: unknown): ReadonlyArray<string> => {
     case "MarkupInProse":
       return [
         "call the same tool with the article as markup in article_html instead of body, with exactly one <mark> in its first <p>",
-        "keep body and put a tag the record discusses in backticks that open and close on one line, or in a fenced block set off by blank lines, if the tag is the subject rather than the markup"
+        "keep body, end its first sentence with . ! or ? before any code, and put a tag the record discusses in backticks that open and close on one line, or in a fenced block set off by blank lines, if the tag is the subject rather than the markup"
       ]
     case "ModelUnavailable":
       return [

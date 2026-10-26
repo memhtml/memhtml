@@ -97,7 +97,9 @@ export const proseTail = (prose: string): ReadonlyArray<string> => {
  * A block tag outside code in prose is almost never meant as text, and the door is the last place
  * that still knows the writer sent it, so the door refuses and names `article_html`, the field that
  * takes markup. A tag the record discusses goes in backticks that open and close on its line, or in
- * a fenced block that is a paragraph of its own.
+ * a fenced block that is a paragraph of its own once the first sentence has ended. `unended` marks a
+ * tag the claim took in because the body's first sentence never ended before it: the claim runs to
+ * the first `.`, `!`, or `?` followed by a space or a line break, blank lines and fences included.
  *
  * A typed error rather than a door-local failure because the MCP tools raise it inside a handler,
  * where `codeFor`, `messageFor`, and each door's suggestions give it its envelope; `memhtml apply`
@@ -105,7 +107,8 @@ export const proseTail = (prose: string): ReadonlyArray<string> => {
  */
 export class MarkupInProse extends Schema.TaggedError<MarkupInProse>()("MarkupInProse", {
   line: Schema.Finite,
-  tag: Schema.String
+  tag: Schema.String,
+  unended: Schema.optionalKey(Schema.Boolean)
 }) {}
 
 /** Line breaks as the HTML parser reads them, for naming a body's line. */
@@ -114,6 +117,18 @@ const LINE_BREAKS = /\r\n|\r|\n/g
 /** The 1-based line of a body that holds the character at `offset`. */
 const lineAt = (prose: string, offset: number): number =>
   (prose.slice(0, offset).match(LINE_BREAKS)?.length ?? 0) + 1
+
+/**
+ * True when the claim, before the position `at`, ran on past where its writer meant it to stop: a
+ * whole line before the one holding `at` is blank or opens a fence. No sentence ended there, or
+ * the claim would have stopped.
+ */
+const ranOnBefore = (claim: string, at: number): boolean =>
+  claim
+    .slice(0, at)
+    .split(LINE_BREAKS)
+    .slice(0, -1)
+    .some((line) => line.trim() === "" || fenceOpeningOf(line) !== undefined)
 
 /**
  * The refusal for a prose body holding a block tag outside code, or `undefined` for none.
@@ -127,7 +142,8 @@ const lineAt = (prose: string, offset: number): number =>
  *
  * The claim and each tail paragraph are trimmed runs of the body in order, so each is found in
  * the body from where the one before it ended, and the hit's position in the `<p>` maps back to
- * the body's line.
+ * the body's line. A hit inside a claim that ran on is marked `unended`, so the refusal can say
+ * the first sentence never ended rather than advise the fence the writer already used.
  */
 export const markupInProse = (prose: string): MarkupInProse | undefined => {
   const claim = claimFromProse(prose)
@@ -145,11 +161,15 @@ export const markupInProse = (prose: string): MarkupInProse | undefined => {
     const found = blockTagInRun(proseParagraphText(paragraph))
     if (found === undefined) continue
     const lead = paragraph.claim === undefined ? 0 : paragraph.claim.length + 1
-    const offset =
-      found.offset < lead
-        ? claimAt + found.offset
-        : (tailAt[paragraph.index ?? 0] ?? 0) + found.offset - lead
-    return new MarkupInProse({ line: lineAt(prose, offset), tag: found.tag })
+    const inClaim = found.offset < lead
+    const offset = inClaim
+      ? claimAt + found.offset
+      : (tailAt[paragraph.index ?? 0] ?? 0) + found.offset - lead
+    return new MarkupInProse({
+      line: lineAt(prose, offset),
+      tag: found.tag,
+      ...(inClaim && ranOnBefore(claim, found.offset) ? { unended: true } : {})
+    })
   }
   return undefined
 }
@@ -158,8 +178,13 @@ export const markupInProse = (prose: string): MarkupInProse | undefined => {
 export const markupInProseReason = (refusal: {
   readonly line: number
   readonly tag: string
-}): string =>
-  `\`body\` holds the HTML block tag \`${refusal.tag}\` on its line ${String(refusal.line)}, outside code: \`body\` is prose and is stored as escaped text, so the tag would reach the claim and the paragraphs as literal characters. Send the article as markup in \`article_html\` instead, with its own <mark> in the first <p>, or put a tag the record discusses in backticks that open and close on its line. A fenced block counts as code only as a paragraph of its own, with a blank line before and after it`
+  readonly unended?: boolean | undefined
+}): string => {
+  const found = `\`body\` holds the HTML block tag \`${refusal.tag}\` on its line ${String(refusal.line)}, outside code: \`body\` is prose and is stored as escaped text, so the tag would reach the claim and the paragraphs as literal characters.`
+  return refusal.unended === true
+    ? `${found} The body's first sentence never ends before the tag: the claim runs to the first . ! or ? followed by a space or a line break, so it takes in what follows, blank lines and fences included, as text. End the first sentence before the code, or send the article as markup in \`article_html\` instead, with its own <mark> in the first <p>`
+    : `${found} Send the article as markup in \`article_html\` instead, with its own <mark> in the first <p>, or put a tag the record discusses in backticks that open and close on its line. A fenced block counts as code only as a paragraph of its own, with a blank line before and after it, once the body's first sentence has ended with . ! or ? and then a space or a line break`
+}
 
 /**
  * What a JSONL writer does about a {@link MarkupInProse} refusal: the same line with the markup in
@@ -168,5 +193,5 @@ export const markupInProseReason = (refusal: {
  */
 export const MARKUP_IN_PROSE_SUGGESTIONS: ReadonlyArray<string> = [
   '{"op":"write","title":"<title>","type":"semantic","article_html":"<p><mark><the claim></mark></p><ul><li><an item></li></ul>"}',
-  "keep body and put a tag the record discusses in backticks that open and close on one line, or in a fenced block set off by blank lines"
+  "keep body, end its first sentence with . ! or ? before any code, and put a tag the record discusses in backticks that open and close on one line, or in a fenced block set off by blank lines"
 ]

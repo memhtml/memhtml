@@ -851,40 +851,23 @@ describe("the render gate refuses a file checkMemory rejects", () => {
     expect(await run(repo.store.dirtyPaths())).toEqual([])
   })
 
-  it("refuses articleHtml whose <p> holds a block tag as text, the rule a session's puts meet", async () => {
+  it("writes articleHtml whose <p> holds an escaped block tag, verbatim", async () => {
     /**
-     * `validateOps` refuses this article on a session put, so the store refuses it on a write and
-     * a correction too, and `article_html` reads the same at every door. A tag named in `<code>`
-     * is the article discussing it and still writes.
+     * `articleHtml` is verbatim markup, and a caller that escapes third-party text into a `<p>`
+     * means the characters: a reply quoting `&lt;h1&gt;` is text about a heading. The block-tag
+     * rule judges a prose body at the doors and a session's puts in `validateOps`; the render gate
+     * does not apply it to supplied markup.
      */
     const repo = await fixture()
-    const commitsBefore = await commitCount(repo)
-    const asText = "<p><mark>Scraped rooms are each an &lt;li&gt; with an h3 title.</mark></p>"
-    const failure = await runErr(
-      repo.store.writeMemory(writeInput({ claim: "", articleHtml: asText }))
-    )
-    expect(failure).toBeInstanceOf(InvalidMemory)
-    expect((failure as InvalidMemory).reason).toContain("holds the block tag `<li>` as characters")
-    expect(await candidatePathsOnDisk(repo)).toEqual([])
-    expect(await commitCount(repo)).toBe(commitsBefore)
-
-    const original = await run(repo.store.writeMemory(writeInput({ title: "Rooms" })))
-    const corrected = await runErr(
-      repo.store.correctMemory(original.path, writeInput({ claim: "", articleHtml: asText }))
-    )
-    expect(corrected).toBeInstanceOf(InvalidMemory)
-    expect((await run(repo.store.readMemory(original.path))).doc.metas.status).toBe("active")
-
-    const discussed = await run(
+    const asText =
+      "<p><mark>The reply opened with &lt;h1&gt;Manage API Access&lt;/h1&gt;.</mark></p>"
+    const result = await run(
       repo.store.writeMemory(
-        writeInput({
-          title: "Rooms in code",
-          claim: "",
-          articleHtml: "<p><mark>Scraped rooms are each an <code>&lt;li&gt;</code>.</mark></p>"
-        })
+        writeInput({ title: "Quoted heading", claim: "", articleHtml: asText })
       )
     )
-    expect(discussed.path).not.toBe("")
+    const onDisk = await readFile(join(repo.root, result.path), "utf8")
+    expect(onDisk).toContain("&lt;h1&gt;Manage API Access&lt;/h1&gt;")
     expect(await run(repo.store.dirtyPaths())).toEqual([])
   })
 })

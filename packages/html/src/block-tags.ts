@@ -15,9 +15,10 @@ import {
  * `<p>One.</p>` as prose, meaning markup, gets a file whose `<mark>` reads `&lt;p&gt;One.`. Every
  * format constraint accepts that file, because escaped text is valid content. So a `<p>` whose
  * text holds a block tag is refused: by the doors before they render a prose body (over the
- * paragraphs `proseParagraphs` says the template will render), and by `validateOps` and the
- * store's render gate over the article itself ({@link blockTagInArticle}). Both read each
- * paragraph's text with {@link blockTagInRun}, so they hold one rule.
+ * paragraphs `proseParagraphs` says the template will render), and by `validateOps` over a
+ * session put's article ({@link blockTagInArticle}). Both read each paragraph's text with
+ * {@link blockTagInRun}, so they hold one rule. Supplied `article_html` at the other doors is
+ * verbatim markup and is not judged: a caller may escape quoted text into a `<p>` on purpose.
  *
  * Code is exempt, because a record that discusses markup has to be able to name a tag: a closed
  * backtick span on one line, and in an article the text of `<code>`, `<pre>`, `<kbd>`, and
@@ -34,11 +35,15 @@ import {
  */
 const BLOCK_NAME = /(?:p|ul|ol|li|dl|dt|dd|figure|table|article|section|h[1-6])/y
 
-/** A character that may not sit right before an opening tag: `x<p` and `List<li>` are not tags. */
-const WORD_CHARACTER = /\w/
+/**
+ * Text that ends in a letter, a mark, a digit, or `_`, in any script: what may not sit right
+ * before an opening tag, so `x<p`, `List<li>`, and `é<p>` are not tags. Read over the two code
+ * units before the tag, so a letter outside the Basic Multilingual Plane counts too.
+ */
+const ENDS_IN_WORD = /[\p{L}\p{M}\p{N}_]$/u
 
-/** A character that may follow a tag's name: whitespace, `/`, or the tag's close. */
-const AFTER_NAME = /[\s/>]/
+/** Whitespace, which may follow a tag's name and open its attributes. */
+const WHITESPACE = /\s/
 
 /** The most of a tag a refusal quotes. A tag with a long attribute list is cut here. */
 const TAG_SHOWN = 80
@@ -49,10 +54,10 @@ const TAG_SHOWN = 80
  * expression, because a pattern over the escaped spelling keeps one backtrack frame per
  * character and overflows the stack on a line of a few million characters.
  *
- * An opening tag is the name, then whitespace, `/`, or the close, then anything up to the first
- * `>` or `&gt;`; a closing tag is `/`, the name, optional spaces, and the close. The attribute
- * scan stops at the next `<` or `&lt;`, where the next attempt starts, so a line is read once
- * however many unclosed openers it holds.
+ * An opening tag is the name, then the close, `/` and the close (`<p/>`), or whitespace and
+ * anything up to the first `>` or `&gt;`; a closing tag is `/`, the name, optional spaces, and the
+ * close. So `<dd/mm/yyyy>` is not a tag. The attribute scan stops at the next `<` or `&lt;`,
+ * where the next attempt starts, so a line is read once however many unclosed openers it holds.
  */
 const tagEnd = (line: string, at: number, open: number): number | undefined => {
   let cursor = at + open
@@ -62,17 +67,13 @@ const tagEnd = (line: string, at: number, open: number): number | undefined => {
   const name = BLOCK_NAME.exec(line)
   if (name === null) return undefined
   cursor += name[0].length
-  if (closing) {
-    while (line[cursor] === " " || line[cursor] === "\t") cursor += 1
-    if (line[cursor] === ">") return cursor + 1
-    return line.startsWith("&gt;", cursor) ? cursor + 4 : undefined
-  }
-  const before = line[at - 1]
-  if (before !== undefined && WORD_CHARACTER.test(before)) return undefined
+  if (closing) return closeAfterSpaces(line, cursor)
+  if (ENDS_IN_WORD.test(line.slice(Math.max(0, at - 2), at))) return undefined
   const next = line[cursor]
-  if (next === undefined || !(AFTER_NAME.test(next) || line.startsWith("&gt;", cursor))) {
-    return undefined
-  }
+  if (next === ">") return cursor + 1
+  if (line.startsWith("&gt;", cursor)) return cursor + 4
+  if (next === "/") return closeAfterSpaces(line, cursor + 1)
+  if (next === undefined || !WHITESPACE.test(next)) return undefined
   for (; cursor < line.length; cursor += 1) {
     const character = line[cursor]
     if (character === ">") return cursor + 1
@@ -83,6 +84,14 @@ const tagEnd = (line: string, at: number, open: number): number | undefined => {
     }
   }
   return undefined
+}
+
+/** Where a tag's close ends when it follows `at` after optional spaces, or `undefined`. */
+const closeAfterSpaces = (line: string, at: number): number | undefined => {
+  let cursor = at
+  while (line[cursor] === " " || line[cursor] === "\t") cursor += 1
+  if (line[cursor] === ">") return cursor + 1
+  return line.startsWith("&gt;", cursor) ? cursor + 4 : undefined
 }
 
 /** The first block tag in one line, raw or escaped, as its start and end in the line. */
@@ -269,16 +278,4 @@ export const blockTagInArticle = (html: string): BlockTagInArticle | undefined =
     }
   }
   return undefined
-}
-
-/**
- * The format violation a file's article earns from {@link blockTagInArticle}, or `undefined`.
- * One sentence for every gate that holds a file to the rule, `validateOps` and the store's render
- * gate alike, so a writer reads the same refusal from either.
- */
-export const blockTagViolation = (html: string): string | undefined => {
-  const found = blockTagInArticle(html)
-  return found === undefined
-    ? undefined
-    : `a <${found.element}>'s text holds the block tag \`${found.tag}\` as characters, outside code: markup goes in as elements (\`article_html\` on a write line), and a tag the record discusses goes in <code>, or in backticks that open and close on one line`
 }

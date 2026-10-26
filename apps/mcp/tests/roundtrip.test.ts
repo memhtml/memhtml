@@ -812,25 +812,37 @@ describe("a tool call through the toolkit layer", () => {
     )
   })
 
-  it("refuses article_html whose <p> holds a block tag as text, and writes one naming it in <code>", async () => {
+  it("writes article_html whose <p> holds an escaped block tag, in an atomic batch", async () => {
     /**
-     * The store's render gate holds supplied markup to the rule `validateOps` holds a session's
-     * puts to, so a block tag typed into a paragraph is refused here as it is on `session put`.
+     * `article_html` is verbatim markup, and a caller that escapes third-party text into a `<p>`
+     * means the characters: a quoted reply holding `&lt;h1&gt;` is text about a heading. The
+     * block-tag rule judges a prose `body`, and a session's puts; supplied markup here is not
+     * judged by it, so one such op does not fail an atomic batch.
      */
-    await expect(
-      call("memory_write", {
-        title: "Rooms as text",
-        article_html: "<p><mark>Scraped rooms are each an &lt;li&gt; with an h3 title.</mark></p>",
-        memory_type: "semantic"
-      })
-    ).rejects.toThrow(/^ERR_INVALID_MEMORY: .*holds the block tag `<li>` as characters/)
-    const written = await call("memory_write", {
-      title: "Rooms in code",
-      article_html:
-        "<p><mark>Scraped rooms are each an <code>&lt;li&gt;</code> with an h3 title.</mark></p>",
-      memory_type: "semantic"
+    const before = (await call("memory_status", {})).head_sha as string
+    const batch = await call("memory_write_batch", {
+      ops: [
+        {
+          title: "Quoted reply with a heading",
+          article_html:
+            "<p><mark>The reply opened with &lt;h1&gt;Manage API Access&lt;/h1&gt;.</mark></p>",
+          memory_type: "episodic",
+          workspace: "quoted-markup"
+        },
+        {
+          title: "Quoted reply in prose",
+          body: "The second reply was plain prose.",
+          memory_type: "episodic",
+          workspace: "quoted-markup"
+        }
+      ]
     })
-    expect(written.created).toBe(true)
+    const results = batch.results as ReadonlyArray<{ ok: boolean; path: string | null }>
+    expect(results.map((result) => result.ok)).toEqual([true, true])
+    expect((await call("memory_status", {})).head_sha).not.toBe(before)
+    expect((await call("memory_read", { path: results[0]?.path })).gist).toBe(
+      "The reply opened with <h1>Manage API Access</h1>."
+    )
   })
 
   it("memory_correct supersedes through article_html, and refuses both or neither", async () => {

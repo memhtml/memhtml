@@ -1,7 +1,7 @@
 import fc from "fast-check"
 import { describe, expect, it } from "vitest"
 
-import { blockTagInArticle, blockTagInRun, blockTagViolation } from "../src/block-tags.js"
+import { blockTagInArticle, blockTagInRun } from "../src/block-tags.js"
 import { proseParagraphs, proseParagraphText, renderTemplate } from "../src/template.js"
 
 /**
@@ -66,6 +66,32 @@ describe("blockTagInRun", () => {
     // A closing tag after a word is how markup is written, and an opening one after punctuation.
     expect(blockTagInRun("It ends here</p>")?.tag).toBe("</p>")
     expect(blockTagInRun("Items:(<ul>)")?.tag).toBe("<ul>")
+  })
+
+  it("reads a letter as a letter in any script, before an opening tag", () => {
+    // Accented and Greek letters, a letter outside the Basic Multilingual Plane, a combining mark.
+    for (const prose of [
+      "Café<p> menu.",
+      "Ω<p> as a symbol.",
+      "Let \u{1d465}<p> be small.",
+      "e\u0301<li>"
+    ]) {
+      expect(blockTagInRun(prose), prose).toBeUndefined()
+    }
+    expect(blockTagInRun("Then «<p>» quoted.")?.tag).toBe("<p>")
+  })
+
+  it("takes a slash after an opening name only where it ends the tag", () => {
+    expect(blockTagInRun("Dates as <dd/mm/yyyy> in the form.")).toBeUndefined()
+    expect(blockTagInRun("A <p/x> value.")).toBeUndefined()
+    expect(blockTagInRun("An empty <p/> here.")?.tag).toBe("<p/>")
+    expect(blockTagInRun("An empty <li /> here.")?.tag).toBe("<li />")
+    expect(blockTagInRun("Escaped &lt;p/&gt; too.")?.tag).toBe("&lt;p/&gt;")
+  })
+
+  it("finds a tag whose spelling mixes raw and escaped brackets", () => {
+    expect(blockTagInRun("Half escaped &lt;p> here.")?.tag).toBe("&lt;p>")
+    expect(blockTagInRun("Half escaped <p&gt; here.")?.tag).toBe("<p&gt;")
   })
 
   it("quotes the tag sliced from the text, cut to 80 characters", () => {
@@ -270,17 +296,6 @@ describe("blockTagInArticle", () => {
 
   it("reads only the article, so a head or a missing article holds nothing", () => {
     expect(blockTagInArticle("<html><head><title>&lt;p&gt;</title></head></html>")).toBeUndefined()
-  })
-})
-
-describe("blockTagViolation", () => {
-  it("names the element and the tag, and names nothing for a clean article", () => {
-    const violation = blockTagViolation(
-      withArticle("<p><mark>Scraped rooms are each an &lt;li&gt; with an h3 title.</mark></p>")
-    )
-    expect(violation).toContain("a <p>'s text holds the block tag `<li>` as characters")
-    expect(violation).toContain("article_html")
-    expect(blockTagViolation(withArticle("<p><mark>A claim.</mark></p>"))).toBeUndefined()
   })
 })
 

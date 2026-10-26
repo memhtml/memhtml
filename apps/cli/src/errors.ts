@@ -166,7 +166,8 @@ export const messageFor = (error: unknown): string => {
     case "MarkupInProse":
       return markupInProseReason({
         line: typeof error.line === "number" ? error.line : 0,
-        tag: text(error.tag) ?? "a block tag"
+        tag: text(error.tag) ?? "a block tag",
+        unended: error.unended === true
       })
     default:
       return `unexpected failure: ${error._tag}`

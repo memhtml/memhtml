@@ -14,7 +14,7 @@ import {
   STORE_CONFIG_FILE
 } from "@memhtml/contracts"
 import {
-  blockTagViolation,
+  blockTagInArticle,
   checkMemory,
   contentHash,
   isRootRelativeHref,
@@ -118,14 +118,17 @@ export const UNANCHORED_REASON =
  *
  * The prose path escapes every claim and paragraph, so markup a writer meant as `article_html`
  * becomes the characters `&lt;p&gt;` in the file, which every format constraint accepts. The doors
- * refuse such a body before rendering it, and the store's render gate refuses such an
- * `article_html`; this holds every put to the same rule, a `session exec` file and a curator's
- * record included, with the one check they share (`blockTagViolation`). Only a put is judged: an
- * archive or a move carries an existing record's bytes unchanged.
+ * refuse such a body before rendering it; this holds every put to the same rule, a `session exec`
+ * file and a curator's record included, with the one detector they share (`blockTagInArticle`).
+ * Only a put is judged: an archive or a move carries an existing record's bytes unchanged.
  */
 const blockTagReasons = (html: string): ReadonlyArray<string> => {
-  const violation = blockTagViolation(html)
-  return violation === undefined ? [] : [violation]
+  const found = blockTagInArticle(html)
+  return found === undefined
+    ? []
+    : [
+        `a <${found.element}>'s text holds the block tag \`${found.tag}\` as characters, outside code: markup goes in as elements (\`article_html\` on a write line), and a tag the record discusses goes in <code>, or in backticks that open and close on one line`
+      ]
 }
 
 /** True when a record's entities or its path say what it is about: the write bar's anchor rule. */

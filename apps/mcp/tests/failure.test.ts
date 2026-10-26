@@ -143,6 +143,10 @@ describe("the wire failure a tool call produces", () => {
     expect(markup.message).toContain("`&lt;ul&gt;` on its line 3")
     expect(markup.message).toContain("article_html")
     expect(markup.suggestions[0]).toContain("article_html")
+    // A claim that ran on into a fence: the reason says the first sentence never ended.
+    const unended = toToolFailure(new MarkupInProse({ line: 4, tag: "<ul>", unended: true }))
+    expect(unended.message).toContain("first sentence never ends before the tag")
+    expect(markup.message).not.toContain("never ends")
   })
 
   it("leaks no driver message, SQL, or git argv into the wire text", () => {
