@@ -734,10 +734,17 @@ const foldCluster = (
       if (foreign.length > 0) {
         results.warnings.push(`the model archived non-members: ${foreign.slice(0, 5).join(", ")}`)
       }
+      // The slots a canonical already points at: its own supersedes edges, and the links the model
+      // added from a canonical. A link from any other path is a repoint of a live record's edge to
+      // a member, which leaves the member unreached from the canonical.
+      const putPaths = new Set(puts.map((one) => one.path))
       const linkedByPut = new Set<string>()
       for (const one of puts) for (const href of yield* supersedesInPut(one)) linkedByPut.add(href)
-      for (const op of ops)
-        if (op.kind === "link" && op.rel === "supersedes") linkedByPut.add(op.href)
+      for (const op of ops) {
+        if (op.kind === "link" && op.rel === "supersedes" && putPaths.has(op.path)) {
+          linkedByPut.add(op.href)
+        }
+      }
 
       // Completion inside the same session while the cap allows: archives the model left, each with
       // its repoints computed over the view the model's ops left (`withRepoints`, which leaves the
