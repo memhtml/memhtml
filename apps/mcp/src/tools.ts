@@ -889,12 +889,20 @@ const MemoryArchive = Tool.make("memory_archive", {
   })
 })
 
+/**
+ * `paths` and `path` are both optional because either may name the memories, so neither can be
+ * `required`. The handler merges them and refuses a call that sends neither (`reinforceTargets` in
+ * `handlers.ts`).
+ */
 const MemoryReinforce = Tool.make("memory_reinforce", {
   description:
-    "Record that a memory helped or misled. Gated by a 900-second per-path cooldown, so a replayed query cannot inflate a memory's ranking; `cooled_down` lists the paths the cooldown held back.",
+    "Record that a memory helped or misled. Name the memories in `paths`, an array of memory paths; `path`, one memory path, is accepted for a single memory, and a call that sends both reinforces every path in either. A call that names no path is refused. " +
+    "Gated by a 900-second per-path cooldown, so a replayed query cannot inflate a memory's ranking; `cooled_down` lists the paths the cooldown held back.",
   dependencies: READS(),
   parameters: Schema.Struct({
-    paths: Schema.Array(MemoryPath),
+    paths: Optional(Schema.Array(MemoryPath)),
+    /** One memory, under the key `memory_read` and `memory_archive` name a memory with. */
+    path: Optional(MemoryPath),
     signal: Schema.Literals(REINFORCE_SIGNALS)
   }),
   failure: ToolFailure,

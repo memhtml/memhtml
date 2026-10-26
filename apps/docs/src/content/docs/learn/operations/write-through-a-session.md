@@ -306,7 +306,7 @@ When the ref is the branch your checkout has open, the working tree moves with t
 
 When a new record's claim has the same frame key as an active record at another path, both stay live. The new file gets a `memhtml-contradicts` link to the old one, and `contradictions` lists the pair. Deciding which claim is right stays with a writer or a person.
 
-`index.db` doesn't move with a session commit. When the session's ref is the branch the checkout has open, `memhtml head search` and a running [head server](/learn/operations/run-a-head-server/) see the new records at once. `memhtml search`, `memhtml recall`, and the MCP tools that read the index see them after the next `memhtml index update`, which is why that command stays on the [cron schedule](/learn/operations/run-the-store-day-to-day/#the-cron-schedule).
+`index.db` doesn't move with a session commit. When the session's ref is the branch the checkout has open, `memhtml head search` and a running [head server](/learn/operations/run-a-head-server/) see the new records at once. `memhtml search`, `memhtml recall`, and the MCP tools that read the index see them after the next `memhtml index update`, which is why that command stays among the [upkeep commands](/learn/operations/run-the-store-day-to-day/#the-upkeep-commands).
 
 ## When the ref moved, rebase
 

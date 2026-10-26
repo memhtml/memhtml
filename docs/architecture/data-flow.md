@@ -119,19 +119,19 @@ An MCP client runs `memhtml serve mcp`, which spawns the `memhtml-mcp` server as
 4. It spawns the entry point with `stdio: "inherit"` and `MEMHTML_ROOT` set to the resolved root, so the client talks to the child directly and a `--repo` override reaches it `apps/cli/src/serve.ts:82-90`.
 5. Interrupting the supervisor kills the child, and the `serve.exit` envelope is written only after the child exits `apps/cli/src/serve.ts:95-110`, `apps/cli/src/run.ts:1969`.
 6. The child launches `layerServer()` over the Node stdio transport for the process's lifetime `apps/mcp/src/bin.ts:15`.
-7. `layerServer` merges the 15-tool toolkit and the 2 resources over `layerApp(repoOverride)`, the CLI's own composition. It pins protocol `v2025_06_18` and routes every log to stderr, so stdout stays the NDJSON-RPC stream `apps/mcp/src/server.ts:40-63`, `apps/mcp/src/tools.ts:1041-1057`, `apps/mcp/src/resources.ts:323`.
+7. `layerServer` merges the 15-tool toolkit and the 2 resources over `layerApp(repoOverride)`, the CLI's own composition. It pins protocol `v2025_06_18` and routes every log to stderr, so stdout stays the NDJSON-RPC stream `apps/mcp/src/server.ts:40-63`, `apps/mcp/src/tools.ts:1049-1065`, `apps/mcp/src/resources.ts:323`.
 8. The call's arguments are decoded against the tool's own parameter schema, snake_case on the wire `apps/mcp/src/tools.ts:545-575`.
-9. A `tools/call` lands on the handler table that `MemhtmlToolkit.toLayer` type-checks against the toolkit's own parameter and success schemas `apps/mcp/src/handlers.ts:330-334`.
-10. The `memory_search` handler renames the wire parameters and decodes `facets` with the same parser the CLI uses `apps/mcp/src/handlers.ts:557-572`.
-11. It asks the head server through `searchOnHead`, and on a `null` answer calls the same `searchMemories` the CLI arm calls `apps/mcp/src/handlers.ts:573-581`.
+9. A `tools/call` lands on the handler table that `MemhtmlToolkit.toLayer` type-checks against the toolkit's own parameter and success schemas `apps/mcp/src/handlers.ts:361-365`.
+10. The `memory_search` handler renames the wire parameters and decodes `facets` with the same parser the CLI uses `apps/mcp/src/handlers.ts:588-603`.
+11. It asks the head server through `searchOnHead`, and on a `null` answer calls the same `searchMemories` the CLI arm calls `apps/mcp/src/handlers.ts:604-612`.
 12. `routeFor` sends the call to the index when `MEMHTML_MCP_HEAD` is `off`, when it sets `include_archived` or `as_of`, when the query holds a double-quoted phrase, or when it has no term the head's BM25 indexes `apps/cli/src/head-retrieval.ts:64-80`.
 13. Otherwise the handler posts one scoped, detailed search to `/v1/search` and waits at most 2 s for the answer `apps/cli/src/head-retrieval.ts:93-118`, `apps/cli/src/head-retrieval.ts:37-42`. Flow 5 shows what the server does with it.
 14. A head answer is reshaped into v1's `SearchResult`. Its arms read `fts`, `vector` when the vector arm ran, and `recency`, and there's no salience arm and no MMR on this path `apps/cli/src/head-retrieval.ts:120-165`.
 15. With no head answer, retrieval runs the flow 2 chain: coverage gate, query vector, fused RRF statement, hydrate, polarity, MMR, snippets `packages/index/src/retrieval.ts:506-598`.
-16. The handler renames the result fields back to snake_case for the wire `apps/mcp/src/handlers.ts:582-605`.
-17. Every handler's failures pass through `handled`, which maps them with `toToolFailure` `apps/mcp/src/handlers.ts:77-78`.
+16. The handler renames the result fields back to snake_case for the wire `apps/mcp/src/handlers.ts:613-636`.
+17. Every handler's failures pass through `handled`, which maps them with `toToolFailure` `apps/mcp/src/handlers.ts:82-83`.
 18. `toToolFailure` composes the stable code, the reason, and suggestions into the single prose error channel MCP offers. An already composed `ToolFailure` passes through unchanged `apps/mcp/src/failure.ts:207-224`.
-19. The failure must be a `ToolFailure` that each tool declares, because `McpServer` rewrites an `AiError` or an undeclared failure to a generic internal-error sentence `apps/mcp/src/handlers.ts:65-72`, `apps/mcp/src/tools.ts:47-56`.
+19. The failure must be a `ToolFailure` that each tool declares, because `McpServer` rewrites an `AiError` or an undeclared failure to a generic internal-error sentence `apps/mcp/src/handlers.ts:70-77`, `apps/mcp/src/tools.ts:47-56`.
 
 ```mermaid
 sequenceDiagram

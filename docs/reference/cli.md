@@ -97,7 +97,7 @@ The v1 doors that create a record are `write`, `apply`, `correct`, and `task add
 
 The default is `closed-in-session` (`DEFAULT_V1_DOORS` at `packages/contracts/src/store-config.ts:123`). Both refusals are exit 2 and open nothing. `run` judges the door in `validate` when it can read the root before building a layer, from `--repo` or from the environment (`apps/cli/src/run.ts:1715-1726`, `sessionBoundRefusal` at `apps/cli/src/run.ts:1003-1016`). Otherwise the arm's own guard judges it inside the layer, and the answer is still exit 2 (`guardV1Door` at `apps/cli/src/store-config.ts:125-133`, `apps/cli/src/run.ts:2418-2422`). `codeFor` picks the code by whether a session closed the door (`V1DoorClosed` at `apps/cli/src/errors.ts:97-98`). The suggestions are the session commands that do the same job, as `session put` lines that run as written (`sessionDoorRefusal` and `closedDoorRefusal` at `apps/cli/src/doors.ts:85-106`).
 
-The edits of existing records, `link`, `archive`, `task status`, and `reinforce`, aren't record doors, and no mode closes them (`apps/cli/src/doors.ts:12-13`). The other v1 commands ignore the variable. The MCP server's `memory_write`, `memory_write_batch`, and `memory_correct` follow the same mode, reading `MEMHTML_SESSION` from the server's own environment (`apps/mcp/src/handlers.ts:338`, `apps/mcp/src/handlers.ts:406`, `apps/mcp/src/handlers.ts:658`). `memhtml config` shows the store's mode.
+The edits of existing records, `link`, `archive`, `task status`, and `reinforce`, aren't record doors, and no mode closes them (`apps/cli/src/doors.ts:12-13`). The other v1 commands ignore the variable. The MCP server's `memory_write`, `memory_write_batch`, and `memory_correct` follow the same mode, reading `MEMHTML_SESSION` from the server's own environment (`apps/mcp/src/handlers.ts:369`, `apps/mcp/src/handlers.ts:437`, `apps/mcp/src/handlers.ts:689`). `memhtml config` shows the store's mode.
 
 The policy file is read from the working tree each time a door, a session write, or a curate command needs it, and never cached (`loadStorePolicy` at `apps/cli/src/store-config.ts:64-93`). An absent file is the library defaults. A file that exists and can't be read or doesn't decode is `ERR_STORE_CONFIG` at exit 1 for every command that needs the policy.
 
@@ -365,7 +365,7 @@ memhtml search <query> [--limit 10]
 
 Runs a ranked search over the SQLite index (`searchMemories` at `apps/cli/src/operations.ts:994-998`, `layerRetrieval` at `apps/cli/src/api-layer.ts:320-336`). The full-text, vector, recency, and salience arms are fused by reciprocal rank. A polarity step re-scores the fused pool, and MMR picks the final hits (`search` at `packages/index/src/retrieval.ts:506-598`). The vector arm runs only when the share of chunks with a vector in the configured space clears the coverage floor (`gatedQueryVector` at `packages/index/src/retrieval.ts:308-320`).
 
-The command always reads the index. The MCP server's `memory_search` asks a running head server first and falls back to this same retrieval (`apps/mcp/src/handlers.ts:581`, `searchOnHead` at `apps/cli/src/head-retrieval.ts:128-165`), and `memhtml head search` searches the head itself. `session commit` doesn't reindex, so a record a session landed reaches this answer after the next `memhtml index update`, or after the next v1 write, whose `reindex` diffs from the watermark (`sessionCommit` at `apps/cli/src/v2.ts:1099`, `reindex` at `apps/cli/src/operations.ts:267-271`).
+The command always reads the index. The MCP server's `memory_search` asks a running head server first and falls back to this same retrieval (`apps/mcp/src/handlers.ts:612`, `searchOnHead` at `apps/cli/src/head-retrieval.ts:128-165`), and `memhtml head search` searches the head itself. `session commit` doesn't reindex, so a record a session landed reaches this answer after the next `memhtml index update`, or after the next v1 write, whose `reindex` diffs from the watermark (`sessionCommit` at `apps/cli/src/v2.ts:1099`, `reindex` at `apps/cli/src/operations.ts:267-271`).
 
 Arguments:
 
@@ -404,7 +404,7 @@ Failure: `search` writes nothing, and it doesn't bump access either. `searchMemo
 memhtml recall <query> [--budget 16000]
 ```
 
-Builds a disclosure pack under a character budget (`recall` at `packages/index/src/retrieval.ts:600-652`). It runs the same coverage gate and fusion as `search` over a fixed pool of 30 candidates, with the polarity step and no MMR. Arcs fold under their own fixed 9000-character budget and every other memory under `--budget` (`ARC_BODY_BUDGET` at `packages/index/src/disclosure.ts:20`). Like `search`, the command always reads the index. The MCP server's `memory_recall` asks a running head server first (`apps/mcp/src/handlers.ts:619`).
+Builds a disclosure pack under a character budget (`recall` at `packages/index/src/retrieval.ts:600-652`). It runs the same coverage gate and fusion as `search` over a fixed pool of 30 candidates, with the polarity step and no MMR. Arcs fold under their own fixed 9000-character budget and every other memory under `--budget` (`ARC_BODY_BUDGET` at `packages/index/src/disclosure.ts:20`). Like `search`, the command always reads the index. The MCP server's `memory_recall` asks a running head server first (`apps/mcp/src/handlers.ts:650`).
 
 Arguments:
 
@@ -1209,7 +1209,7 @@ Failure: `--check` never writes. Without it, an in-sync file isn't rewritten. An
 memhtml serve mcp
 ```
 
-Supervises the `memhtml-mcp` stdio server, 15 tools and 2 resource templates over the same root (`serveMcp` at `apps/cli/src/serve.ts:82-111`, `MemhtmlToolkit` at `apps/mcp/src/tools.ts:1041-1057`, `Resources` at `apps/mcp/src/resources.ts:323`). The templates are `memhtml://file/{path}` and `memhtml://at/{commit}/{path}` (`RESOURCE_TEMPLATES` at `apps/mcp/src/resources.ts:326`). It resolves the root, finds the server entry, spawns it with stdio inherited, and waits. It builds no app layer, so the parent holds no database handle (`apps/cli/src/run.ts:1960-1979`).
+Supervises the `memhtml-mcp` stdio server, 15 tools and 2 resource templates over the same root (`serveMcp` at `apps/cli/src/serve.ts:82-111`, `MemhtmlToolkit` at `apps/mcp/src/tools.ts:1049-1065`, `Resources` at `apps/mcp/src/resources.ts:323`). The templates are `memhtml://file/{path}` and `memhtml://at/{commit}/{path}` (`RESOURCE_TEMPLATES` at `apps/mcp/src/resources.ts:326`). It resolves the root, finds the server entry, spawns it with stdio inherited, and waits. It builds no app layer, so the parent holds no database handle (`apps/cli/src/run.ts:1960-1979`).
 
 This command takes no arguments and no command-specific flags (`apps/cli/src/commands.ts:1019-1025`).
 
