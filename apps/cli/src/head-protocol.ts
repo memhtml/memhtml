@@ -627,13 +627,18 @@ const ViolationSchema = Schema.Union([
 
 /**
  * `POST /v1/neighbors`: `preparePuts`'s answer, the ops to append, the puts as rendered and placed,
+ * each put's placement (its path and the collision ordinal it took, `null` for an explicit path),
  * their neighbors, every violation, the blocking ones, and the vector arm's report, with the version
- * it was computed over.
+ * it was computed over. `placements` is required, so an answer from a server without it does not
+ * decode and the client places the puts itself.
  */
 export const NeighborsAnswer = Schema.Struct({
   appended: Schema.Array(OverlayOpSchema),
   puts: Schema.Array(
     Schema.Struct({ kind: Schema.Literal("put"), path: Schema.String, html: Schema.String })
+  ),
+  placements: Schema.Array(
+    Schema.Struct({ path: Schema.String, ordinal: Schema.NullOr(Schema.Finite) })
   ),
   neighbors: Schema.Array(
     Schema.Struct({ path: Schema.String, hits: Schema.Array(SearchHitSchema) })

@@ -419,6 +419,10 @@ describe("the head server", () => {
     expect(answered?.data.appended).toEqual(expected.appended)
     expect(answered?.data.appended.map((op) => op.kind)).toEqual(["put", "label"])
     expect(answered?.data.puts).toEqual(expected.puts)
+    expect(answered?.data.placements).toEqual(expected.placements)
+    expect(answered?.data.placements).toEqual([
+      { path: "areas/inbox/orchard-pruning.html", ordinal: 1 }
+    ])
     expect(answered?.data.neighbors).toEqual(expected.neighbors)
     expect(answered?.data.violations).toEqual(expected.violations)
     expect(answered?.data.blocking).toEqual([])
@@ -470,11 +474,25 @@ describe("the head server", () => {
         ""
       ].join("\n")
     )
+    // A dry run through the server answers the same placements and appends nothing.
+    const preview = await cli(repo.root, [
+      ...["session", "put", "--id", "s1", "--file", ops, "--dry-run"]
+    ])
+    expect(preview.exitCode).toBe(0)
+    expect(headOf(preview.body)).toMatchObject({ sha: base, source: "server" })
+    expect(dataOf(preview.body)).toMatchObject({
+      dryRun: true,
+      appended: 0,
+      ops: 0,
+      placements: [{ path: "areas/inbox/orchard-pruning.html", ordinal: 1 }]
+    })
     const put = await cli(repo.root, ["session", "put", "--id", "s1", "--file", ops])
     expect(put.exitCode).toBe(0)
     expect(headOf(put.body)).toMatchObject({ sha: base, source: "server" })
     expect(dataOf(put.body)).toMatchObject({
+      dryRun: false,
       appended: 2,
+      placements: [{ path: "areas/inbox/orchard-pruning.html", ordinal: 1 }],
       labels: [{ kind: "label", path: "areas/inbox/orchard.html", entity: "system:orchard" }],
       vector: { used: true, reason: null }
     })
@@ -894,6 +912,7 @@ describe("the wire's op schema", () => {
       const answer = {
         appended: [op],
         puts: [],
+        placements: [],
         neighbors: [],
         violations: [],
         blocking: [],

@@ -60,6 +60,8 @@ PARA is fixed at four buckets (`packages/contracts/src/types.ts:63`). `archive` 
 
 **A derived path takes a collision suffix; an EXPLICIT path takes a refusal.** `freePathFor` (`packages/store/src/store.ts:432`) suffixes `-2`, then `-3`, until one is free, and a path is taken if either disk or the batch's own `claimed` set says so — without `claimed`, two ops sharing a title in one batch would both receive the unsuffixed path and the second write would silently overwrite the first. A caller-supplied valid `--path` gets no suffix and no fallback: an occupied one fails with `WriteConflict` → `ERR_WRITE_CONFLICT`, nothing written and nothing committed (`packages/store/src/store.ts:438-458`). Both alternatives are worse than a refusal here. A quiet `-2` would hand back a path the caller did not name and did not ask for, and a quiet overwrite would DELETE a memory in a corpus whose only eviction is a `git mv` into `archive/`. The conflict reports `theirSha` as the blob currently at that path with an empty `ourSha`, because this write read nothing it would have replaced. One path is exempt: `correctMemory`'s own target, which the same commit moves into the archive, so the target's path is free by the time the correction's bytes are written. The recovery an agent is handed is `memhtml read <path>` then `memhtml correct <path>` (`apps/cli/src/errors.ts:209-213`), which writes the superseding memory and archives what it replaces in one commit — the operation an overwrite would have faked.
 
+**A writer can ask for a path before it writes.** `memhtml path` answers where one write would land over the version at `HEAD`, and `session put --dry-run` answers it for every line of a file over the session's view. Both run `putPathFor` (`apps/cli/src/v2.ts`), the placement `session put` runs, so the answer carries the collision ordinal the engine would take, and a path pending elsewhere can be passed as taken (`--claimed`). Neither writes anything. A tool that names a file before the write lands (a draft that links to it, a check that a path is free) asks the engine rather than restating `slugify` and the ordinal rule, whose edges (the length cut, the suffix's room inside it) a copy gets wrong.
+
 **The archive mapping is injective and invertible.** `archivePathFor` (`packages/contracts/src/paths.ts:217`) mirrors the original path whole beneath `archive/<YYYY>/`, and `originalPathFor` (`packages/contracts/src/paths.ts:225`) strips exactly one such prefix, so it is a left inverse even for a memory archived twice. `git log --follow` reads through the move and `diff -M` reports `R100` rather than a delete plus an add. Nothing is ever deleted.
 
 Path validation refuses `.` and `..` segments (`packages/contracts/src/paths.ts:95-100`), keeping a caller-supplied path inside the repo. A path is the id of a memory — there is no separate uuid anywhere (`packages/contracts/src/types.ts:102-107`).
@@ -400,7 +402,7 @@ Placement. A writer still picks a directory, and the inbox still absorbs an unsu
 
 ### The command families
 
-The v2 surface is four families in `apps/cli/src/commands.ts`. `run.ts` dispatches them, `runV2` in `apps/cli/src/v2.ts` answers most of them, and `head serve`, `curate run`, `curate collapse`, `session prune`, and `config` run through modules of their own. `docs/reference/cli.md` is the reference for every flag.
+The v2 surface is four families in `apps/cli/src/commands.ts`, plus `path`. `run.ts` dispatches them, `runV2` in `apps/cli/src/v2.ts` answers most of them, and `head serve`, `curate run`, `curate collapse`, `session prune`, `path`, and `config` run through functions of their own. `docs/reference/cli.md` is the reference for every flag.
 
 | family                                                       | what it does                                                                         |
 | ------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
@@ -409,6 +411,7 @@ The v2 surface is four families in `apps/cli/src/commands.ts`. `run.ts` dispatch
 | `head status`, `search`, `snapshot`, `embed`, `serve`        | load, query, and cache the head, and run the head server (§16, §20, §22)             |
 | `curate run`, `collapse`, `merge`                            | run the curator or the collapse on a `curate/<date>` branch, and land a branch (§23) |
 | `config`                                                     | report the store's effective policy and where each value came from (§19)             |
+| `path`                                                       | answer where one write would land over the head, and the ordinal it took (§2)        |
 
 None of the session or head commands opens `index.db`. The head comes from the head server, a snapshot, or git, and every payload that reports a head says which in `head.source` (`server`, `snapshot`, `snapshot+advance`, or `git`).
 
