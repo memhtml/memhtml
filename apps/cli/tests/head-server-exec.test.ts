@@ -19,7 +19,7 @@ import { type HeadServer, startHeadServer } from "../src/head-server.js"
 import { run } from "../src/run.js"
 import { cacheImage, type GuestJob, seedFor } from "../src/session-exec.js"
 import { loadHeadAt } from "../src/v2.js"
-import { fakeEmbedder } from "./harness.js"
+import { fakeEmbedder, type LogEntry, recordingLogger } from "./harness.js"
 
 /**
  * `session exec` through the head server (`/v1/exec`, `docs/design.md` §22, "Exec"), in
@@ -39,6 +39,8 @@ import { fakeEmbedder } from "./harness.js"
  *   search answers until the loop ends).
  * - `head-server.ts` `execBase`: treat every base as an ancestor -> "declines a base off its ref's
  *   history, and the CLI runs the script itself" (the server serves it).
+ * - `head-server.ts` `execBase`: ask through `git.run` and catch the failure as "no" -> the same
+ *   case (`git merge-base exited 1` at Error, logged by `run`).
  * - `head-server.ts` `execBody`: drop the `MaxBodySize` bound -> "refuses a body over the cap with
  *   413" (the chunked case is read whole and answered 500 for its session).
  * - `run.ts`: drop the `EXEC_BODY_MAX_BYTES` check -> "refuses a script over the cap at exit 2,
@@ -108,17 +110,25 @@ const corpus = async (): Promise<{ repo: FixtureRepo; sha: string }> => {
 /** A server in its own scope, closed after the test. */
 const serve = async (
   root: string,
-  options: { readonly embedder?: EmbedderShape; readonly execWorkerPath?: string } = {}
+  options: {
+    readonly embedder?: EmbedderShape
+    readonly execWorkerPath?: string
+    /** Where the server's log entries go instead of stderr, when given. */
+    readonly logs?: Array<LogEntry>
+  } = {}
 ): Promise<HeadServer> => {
   const scope = Scope.makeUnsafe()
   scopes.push(scope)
+  const started = startHeadServer({
+    root,
+    pollMs: 0,
+    embedder: options.embedder ?? fakeEmbedder(),
+    execWorkerPath: options.execWorkerPath
+  }).pipe(Scope.provide(scope))
   return run_(
-    startHeadServer({
-      root,
-      pollMs: 0,
-      embedder: options.embedder ?? fakeEmbedder(),
-      execWorkerPath: options.execWorkerPath
-    }).pipe(Scope.provide(scope))
+    options.logs === undefined
+      ? started
+      : started.pipe(Effect.provide(recordingLogger(options.logs)))
   )
 }
 
@@ -269,7 +279,8 @@ describe("session exec through the head server", () => {
     expect(
       (await cli(repo.root, ["session", "start", "--id", "side", "--ref", "side"])).exitCode
     ).toBe(0)
-    await serve(repo.root)
+    const logs: Array<LogEntry> = []
+    await serve(repo.root, { logs })
     const result = await exec(repo.root, "side", "ls /mnt/memhtml/areas/inbox")
     expect(result.exitCode).toBe(0)
     const data = dataOf(result.body)
@@ -277,6 +288,8 @@ describe("session exec through the head server", () => {
     expect(String((data.server as Body).detail)).toContain(sha)
     expect((data.head as Body).source).not.toBe("server")
     expect(data.stdout).toContain("beacon.html")
+    // `merge-base --is-ancestor` exits 1 for the side branch's base: the answer, not an error.
+    expect(logs.filter((entry) => entry.level === "Error")).toEqual([])
   })
 
   it("runs two execs of one session one after the other, the second over the first's harvest", async () => {
