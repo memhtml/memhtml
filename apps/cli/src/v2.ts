@@ -947,9 +947,10 @@ export const sessionExec = (input: {
   })
 
 /**
- * The half of `session commit` that follows the head: the commit algorithm against `base`, the
- * version at the session's base, with `--drop-refused`'s rounds, and the new commit's snapshot. The
- * CLI calls it with the version it loaded and the head server with the version it holds
+ * The half of `session commit` that follows the head: the log completed with the repoints its
+ * archives and moves need against `base` ({@link withRepoints}), the commit algorithm against
+ * `base`, the version at the session's base, with `--drop-refused`'s rounds, and the new commit's
+ * snapshot. The CLI calls it with the version it loaded and the head server with the version it holds
  * (`head-server.ts`, `/v1/commit`), so the two answer with one function and cannot drift.
  * `afterCommit` is the only difference: it writes the snapshot of a `committed` outcome, which the CLI
  * builds from `base` by delta ({@link snapshotAfterCommit}, the default) and the server builds from
@@ -977,6 +978,15 @@ export const commitOverHead = (input: {
   Effect.gen(function* () {
     let session = input.session
     const scope = sessionScopeOf(session.ref)
+    // An archive or a move was completed with its repoints against the base it was appended over.
+    // A rebase since (the caller's, or the server's own rounds) can bring a record that gained an
+    // edge to the vacated path, and a log written before the completion existed carries none, so
+    // the log is completed again against the version it lands on, as a `curate merge` replay is.
+    // A log carrying `pending` is left to the commit, which settles it first.
+    if (session.pending === undefined) {
+      const completed = withRepoints(input.base, session.ops, scope)
+      if (completed.length > session.ops.length) session = yield* replaceOps(session, completed)
+    }
     const dropped: Array<DroppedOp> = []
     let outcome: CommitOutcome =
       session.ops.length === 0 && session.pending === undefined

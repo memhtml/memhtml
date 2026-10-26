@@ -11,18 +11,20 @@ import { type CommitScope, isReservedPath } from "./validate.js"
  * batch; `validateOps` refuses a batch that leaves one behind. The pairs are mechanical (the view's
  * `inbound` index names every holder), so a writer should never have to compute them: `session
  * exec` completes its harvest with this, the curator's binder completes a proposal with it before
- * it judges it, `curate collapse` completes the archives its driver adds, and `curate merge`
- * completes a replay with it against the tip it lands on, where `main` may have gained an edge to
- * the old path after the curator ran.
+ * it judges it, and `curate collapse` completes the archives its driver adds. `session commit` and
+ * the curator's own landing complete the whole log again against the version they commit over, and
+ * `curate merge` completes a replay against the tip it lands on, because the ref may have gained an
+ * edge to the old path after the log was written. A log already complete gains nothing.
  *
  * The repoints go in before the batch's first `move` or `archive`, so a holder the batch itself
  * moves is edited at its old path and the edit travels with it. A holder the batch archives is left
  * alone (its archived copy keeps the edge as history, which `validateOps` allows), an edge the batch
- * already unlinks is left to the batch, and a source the batch puts a new record at again needs
- * nothing. So is a holder `scope` may not write ({@link isReservedPath}: an arc or a people record
- * under `session`), whose edge is the curator's to repoint; `validateOps` lets an archive leave it
- * and names it on a move. Edges a batch's own puts or `link`s aim at the old path are not the view's
- * to know; `validateOps` names them.
+ * already unlinks (at the holder's path, or at the path the batch moved it to) is left to the batch,
+ * and a source the batch puts a new record at again needs nothing. So is a holder `scope` may not
+ * write ({@link isReservedPath}: an arc or a people record under `session`), whose edge is the
+ * curator's to repoint; `validateOps` lets an archive leave it and names it on a move. Edges a
+ * batch's own puts or `link`s aim at the old path are not the view's to know; `validateOps` names
+ * them.
  */
 export const withRepoints = (
   view: HeadView,
@@ -37,11 +39,20 @@ export const withRepoints = (
   const reoccupied = new Set(
     ops.flatMap((op) => (op.kind === "put" ? [normalizePath(op.path)] : []))
   )
-  const unlinked = new Set(
-    ops.flatMap((op) =>
-      op.kind === "unlink" ? [`${normalizePath(op.path)}\n${op.rel}\n${op.href}`] : []
-    )
-  )
+  // An edge the batch unlinks, keyed by the path its holder had when the batch began: an unlink at
+  // the destination of a holder the batch moved is that holder's edge, so a repoint written there
+  // (by an earlier exec of the log, over the overlaid view) is not made again at the old path.
+  const origin = new Map<string, string>()
+  const unlinked = new Set<string>()
+  for (const op of ops) {
+    if (op.kind === "move") {
+      const from = normalizePath(op.path)
+      origin.set(normalizePath(op.to), origin.get(from) ?? from)
+    } else if (op.kind === "unlink") {
+      const path = normalizePath(op.path)
+      unlinked.add(`${origin.get(path) ?? path}\n${op.rel}\n${op.href}`)
+    }
+  }
   const repoints: Array<OverlayOp> = []
   for (const op of ops) {
     if (op.kind !== "move" && op.kind !== "archive") continue

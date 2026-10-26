@@ -1,15 +1,16 @@
 import { createHash } from "node:crypto"
-import { access, mkdtemp, rm } from "node:fs/promises"
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 
 import { DEFAULT_WRITE_BAR, type MemoryRecord } from "@memhtml/contracts"
+import { archivePathFor } from "@memhtml/contracts/paths"
 import { CURATOR_MODEL_VAR } from "@memhtml/curator"
 import { frameKeyOf } from "@memhtml/domain"
 import { versionFromRecords } from "@memhtml/head"
 import { contentHash, parseMemory, renderTemplate } from "@memhtml/html"
 import { PROXY_BASE_URL_VAR } from "@memhtml/llm"
-import { UNANCHORED_REASON, validateOps } from "@memhtml/session"
+import { appendOps, startSession, UNANCHORED_REASON, validateOps } from "@memhtml/session"
 import { makeGit } from "@memhtml/store"
 import { configureIdentity } from "@memhtml/store/testing"
 import { Effect, Logger } from "effect"
@@ -22,12 +23,13 @@ import {
   curateRun,
   curateSessionId,
   defaultCurateRef,
+  land,
   memoryOverlay,
   type Overlay
 } from "../src/curate-run.js"
 import { EXIT_RUNTIME, EXIT_USAGE } from "../src/envelope.js"
 import { parseArgv, run, validate } from "../src/run.js"
-import { type LoadedHead, revParse } from "../src/v2.js"
+import { type LoadedHead, loadHeadAt, revParse } from "../src/v2.js"
 import { STRICT_POLICY } from "./strict-store.js"
 
 /**
@@ -65,6 +67,9 @@ import { STRICT_POLICY } from "./strict-store.js"
  * - `curate-run.ts` `bindTools` (2026-10-18): `promise` runs every call through `Effect.runPromise`,
  *   ignoring `context` -> "a tool call logs through the logger of the fiber that bound it" (the line
  *   goes to the default logger, on stdout, and the captured list is empty).
+ * - `curate-run.ts` `land` (2026-10-26): the rebase round without its `withRepoints` completion ->
+ *   "repoints an edge the ref gained to the archived path while the curator ran" (the commit is
+ *   refused naming the new record, and `land` fails).
  */
 
 const parse = (stdout: string): Record<string, unknown> =>
@@ -779,6 +784,65 @@ describe("the propose and exec tools move a record", () => {
     ])
     expect(result.appended).toBe(3)
     expect(validateOps(head.view, overlay.ops(), { scope: "curate" })).toEqual([])
+  }, 120_000)
+})
+
+describe("land completes an archive's repoints after a rebase", () => {
+  it("repoints an edge the ref gained to the archived path while the curator ran", async () => {
+    const root = await repo()
+    const git = makeGit(root)
+    const commitFiles = async (files: Record<string, string>, message: string) => {
+      for (const [path, html] of Object.entries(files)) {
+        await mkdir(dirname(join(root, path)), { recursive: true })
+        await writeFile(join(root, path), html, "utf8")
+      }
+      await Effect.runPromise(git.run(["add", "-A"]).pipe(Effect.orDie))
+      await Effect.runPromise(git.run(["commit", "-q", "-m", message]).pipe(Effect.orDie))
+      const sha = await Effect.runPromise(revParse(root, "HEAD"))
+      if (sha === null) throw new Error("no HEAD")
+      return sha
+    }
+    const retired = "resources/acme-widget/b.html"
+    const slot = archivePathFor(retired, 2031)
+    const later = "resources/acme-widget/d.html"
+    const retiredHtml = renderTemplate({
+      title: "Widget batch size",
+      claim: "The acme widget ships in batches of twelve.",
+      memoryType: "semantic",
+      entities: ["project:acme-widget"],
+      at: "2031-03-01T12:00:00Z"
+    })
+    const base = await commitFiles({ [retired]: retiredHtml }, "one claim")
+    const head = await Effect.runPromise(loadHeadAt(root, base))
+    // Nothing cites the record at the base, so the archive goes alone.
+    const session = await Effect.runPromise(
+      startSession({ root, id: "curate-land", base: head.view }).pipe(
+        Effect.flatMap((started) =>
+          appendOps(started, [{ kind: "archive", path: retired, to: slot, html: retiredHtml }])
+        )
+      )
+    )
+    // Another writer lands a record citing it at its live path before the curator's session does.
+    await commitFiles(
+      {
+        [later]: renderTemplate({
+          title: "Widget packing note",
+          claim: "Widget batches are packed by hand.",
+          memoryType: "semantic",
+          entities: ["project:acme-widget"],
+          links: [{ rel: "relates_to", href: `/${retired}` }],
+          at: "2031-03-02T12:00:00Z"
+        })
+      },
+      "another writer"
+    )
+    const landed = await Effect.runPromise(
+      land({ root, session, head, message: "retire one claim", writeBar: DEFAULT_WRITE_BAR })
+    )
+    expect(landed.rebases).toBe(1)
+    const cites = await Effect.runPromise(git.run(["show", `${landed.sha}:${later}`]))
+    expect(cites).toContain(`<link rel="memhtml-relates-to" href="/${slot}">`)
+    expect(cites).not.toContain(`href="/${retired}"`)
   }, 120_000)
 })
 

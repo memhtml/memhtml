@@ -32,6 +32,7 @@ import {
   type CommitScope,
   commitSession,
   rebaseSession,
+  replaceOps,
   resumeSession,
   type Session,
   saveSession,
@@ -507,6 +508,12 @@ export const land = (input: {
           head = yield* reload(outcome.mainSha)
           session = rebaseSession(session, head.view)
           yield* saveSession(session)
+          // The new tip may hold a record with an edge to a path the log vacates; its repoint is
+          // added before the next attempt, as `session commit` and `curate merge` add theirs.
+          const completed = withRepoints(head.view, session.ops, CURATE_SCOPE)
+          if (completed.length > session.ops.length) {
+            session = yield* replaceOps(session, completed)
+          }
           break
         }
         case "refused":

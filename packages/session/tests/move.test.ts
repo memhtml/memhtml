@@ -54,6 +54,9 @@ import {
  * - withRepoints, scope (2026-10-26): the `isReservedPath(holder, scope)` skip dropped -> "leaves a
  *   holder the scope may not write to the curator, and repoints it under curate" (the arc is
  *   repointed under `session`).
+ * - withRepoints, moved holders (2026-10-26): batch unlinks keyed by the path they name, not the
+ *   path the holder had when the batch began -> "takes an unlink at the path the batch moved a
+ *   holder to as that holder's repoint" (a second pair is added at the old path).
  */
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect)
@@ -455,6 +458,32 @@ describe("withRepoints completes an archive", () => {
       archived
     ])
     expect(validateOps(head, curated, { scope: "curate" })).toEqual([])
+  })
+
+  it("takes an unlink at the path the batch moved a holder to as that holder's repoint", async () => {
+    const note = "resources/acme-widget/c.html"
+    const placed = "resources/acme-gadget/c.html"
+    const noteHtml = addLink(
+      memory("Widget packing note", "Widget batches are packed by hand.", {
+        entities: ["project:acme-widget"]
+      }),
+      "relates_to",
+      `/${RETIRED}`
+    )
+    const head = mapHead(SHA, [
+      await recordFrom(RETIRED, RETIRED_HTML),
+      await recordFrom(note, noteHtml)
+    ])
+    // One exec moved the note; a later one archived the record it cites and repointed the note
+    // where it now is, over the overlaid view. Completing the whole log again adds nothing.
+    const log = [
+      move(note, placed, noteHtml),
+      unlink(placed, "relates_to", `/${RETIRED}`),
+      link(placed, "relates_to", `/${SLOT}`),
+      retire(RETIRED, RETIRED_HTML)
+    ]
+    expect(withRepoints(head, log)).toEqual(log)
+    expect(validateOps(head, log)).toEqual([])
   })
 
   it("commits the archive with the successor's supersedes edge at the archive slot", async () => {

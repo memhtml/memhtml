@@ -3,7 +3,8 @@ import { createServer, type IncomingMessage, request, type Server } from "node:h
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 
-import { renderTemplate } from "@memhtml/html"
+import { archivePathFor } from "@memhtml/contracts/paths"
+import { addLink, renderTemplate } from "@memhtml/html"
 import { SESSIONS_DIR, sessionStateFile } from "@memhtml/session"
 import { snapshotPathFor } from "@memhtml/snapshot"
 import { type FixtureRepo, makeFixtureRepo } from "@memhtml/store/testing"
@@ -58,6 +59,11 @@ import { writeStoreConfig } from "./strict-store.js"
  *   early round dropped" (`dropped` is empty).
  * - `v2.ts` `commitOverHead`: commit a log with no ops instead of answering `refused` -> "a commit
  *   of a log with no ops ... touches nothing" (main gains an empty `memhtml(session)` commit).
+ * - `v2.ts` `commitOverHead` (2026-10-26): the log committed without its `withRepoints` completion
+ *   -> "completes the new edge when the log is committed after a rebase here" and "completes a log
+ *   an older writer left with the archive alone" (both refused, naming the note that still cites
+ *   the vacated path) and "completes it in the server's rebase round under --drop-refused" (the
+ *   archive and the first note's repoint are dropped and the successor lands alone).
  */
 
 const run_ = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect)
@@ -656,6 +662,155 @@ describe("the head server's rebase rounds under --drop-refused", () => {
       paths: [fresh],
       dropped: [{ kind: "put", path: twin }]
     })
+  }, 60_000)
+})
+
+describe("an archive whose ref gained an edge to the archived path before the commit", () => {
+  const retired = "areas/inbox/orchard.html"
+  const slot = archivePathFor(retired, 2031)
+  const successor = "resources/acme-widget/a.html"
+  const cited = "resources/acme-widget/c.html"
+  const later = "resources/acme-widget/d.html"
+  const note = (title: string, claim: string, rel: "relates_to" | "supersedes", href: string) =>
+    addLink(
+      renderTemplate({
+        title,
+        claim,
+        memoryType: "semantic",
+        at: AT,
+        entities: ["project:acme-widget"]
+      }),
+      rel,
+      href
+    )
+
+  /**
+   * The session's exec puts a successor that supersedes the orchard record at its archive slot and
+   * archives the record, so the harvest repoints the note that cites it. Then another writer lands
+   * a second note citing the record at its live path, which the log knows nothing of.
+   */
+  const raced = async (): Promise<FixtureRepo> => {
+    const repo = await corpus()
+    await commitFiles(
+      repo,
+      [
+        {
+          path: cited,
+          html: note(
+            "Orchard note",
+            "Orchard ladders are stored by the gate.",
+            "relates_to",
+            `/${retired}`
+          )
+        }
+      ],
+      "a note citing the orchard record"
+    )
+    await start(repo.root, "retire")
+    const script = [
+      `mkdir -p /mnt/memhtml/${dirname(successor)} /mnt/memhtml/${dirname(slot)}`,
+      `cat > /mnt/memhtml/${successor} <<'HTML'`,
+      note(
+        "Orchard pruning, revised",
+        "Pruning in the orchard moved to the first dry week of spring.",
+        "supersedes",
+        `/${slot}`
+      ).trimEnd(),
+      "HTML",
+      `mv /mnt/memhtml/${retired} /mnt/memhtml/${slot}`
+    ].join("\n")
+    const harvest = await cli(repo.root, [
+      "session",
+      "exec",
+      "--id",
+      "retire",
+      "--script",
+      script,
+      "--no-server"
+    ])
+    expect(dataOf(harvest.body).blocking, JSON.stringify(harvest.body)).toEqual([])
+    expect(dataOf(harvest.body).harvested).toEqual([
+      { kind: "put", path: successor },
+      { kind: "unlink", path: cited },
+      { kind: "link", path: cited },
+      { kind: "archive", path: retired, to: slot }
+    ])
+    await commitFiles(
+      repo,
+      [
+        {
+          path: later,
+          html: note(
+            "Orchard gate note",
+            "The orchard gate is locked at dusk.",
+            "relates_to",
+            `/${retired}`
+          )
+        }
+      ],
+      "another writer's note citing the orchard record"
+    )
+    return repo
+  }
+
+  /** The landed tree: the record at its slot, both notes and the successor naming the slot. */
+  const landedWhole = async (repo: FixtureRepo): Promise<void> => {
+    const paths = (await run_(repo.git.run(["ls-tree", "-r", "--name-only", "main"])))
+      .split("\n")
+      .filter((path) => path.length > 0)
+    expect(paths).toContain(slot)
+    expect(paths).not.toContain(retired)
+    for (const [path, rel] of [
+      [cited, "relates-to"],
+      [later, "relates-to"],
+      [successor, "supersedes"]
+    ] as const) {
+      const html = await run_(repo.git.run(["show", `main:${path}`]))
+      expect(html, path).toContain(`<link rel="memhtml-${rel}" href="/${slot}">`)
+      expect(html, path).not.toContain(`href="/${retired}"`)
+    }
+  }
+
+  it("completes the new edge when the log is committed after a rebase here", async () => {
+    const repo = await raced()
+    const first = dataOf((await commitCli(repo.root, "retire", { local: true })).body)
+    expect(first.kind).toBe("rebase-needed")
+    expect((await rebaseCli(repo.root, "retire", { local: true })).exitCode).toBe(0)
+    const landed = await commitCli(repo.root, "retire", { local: true })
+    expect(dataOf(landed.body), JSON.stringify(landed.body)).toMatchObject({
+      kind: "committed",
+      dropped: []
+    })
+    await landedWhole(repo)
+  }, 60_000)
+
+  it("completes a log an older writer left with the archive alone", async () => {
+    const repo = await raced()
+    expect((await rebaseCli(repo.root, "retire", { local: true })).exitCode).toBe(0)
+    // The repoint pair taken out, as a log written before the harvest completed archives holds it.
+    const file = sessionStateFile(repo.root, "retire")
+    const state = JSON.parse(await readFile(file, "utf8")) as { ops: Array<{ kind: string }> }
+    state.ops = state.ops.filter((op) => op.kind === "put" || op.kind === "archive")
+    await writeFile(file, JSON.stringify(state), "utf8")
+    const landed = await commitCli(repo.root, "retire", { local: true })
+    expect(dataOf(landed.body), JSON.stringify(landed.body)).toMatchObject({
+      kind: "committed",
+      dropped: []
+    })
+    await landedWhole(repo)
+  }, 60_000)
+
+  it("completes it in the server's rebase round under --drop-refused, and drops nothing", async () => {
+    const repo = await raced()
+    await serve(repo.root)
+    const landed = await commitCli(repo.root, "retire", { dropRefused: true })
+    expect(dataOf(landed.body), JSON.stringify(landed.body)).toMatchObject({
+      kind: "committed",
+      via: "server",
+      rebased: 1,
+      dropped: []
+    })
+    await landedWhole(repo)
   }, 60_000)
 })
 
