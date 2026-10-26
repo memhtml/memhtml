@@ -105,12 +105,15 @@ memhtml publish
       "resources/runbook/index.html",
       "sitemap.xml"
     ],
+    "removed": [],
     "commitSha": "f1242b5e861ce09efb7fc1dfafd00f95b446215d"
   }
 }
 ```
 
-`memhtml publish` regenerates the per-directory `index.html` listings and `sitemap.xml` and commits them. It is deterministic to the byte (`apps/cli/src/publish.ts:10`), so two runs over an unchanged corpus write nothing and commit nothing, reporting `written: 0` and `commitSha: null`. That is what makes it safe on the cron. The listings come from the index, so on a store whose index holds no rows while HEAD carries memory files, such as a fresh clone, publish writes and commits nothing and fails with `ERR_INDEX_STALE`, and `memhtml index rebuild` followed by another publish is the fix.
+`memhtml publish` regenerates the per-directory `index.html` listings and `sitemap.xml` and commits them. It is deterministic to the byte (`apps/cli/src/publish.ts:37-39`), so two runs over an unchanged corpus write nothing and commit nothing, reporting `written: 0` and `commitSha: null`. That is what makes it safe on the cron. The listings come from the index, so on a store whose index holds no rows while HEAD carries memory files, such as a fresh clone, publish writes and commits nothing and fails with `ERR_INDEX_STALE`, and `memhtml index rebuild` followed by another publish is the fix.
+
+Publish also removes the listing of a directory that no longer holds a record. Once every record at or below a directory has been archived or moved, the generator stops producing that directory's `index.html`, and publish deletes it with `git rm` in the same commit and names it in `removed` (`staleListings` at `apps/cli/src/artifacts.ts:200-223`). Publish reads that from the tree it is about to commit, not from the index alone, so a pull the index hasn't caught up with never costs a directory its listing. Archived records keep listings of their own under `archive/<YYYY>/`, and the root `index.html` and `sitemap.xml` are never removed. The filename under a bucket belongs to the generator, so an `index.html` you wrote by hand in an emptied directory goes too.
 
 Those artifacts are what make the store browsable: open `$MEMHTML_ROOT/index.html` in a browser and walk the corpus with no tooling at all.
 
@@ -118,4 +121,8 @@ Those artifacts are what make the store browsable: open `$MEMHTML_ROOT/index.htm
 
 `.gitattributes` marks `index.html` and `sitemap.xml` with `merge=ours`, and that attribute needs the per-clone `merge.ours.driver` config that [`memhtml init`](/learn/operations/initialize-a-store/) sets. If a merge has already written conflict markers into a generated file, leave the file itself alone.
 
-Finish the merge however git needs you to, then run `memhtml publish` and let it overwrite the artifact. The generator is the authority for a derived file, so an edit you make by hand only produces a version the next publish discards.
+Finish the merge however git needs you to, then run `memhtml index update` and `memhtml publish` and let publish overwrite the artifact. The listings come from the index, so updating it first is what makes them describe the merged tree. The generator is the authority for a derived file, so an edit you make by hand only produces a version the next publish replaces.
+
+One conflict on a listing is not a content conflict, and `merge=ours` doesn't settle it: one clone's publish removed a listing because its directory emptied, while the other clone wrote a record there and published a new version of that listing. Git reports `CONFLICT (modify/delete)` on the path. Settle it either way, with `git rm <path>` or `git add <path>`, and finish the merge. Then `memhtml index update` and `memhtml publish` write the listing back if its directory still holds a record and remove it if not. That record stays where it was written, rather than following the archive move, in a clone whose `merge.directoryRenames` is `false`. The setting protects the clone that runs the merge, and `memhtml init` sets it. After an upgrade, run `memhtml init` again in every existing clone, including one that only writes and pulls. `memhtml publish` sets it too, but only in the clone that publishes, so it is a fallback for publishing clones alone.
+
+A merge can also finish cleanly and still leave the listings wrong. When one clone's publish removed a bucket listing and added a new listing under `archive/`, git can pair the two as a rename, such as `rename {resources => archive}/index.html (100%)`, and apply the other clone's version of the removed listing at the archive path. The merge exits 0, the bucket has no `index.html`, and `archive/index.html` lists live records. The same `memhtml index update` and `memhtml publish` repair both.

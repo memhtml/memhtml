@@ -80,6 +80,6 @@ Forward resolution cannot answer one thing, and it says so: a correction whose t
 
 ## 6. `memhtml init` converges on one end state
 
-`memhtml init` (`packages/store/src/layout.ts:183`) is the only code path that creates the root. Each step asks the repository what is already true, so the command reaches the same end state from an empty directory, from a live repository, and from one an interrupted run left half-staged.
+`memhtml init` (`packages/store/src/layout.ts:246`) is the only code path that creates the root. Each step asks the repository what is already true, so the command reaches the same end state from an empty directory, from a live repository, and from one an interrupted run left half-staged.
 
-It re-sets `merge.ours.driver` on every run (`packages/store/src/layout.ts:197`), because that config is per-clone and the `.gitattributes` a fresh clone inherits does nothing without it. Those two together are what make the generated artifacts, the per-directory `index.html` and the root `sitemap.xml`, resolvable by regenerating them instead of by editing them.
+It re-sets `merge.ours.driver` on every run (`packages/store/src/layout.ts:261`), because that config is per-clone and the `.gitattributes` a fresh clone inherits does nothing without it. It sets `merge.directoryRenames=false` beside it, so a merge never reads an archive move that took a directory's last file as that directory's rename and carries another clone's new record there into `archive/`. Those two together are what make the generated artifacts, the per-directory `index.html` and the root `sitemap.xml`, resolvable by regenerating them instead of by editing them.

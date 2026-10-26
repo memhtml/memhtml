@@ -18,7 +18,7 @@ import {
   normalizePath,
   type PlacementInput
 } from "@memhtml/contracts/paths"
-import { filenameFor, slugify, withCollisionOrdinal } from "@memhtml/contracts/slug"
+import { filenameFor, slugifyStem, withCollisionOrdinal } from "@memhtml/contracts/slug"
 import type { MemoryDoc, NewMemoryInput } from "@memhtml/html"
 import {
   addLink,
@@ -458,7 +458,7 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
         return first
       }
       const directory = first.slice(0, first.lastIndexOf("/"))
-      const base = slugify(input.title)
+      const base = slugifyStem(input.title)
       const episodic = input.memoryType === "episodic"
       for (let ordinal = 1; ordinal <= 1000; ordinal += 1) {
         const candidate = `${directory}/${filenameFor({

@@ -865,7 +865,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
   },
   {
     name: "publish",
-    summary: "Regenerate the per-directory index.html listings and sitemap.xml, and commit them.",
+    summary: "Regenerate index.html listings and sitemap.xml, remove stale listings, and commit.",
     args: [],
     flags: [],
     responseTypes: ["publish.report"]
@@ -1301,12 +1301,20 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         description:
           "Ask the head server on .memhtml/head.sock first (`memhtml head serve`), falling back to loading the head here when no server accepts within 100 ms or answers within 10 s; `--no-server` always loads here. The placements, violations, and neighbors (label lines included, the vector arm run with the server's cache and embedder) are then computed by the server over the version at the session's base; the append always happens here. The payload's `head.source` is `server` when the server answered.",
         default: true
+      },
+      {
+        name: "dry-run",
+        type: "boolean",
+        description:
+          "Answer as the put would and append nothing: the same `paths`, `placements` (each put's `path` and the collision `ordinal` it took: 1 unsuffixed, 2 for `-2`, null for an explicit `path` used as given), neighbors, and violations, and the same refusal when a violation blocks, with `dryRun: true`, `appended: 0`, and the log untouched. Under $MEMHTML_SESSION with no log yet, no session is started: the answer is over the base that start would take, with an empty log. The answer holds for the session's base and log as they are; a put that lands first can take a path.",
+        default: false
       }
     ],
     responseTypes: ["session.appended"],
     examples: [
       "memhtml session put --id s1 --file ops.jsonl",
-      "memhtml session put --id s1 --file ops.jsonl --no-server"
+      "memhtml session put --id s1 --file ops.jsonl --no-server",
+      "memhtml session put --id s1 --file ops.jsonl --dry-run"
     ]
   },
   {
@@ -1325,7 +1333,7 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "file",
         type: "string",
         description:
-          'The script, as a path on the HOST. Omit it, pass `--file -`, or a positional `-` to read stdin, which is the usual door: a heredoc (`memhtml session exec --id s1 <<\'SH\'` ... `SH`) delivers the script with no quoting to get wrong. Mutually exclusive with `--script`. A new file the script writes is held to the write bar `session put` states; one below it blocks the whole harvest. An existing file whose article is unchanged may gain or lose `<link rel="memhtml-...">` lines and `<meta name="memhtml-entity">` lines in its head: each becomes a `link`, `unlink`, `label`, or `unlabel` op, and any other head edit is rejected with a reason. A file copied unchanged to exactly one new live path and removed from its old one becomes a `move`, which keeps its bytes and its content hash; every edge a live record carries to the old path must be repointed in the same script (the old `<link>` line cut and one naming the new path added), or the harvest is blocked naming the edge. A file removed with no copy is rejected: deletion is not an operation.'
+          'The script, as a path on the HOST. Omit it, pass `--file -`, or a positional `-` to read stdin, which is the usual door: a heredoc (`memhtml session exec --id s1 <<\'SH\'` ... `SH`) delivers the script with no quoting to get wrong. Mutually exclusive with `--script`. A new file the script writes is held to the write bar `session put` states; one below it blocks the whole harvest. An existing file whose article is unchanged may gain or lose `<link rel="memhtml-...">` lines and `<meta name="memhtml-entity">` lines in its head: each becomes a `link`, `unlink`, `label`, or `unlabel` op, and any other head edit is rejected with a reason. A file copied unchanged to `archive/<YYYY>/<its path>` and removed from its old one becomes an `archive`, and one copied unchanged to exactly one new live path a `move`, which keeps its bytes and its content hash; either way, every edge a live record carries to the old path is repointed to where the file went in the same harvest (an `unlink` of the edge and a `link` of the same rel), so the script need not edit the records that cite it. New files the script writes are not repointed: one that supersedes a record the same script archives names it at `/archive/<YYYY>/<its path>`, and one that names the old path blocks the harvest. An edge on a record the session may not write (an arc or a people record, outside a curate/ ref) is left for the curator after an archive, and blocks a move. A file removed with no copy is rejected: deletion is not an operation.'
       },
       {
         name: "script",
@@ -1379,13 +1387,13 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
         name: "message",
         type: "string",
         description:
-          "The commit summary. Rendered as `memhtml(session): <summary>` with a Memhtml-Session trailer. When HEAD is the session's ref, the shared index and working tree move to the new commit with it (`worktreeSynced: true`); uncommitted state at a path the commit writes or removes is answered `worktree-dirty` and nothing moves. A ref that moved past the session's base is `rebase-needed`: run `session rebase` and commit again. The checkout move and the ref swap run under the checkout lock `.memhtml/checkout.lock`, which every v1 write holds from its stage to its commit, so neither commits the other's files; the commit waits up to 15 s for it, then fails with ERR_STORAGE (`checkout.locked`) having moved nothing. The commit it builds is written to the log as `pending` before anything shared moves, so a call killed at any point is settled by the next `session commit`: `committed` with `recovered: true` when it had landed, else the checkout is put back and the commit is made again. A `session put` or `session exec` that appends to such a log settles it first the same way, so what it appends lands on the next commit: on top of the landed commit, whose ops leave the log (`baseSha` in its payload names that commit), or beside the ops that never landed. A `committed` outcome also writes the new commit's snapshot (`snapshot`: path, bytes, ms, pruned; null when that best-effort write failed), so the next load hits the cache. A log with no ops has nothing to land: it is answered `refused` with no violations, and nothing is committed or written.",
+          "The commit summary. Rendered as `memhtml(session): <summary>` with a Memhtml-Session trailer. When HEAD is the session's ref, the shared index and working tree move to the new commit with it (`worktreeSynced: true`); uncommitted state at a path the commit writes or removes is answered `worktree-dirty` and nothing moves. A ref that moved past the session's base is `rebase-needed`: run `session rebase` and commit again. The checkout move and the ref swap run under the checkout lock `.memhtml/checkout.lock`, which every v1 write holds from its stage to its commit, so neither commits the other's files; the commit waits up to 15 s for it, then fails with ERR_STORAGE (`checkout.locked`) having moved nothing. The commit it builds is written to the log as `pending` before anything shared moves, so a call killed at any point is settled by the next `session commit`: `committed` with `recovered: true` when it had landed, else the checkout is put back and the commit is made again. A `session put` or `session exec` that appends to such a log settles it first the same way, so what it appends lands on the next commit: on top of the landed commit, whose ops leave the log (`baseSha` in its payload names that commit), or beside the ops that never landed. A `committed` outcome also writes the new commit's snapshot (`snapshot`: path, bytes, ms, pruned; null when that best-effort write failed), so the next load hits the cache. Before it commits, the log gains the repoints its archives and moves lack against the version it commits over, appended at its end, since a record the ref gained after the exec may cite a path the log vacates; when they would take a log within the 200-op cap over it, nothing is written and the commit is refused with a `format` violation on that archive or move. A log with no ops has nothing to land: it is answered `refused` with no violations, and nothing is committed or written.",
         required: true
       },
       {
         name: "drop-refused",
         type: "boolean",
-        description: `On a \`refused\` outcome, drop every op that touches a path a violation names, record each in \`.memhtml/sessions/<id>.dropped.jsonl\`, and commit the rest; repeat until the commit is clean or nothing is left. \`dropped\` lists each removed op with its reasons. A batch-cap refusal names no path, so it is never dropped. Through the head server it also takes a \`rebase-needed\` round off the caller: the server rebases the session onto its tip and commits again inside the same commit permit, up to ${String(COMMIT_REBASE_ROUNDS)} times, and answers the last round, with \`rebased\` counting the rebases (0 on the local path, which returns \`rebase-needed\` as without the flag) and \`dropped\` every round's drops. Meant for a runtime's end-of-run commit, where there is no agent turn left to fix a line: an agent in a turn should read the refusal and rewrite the line instead.`
+        description: `On a \`refused\` outcome, drop every op that touches a path a violation names, record each in \`.memhtml/sessions/<id>.dropped.jsonl\`, and commit the rest; repeat until the commit is clean or nothing is left. \`dropped\` lists each removed op with its reasons. A batch-cap refusal names no path, so it is never dropped; the refusal of an archive or a move whose new repoints would pass the cap names that op, so it is dropped and the rest lands. A dropped archive or move always takes its own repoints with it, listed in \`dropped\` under its reasons, so no holder loses its other ops to them. When nothing holds its destination and the record is still live, at its source or where a chain of dropped moves and archives of it began (nothing is rewritten through a path two of them aim at, or one two of them leave while another aims at it or the log puts there; a path only the version's record leaves twice still names it), an op kept at a dropped move's destination is made at the record's path and an edge a kept op aims at the destination is aimed back at it, which its reasons say; an edge to a held destination keeps naming the record there, and one to the slot of a record the log put is left as written. A drop on a record that cites a path the log vacates takes that record's repoint with its other ops, so the repoints the kept ops need are appended again, and \`dropped\` does not list them, nor a pair taken at a dropped move's destination that comes back at the holder's own path. Through the head server it also takes a \`rebase-needed\` round off the caller: the server rebases the session onto its tip and commits again inside the same commit permit, up to ${String(COMMIT_REBASE_ROUNDS)} times, and answers the last round, with \`rebased\` counting the rebases (0 on the local path, which returns \`rebase-needed\` as without the flag) and \`dropped\` every round's drops. Meant for a runtime's end-of-run commit, where there is no agent turn left to fix a line: an agent in a turn should read the refusal and rewrite the line instead.`
       },
       {
         name: "server",
@@ -1503,6 +1511,63 @@ export const COMMANDS: ReadonlyArray<CommandSpec> = [
     examples: [
       "memhtml head search 'vip drain' --limit 5",
       "memhtml head search 'vip drain' --no-server"
+    ]
+  },
+  /**
+   * Read-only like `head search`: it builds the version at HEAD, places one write over it the way
+   * `session put` places a write line, and writes nothing.
+   */
+  {
+    name: "path",
+    summary:
+      "Print the path a write with these fields would land at over the version at HEAD, and the collision ordinal it took. Reads no session: inside one, `session put --dry-run` answers over the session's base and its puts. Writes nothing.",
+    args: [],
+    flags: [
+      {
+        name: "title",
+        type: "string",
+        description:
+          "The write's title, as a write line gives it. Its slug is the filename stem: kebab-case, at most 80 characters, a longer title cut at its last word boundary that keeps at least 60, else at 80.",
+        required: true
+      },
+      {
+        name: "type",
+        type: "string",
+        description:
+          "The memory type, as a write line gives it. `episodic` takes the `YYYYMMDD-` prefix of the current UTC day, `task` routes to `tasks/` under its workspace or the inbox, and `arc` to `areas/arcs/`, which only the `curate` scope writes.",
+        values: MEMORY_TYPES,
+        required: true
+      },
+      {
+        name: "workspace",
+        type: "string",
+        description: "Routes the write to projects/<slug>/, as a write line's `workspace` does."
+      },
+      {
+        name: "tag",
+        type: "string",
+        description:
+          "A tag, as a write line's `tags` holds one. Repeatable; the first non-blank one routes a semantic, procedural, or precedent write with no workspace to resources/<slug>/, except one that slugs to `people`, which no rule routes into, so that write falls to the inbox.",
+        repeatable: true
+      },
+      {
+        name: "path",
+        type: "string",
+        description:
+          "An explicit path, as a write line's `path`. A usable one is the answer as given, in canonical form, with `ordinal: null` and no suffix, and `occupied` says whether the head or --claimed already holds it (a put there is judged against that record rather than stepped past it). One that is not a usable memory path is ignored and the path derived, as a put derives it."
+      },
+      {
+        name: "claimed",
+        type: "string",
+        description:
+          "A file of paths pending elsewhere (another session's puts, a draft not written yet), one repo-relative memory path per line, blank lines skipped; `-` reads stdin. Each counts as taken, as a path the head holds does, so the answer steps past it. An unreadable file is ERR_PATH_NOT_FOUND and a line that is not a usable memory path is ERR_INVALID_FLAG naming the line, both at exit 2 before anything opens."
+      }
+    ],
+    responseTypes: ["memory.path"],
+    examples: [
+      "memhtml path --title 'Checkout retries' --type semantic",
+      "memhtml path --title 'Checkout retries' --type procedural --workspace payments --claimed claimed.txt",
+      "memhtml path --title 'Checkout retries' --type semantic --path areas/inbox/checkout-retries.html"
     ]
   },
   /**

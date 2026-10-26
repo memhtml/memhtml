@@ -6,8 +6,12 @@ import {
   activeRecordPathViolation,
   archivePathFor,
   archiveYearOf,
+  DETECTION_DIGEST_CHARS,
+  DETECTION_PREFIX,
+  detectionKeyOf,
   INBOX_DIR,
   isArchivePath,
+  isDetectedTaskPath,
   isValidMemoryPath,
   memoryPathFor,
   memoryPathViolation,
@@ -133,6 +137,33 @@ describe("archive path algebra", () => {
       }),
       { numRuns: 1000 }
     )
+  })
+})
+
+describe("detected task paths", () => {
+  const live = "areas/inbox/tasks/det-0123456789ab-confirm-one-subject.html"
+
+  it("reads the key from a live or an archived detected task's filename", () => {
+    expect(detectionKeyOf(live)).toBe("det-0123456789ab")
+    expect(isDetectedTaskPath(live)).toBe(true)
+    expect(isDetectedTaskPath(archivePathFor(live, 2031))).toBe(true)
+    expect(isDetectedTaskPath(`projects/acme-widget/tasks/det-${"f".repeat(12)}-x.html`)).toBe(true)
+  })
+
+  it("refuses the shapes task list's GLOB refuses", () => {
+    for (const path of [
+      "areas/inbox/tasks/t-confirm-one-subject.html",
+      "areas/inbox/tasks/det-0123456789xy-confirm.html",
+      "areas/inbox/tasks/det-0123456789a-confirm.html",
+      "areas/inbox/tasks/det-0123456789AB-confirm.html",
+      "areas/inbox/tasks/detonate-things.html",
+      "areas/inbox/det-0123456789ab/a-fact.html"
+    ]) {
+      expect(isDetectedTaskPath(path), path).toBe(false)
+      expect(detectionKeyOf(path), path).toBeUndefined()
+    }
+    expect(DETECTION_PREFIX).toBe("det-")
+    expect(DETECTION_DIGEST_CHARS).toBe(12)
   })
 })
 
@@ -410,6 +441,29 @@ describe("memoryPathFor", () => {
         expect(isValidMemoryPath(memoryPathFor({ ...input, title, at }))).toBe(true)
       }),
       { numRuns: 1000 }
+    )
+  })
+
+  /**
+   * A folder name is recomputed from the workspace or tag on every write, so it keeps the plain cut
+   * at 80 characters and a long workspace stays one folder. Only the filename stem, computed once
+   * when a record is minted, takes the word-boundary cut.
+   */
+  it("keeps a long workspace or tag in one folder and cuts only the filename at a word", () => {
+    const long =
+      "Acme widget release engineering, packaging, signing and staged rollout coordination workstream"
+    const folder =
+      "acme-widget-release-engineering-packaging-signing-and-staged-rollout-coordinatio"
+    const title =
+      "The acme-widget release checklist covers signing, packaging, smoke tests, staged rollout and rollback drills for every region"
+    const stem = "the-acme-widget-release-checklist-covers-signing-packaging-smoke-tests-staged"
+    expect(placementFor({ memoryType: "semantic", workspace: long })).toBe(`projects/${folder}`)
+    expect(placementFor({ memoryType: "task", workspace: long })).toBe(
+      `projects/${folder}/${TASKS_SUBDIR}`
+    )
+    expect(placementFor({ memoryType: "semantic", tags: [long] })).toBe(`resources/${folder}`)
+    expect(memoryPathFor({ memoryType: "semantic", workspace: long, title, at })).toBe(
+      `projects/${folder}/${stem}.html`
     )
   })
 })

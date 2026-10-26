@@ -92,6 +92,13 @@ export interface GitShape {
   readonly statusPorcelainV2: () => Effect.Effect<ReadonlyArray<StatusEntry>, GitFailure>
   /** The blob sha a working-tree file would hash to. Equals its sha in the tree once committed. */
   readonly hashObject: (path: string) => Effect.Effect<string, GitFailure>
+  /**
+   * `git add` of exactly these paths. Each is passed as `:(literal)` ({@link literalPathspecs}),
+   * because `git add` reads its arguments as pathspecs and `[`, `*` and `?` are ordinary characters
+   * in a record's path: a bare `resources/a[b]/index.html` also stages an untracked
+   * `resources/ab/index.html`. A directory still stages what is under it, a tracked path missing
+   * from the working tree stages its removal, and an empty path fails before git runs.
+   */
   readonly add: (paths: ReadonlyArray<string>) => Effect.Effect<void, GitFailure>
   /** `git mv`. The destination's parent directory must already exist, since git will not make it. */
   readonly mv: (from: string, to: string) => Effect.Effect<void, GitFailure>
@@ -163,7 +170,10 @@ interface ProcessResult {
 /**
  * Environment for every git call. `GIT_TERMINAL_PROMPT=0` keeps a credential prompt from hanging a
  * headless indexer forever, `GIT_OPTIONAL_LOCKS=0` stops a read from taking the index lock, and
- * `LC_ALL=C` pins the message locale so a parsed word is the same word everywhere.
+ * `LC_ALL=C` pins the message locale so a parsed word is the same word everywhere. The four
+ * `GIT_*_PATHSPECS` variables are pinned off because each one changes how every pathspec matches:
+ * literal reads `:(literal)` and all other magic as plain characters, noglob and glob change what
+ * `*`, `?` and `[` match, and icase folds case. Every caller writes pathspecs for git's default.
  *
  * **A user's own config IS read.** Nothing here neutralizes `~/.gitconfig`, so every call whose output
  * a caller parses states its format with explicit flags rather than inheriting a default: `-z` against
@@ -174,7 +184,11 @@ interface ProcessResult {
 const GIT_ENV: Readonly<Record<string, string>> = {
   GIT_TERMINAL_PROMPT: "0",
   GIT_OPTIONAL_LOCKS: "0",
-  LC_ALL: "C"
+  LC_ALL: "C",
+  GIT_LITERAL_PATHSPECS: "0",
+  GIT_NOGLOB_PATHSPECS: "0",
+  GIT_GLOB_PATHSPECS: "0",
+  GIT_ICASE_PATHSPECS: "0"
 }
 
 /**
@@ -211,6 +225,21 @@ const MAX_BUFFER = 64 * 1024 * 1024
 
 /** A full 40-hex object name, which is the only form {@link GitShape.diffTreeNames} accepts. */
 const FULL_OBJECT_NAME = /^[0-9a-f]{40}$/
+
+/**
+ * Each path as a `:(literal)` pathspec, for a git command that reads its path arguments as
+ * pathspecs. `[`, `*` and `?` are ordinary characters in a record's path, and a bare
+ * `resources/a[b]/index.html` also matches `resources/ab/index.html`. An empty path fails as a
+ * {@link GitFailure} naming `command` before git runs: git refuses a bare `""`, but `:(literal)`
+ * with nothing after it matches every path, so `git add` would stage the whole working tree.
+ */
+export const literalPathspecs = (
+  command: string,
+  paths: ReadonlyArray<string>
+): Effect.Effect<ReadonlyArray<string>, GitFailure> =>
+  paths.includes("")
+    ? Effect.fail(GitFailure.make({ command, exitCode: null }))
+    : Effect.succeed(paths.map((path) => `:(literal)${path}`))
 
 /**
  * Spawn git and collect its output as bytes.
@@ -431,7 +460,10 @@ export const makeGit = (root: string): GitShape => ({
   add: (paths) =>
     paths.length === 0
       ? Effect.void
-      : git(root, "add", ["add", "--", ...paths]).pipe(Effect.asVoid),
+      : literalPathspecs("add", paths).pipe(
+          Effect.flatMap((pathspecs) => git(root, "add", ["add", "--", ...pathspecs])),
+          Effect.asVoid
+        ),
 
   mv: (from, to) => git(root, "mv", ["mv", "--", from, to]).pipe(Effect.asVoid),
 
