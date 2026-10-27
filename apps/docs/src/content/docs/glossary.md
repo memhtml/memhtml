@@ -107,7 +107,7 @@ The four fixed top-level buckets: `projects`, `areas`, `resources`, and `archive
 
 ### Projection
 
-A derived, disposable representation of the tree. The index is one, and `projectFile` is the pure function that produces its rows, which is what makes a fresh rebuild reproduce the incremental row set. See [The index](/internals/the-index/).
+A derived, disposable representation of the tree. The index is one, and `projectFile` is the pure function that produces its rows, so a rebuild and an incremental update write the same rows from the same bytes. See [The index](/internals/the-index/).
 
 ### Replay
 
