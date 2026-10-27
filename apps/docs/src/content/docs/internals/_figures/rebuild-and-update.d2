@@ -18,9 +18,9 @@ project: projectFile, pure {class: step}
 rows: the row set {class: derived}
 
 update -> watermark: read
-watermark -> rebuild: absent
-watermark -> diff: present
-watermark -> porcelain: present
+watermark -> rebuild: no row
+watermark -> diff: commit
+watermark -> porcelain: commit
 
 rebuild -> tree: whole corpus
 tree -> project

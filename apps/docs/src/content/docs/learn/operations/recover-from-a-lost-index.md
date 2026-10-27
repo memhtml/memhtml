@@ -75,6 +75,6 @@ If only `index.db` is gone, the next `memhtml index update` rebuilds it. On the 
 
 ## What a rebuild leaves alone
 
-A rebuild deletes every memory table, reads the tree again, and reprojects it, keeping every stored vector whose chunk id comes back (`truncateForRebuild` in `packages/index/src/indexer.ts`). It destroys nothing outside `.memhtml/`, and inside `.memhtml/` it leaves the trace tables and the attached state plane untouched.
+A rebuild reads the tree at HEAD first, then empties every memory table and reprojects what it read, keeping every stored vector in the configured model's space whose chunk id comes back (`packages/index/src/indexer.ts::makeIndexer::reproject`, `packages/index/src/indexer.ts::makeIndexer::truncateForRebuild`). It destroys nothing outside `.memhtml/`, and inside `.memhtml/` it leaves the trace tables and the attached state plane untouched.
 
-So running `memhtml index rebuild` as a diagnostic is cheap and safe: it cannot lose an access count, and it cannot cost you a re-walk of `$MEMHTML_TRACE_ROOT`.
+So running `memhtml index rebuild` as a diagnostic is safe: it cannot lose an access count, and it cannot cost you a re-walk of `$MEMHTML_TRACE_ROOT`.
