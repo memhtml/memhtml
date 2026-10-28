@@ -27,7 +27,7 @@ Reading the corpus with an HTML parser and a script instead of a chain of tool c
 
 ### Committed sidecar
 
-`.memhtml/state/access.jsonl`, the state plane's only durable copy. It is byte-stable, path-ordered, and four-decimal, and `memhtml state export` writes it, so an unchanged plane commits nothing. See [The index plane and the state plane](/internals/index-plane-and-state-plane/).
+`.memhtml/state/access.jsonl`, the only durable copy of the state plane's access rows. It is byte-stable, path-ordered, and four-decimal, and `memhtml state export` rewrites and commits it, so an unchanged plane commits nothing. See [The index plane and the state plane](/internals/index-plane-and-state-plane/).
 
 ### Conflict assist and frame key
 
@@ -79,7 +79,7 @@ The check `memhtml curate merge` runs before it moves anything. It searches a se
 
 ### Index plane
 
-`.memhtml/index.db`: gitignored, rebuildable from `git ls-tree`, and holding the projected rows, the full-text index, the vectors, and the derived edges. See [The index](/internals/the-index/).
+`.memhtml/index.db`: gitignored, and holding the projected rows, the full-text index, the vectors, the edges, and the trace tables. Its memory rows are rebuildable from `git ls-tree`; the trace tables are not. See [The index](/internals/the-index/).
 
 ### Last-wins resolution
 
@@ -135,7 +135,7 @@ A pointer to one version of the corpus plus an ordered log of its own operations
 
 ### State plane
 
-`.memhtml/state.db`: gitignored like the index, and the one plane a rebuild cannot reproduce. It holds access counts, reinforcement counts, the outcome EWMA, and edge and entity corroboration. See [The index plane and the state plane](/internals/index-plane-and-state-plane/).
+`.memhtml/state.db`: gitignored like the index, and not rebuildable from the tree. It holds access counts, reinforcement counts, the outcome EWMA, and edge and entity corroboration, and only its access rows have a committed copy. See [The index plane and the state plane](/internals/index-plane-and-state-plane/).
 
 ### Store policy
 

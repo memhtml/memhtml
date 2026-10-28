@@ -3,7 +3,7 @@ title: Recover from a lost index
 description: Restore a store from a clone in four commands, in the order that matters, and know exactly what a rebuild cannot bring back.
 ---
 
-Losing `.memhtml/` costs you time and nothing else, as long as the tree and the sidecar are pushed.
+As long as the tree and the sidecar are pushed, losing `.memhtml/` costs you time, the access history since the last `state export`, any session operations that never landed, and the memory-session links that `memhtml trace links` reads.
 
 ```bash
 git clone <remote> ~/memhtml
@@ -48,7 +48,7 @@ The git tree is the system of record. It holds every memory, every authored `<li
 
 :::
 
-The one lossy row in that table is `state.db`, and the size of the loss is bounded by how recently `state export` ran. Nothing runs it for you, so put it on the cron and run it by hand as well before a machine goes away. See [preserve the state plane](/learn/operations/preserve-the-state-plane/).
+Two rows in that table lose data that nothing regenerates: `state.db`, by everything since the last `state export`, and a session's operations that never landed. Nothing runs `state export` for you, so run it regularly and by hand before a machine goes away. See [preserve the state plane](/learn/operations/preserve-the-state-plane/).
 
 ## Confirming the recovery
 

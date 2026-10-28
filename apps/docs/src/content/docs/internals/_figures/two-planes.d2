@@ -1,4 +1,4 @@
-# SVG only — no README rendering, so the full shape vocabulary is available.
+# SVG only: no README rendering, so the full shape vocabulary is available.
 #
 # Labels are kept short because the site's 30em measure caps a figure at its own width: past about
 # 700px natural width the drawing arrives shrunk far enough to be unreadable.
@@ -23,7 +23,7 @@ clone -> rebuild
 clone -> import
 
 rebuild -> index: from ls-tree {class: derives}
-import -> state: sidecar only {class: derives}
+import -> state: access rows only {class: derives}
 
 state -> export: when run
 export -> sidecar: byte-stable
