@@ -7,17 +7,17 @@ description: Authored edges live in the HTML, mined edges live only in the index
 
 An agent asserting that one memory supersedes another is authorship. It is small, it reads well in a diff, and git is built for it. A `relates_to` edge mined at cosine 0.87 by a curation pass is a function of the corpus and the embedding model, computable again at any time, and committing thousands of them would bury every human diff in machine output while recovering nothing.
 
-So authored edges are `<link rel="memhtml-*">` elements in the file, and derived edges exist only as `edges` rows in the index. Deleting the index costs the derived set and nothing else.
+So authored edges are `<link rel="memhtml-*">` elements in the file, and derived edges exist only as `edges` rows in the index. Deleting the index costs the derived set and no authored edge.
 
 An authored memory edge is written through the write path by an agent or a human, and a curator on a branch may promote a machine-found relationship into a file the same way. The rels a curator may write are `{caused_by, leads_to, example_of, supports, part_of, contradicts}` with a direction.
 
-Which file receives the link follows from the rel. A directional rel is written into the **subject's** file alone, because a `caused_by` read from the wrong end inverts its meaning. `contradicts` is symmetric and is written into **both**, because a reader arriving at either file must see it. `relates_to` and `laterally_related` stay derived: they are what a pair already carries in the index, so authoring one is a no-op. `supersedes` is a one-way door that rides with an archive.
+A link is written into the **subject's** file alone, whatever the rel. A `caused_by` read from the wrong end inverts its meaning, and `memhtml link` writes `contradicts` the same way (`packages/store/src/store.ts::makeStore::linkMemories`). `relates_to` and `laterally_related` are accepted like any other memory rel, so the link is written and committed and the index carries it as an authored edge. `supersedes` is a one-way door: `memhtml correct` writes it together with the archive of the record it replaces (`packages/store/src/store.ts::makeStore::correctMemory`).
 
 ## 2. The `derived` column is the firewall
 
 The retention scorer's `contestedStatus` signal in `@memhtml/domain` counts authored contradictions only, meaning rows with `derived = 0` (`packages/contracts/src/edges.ts::Edge`, `packages/domain/src/retention.ts::RetentionInput`). An uncorroborated machine suspicion therefore can't lower a memory's retention score. No 0.16 command evicts by that score, and the rule stays in the scorer for any caller that does.
 
-One fact in this area does not survive a rebuild: the counter recording how many times a contradiction has been detected. It lives in the state plane. A SQL CHECK refuses `derived = 1` outside `provenance = 'sleep'` (`packages/index/migrations/0008_tasks.sql`), the provenance value the sleep pipeline stamped before 0.16 removed it and the closed vocabulary keeps, and `isWellFormedEdge` states the same condition once in TypeScript (`packages/contracts/src/edges.ts::isWellFormedEdge`) so a caller can refuse a bad edge before the driver does.
+One fact in this area survives a rebuild but not a fresh clone: the counter recording how many times a contradiction has been detected. It lives in the state plane's `edge_corroboration` table, which a rebuild leaves alone and `memhtml state export` does not copy, and no command writes it now. A SQL CHECK refuses `derived = 1` outside `provenance = 'sleep'` (`packages/index/migrations/0008_tasks.sql`), the provenance value the sleep pipeline stamped before 0.16 removed it and the closed vocabulary keeps, and `isWellFormedEdge` states the same condition once in TypeScript (`packages/contracts/src/edges.ts::isWellFormedEdge`) so a caller can refuse a bad edge before the driver does.
 
 ## 3. Four classes that never mix
 
