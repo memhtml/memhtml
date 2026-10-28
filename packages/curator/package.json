@@ -44,7 +44,7 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.2",
+    "@biomejs/biome": "2.6.3",
     "@effect/vitest": "catalog:",
     "@types/node": "26.6.5",
     "typescript": "7.0.2",
