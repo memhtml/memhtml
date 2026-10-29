@@ -73,10 +73,12 @@ Full-text search ranks on title, claim, and body text. Vector similarity ranks o
 Recency ranks an episodic memory by when the fact happened rather than by when someone wrote it
 down. Salience ranks on how often someone has chosen to open the memory. One SQL statement fuses the
 four orderings by reciprocal rank fusion, where each arm contributes `1/(rank + 60)` under its own
-weight, and a pass in TypeScript then drops near-duplicate hits. That fusion is what this site
-means by four-arm RRF. When an arm's precondition is missing, memhtml drops that arm and sets
-`degraded: true` on the response, so the search gets narrower and still answers. A store with no
-embedder bound is the common case, and it still returns ranked hits from the other three arms.
+weight, and a pass in TypeScript then demotes a hit that nearly duplicates one ranked above it,
+when both carry embeddings. That fusion is what this site means by four-arm RRF. When an arm's
+precondition is missing, memhtml drops that arm, so the search gets narrower and still answers.
+`degraded: true` on the response means the vector arm did not fire. A store with no embedder
+bound is the common case. The MCP search tools ask a running head server first, and a head
+server ranks with full-text search and vectors alone.
 
 Four doors write into the same tree: `memhtml write` and `memhtml apply` on the command line, the
 write tools on the MCP server, your own file tools against the checkout, and a session. A session
