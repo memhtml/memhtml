@@ -43,11 +43,11 @@ The model-driven loop `memhtml curate run` starts on a `curate/<date>` branch. I
 
 ### Degraded retrieval
 
-The state in which memhtml dropped one or more arms because a precondition was unmet: no query vector, no state plane, or no indexable query term. The search is narrower and the response carries `degraded`. See [Four-arm retrieval](/internals/four-arm-retrieval/).
+The state in which memhtml ran a search or a recall without the vector arm, for example because no embedder is bound, the embedder failed, or vector coverage is below `MEMHTML_VECTOR_COVERAGE_FLOOR`. The result is narrower and the response carries `degraded: true`. A query with no indexable term drops the lexical arm, which by itself does not set `degraded`. See [Four-arm retrieval](/internals/four-arm-retrieval/).
 
 ### Disclosure fold
 
-`recall`'s budgeted pack, whose three tiers map onto the HTML structure rather than onto a truncation of prose. It spends a character budget in rank order, continues past a candidate that does not fit, and caps full quotes at two per entity name. See [Four-arm retrieval](/internals/four-arm-retrieval/).
+`recall`'s budgeted pack, which quotes along the HTML structure rather than truncating prose: each memory appears either as a full quote of its claim, `<summary>` headlines, facets, and citations, or as an index line with its path, title, and claim. It spends a character budget in rank order, continues past a candidate that does not fit, and caps full quotes at two per entity name. See [Four-arm retrieval](/internals/four-arm-retrieval/).
 
 ### Discrimination gate
 

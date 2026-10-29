@@ -32,7 +32,7 @@ One fact in this area survives a rebuild but not a fresh clone: the counter reco
 
 The class is derived from the rel (`packages/contracts/src/edges.ts::relClassFor`) rather than stored beside it, so the two cannot disagree. `relClassFor` is total over `ALL_RELS`, and each rel name appears in exactly one class.
 
-SQL CHECK constraints pair each class with its vocabulary (`packages/index/migrations/0008_tasks.sql`), and every memory-graph query filters on `edge_class = 'memory'`. A person edge or a task edge therefore cannot enter PageRank, the diversification pass, or the retention scorer's bridge count.
+SQL CHECK constraints pair each class with its vocabulary (`packages/index/migrations/0008_tasks.sql`), and every memory-graph query filters on `edge_class = 'memory'`. A person edge or a task edge therefore cannot enter a `memhtml neighbors` walk (`apps/cli/src/operations.ts::neighborsQuery`).
 
 The HTML `rel` token is the rel with a `memhtml-` prefix and its underscores turned into hyphens (`packages/contracts/src/edges.ts::relTokenFor`, `packages/contracts/src/edges.ts::REL_TOKEN_PREFIX`), so `laterally_related` becomes `memhtml-laterally-related`. `relForToken` inverts that mapping (`packages/contracts/src/edges.ts::relForToken`).
 
