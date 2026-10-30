@@ -51,7 +51,7 @@ Rule 1 reads "an explicit **valid** path", and the validity clause is where a ca
 
 ## 3. The archive mapping can be inverted
 
-`archivePathFor` (`packages/contracts/src/paths.ts::archivePathFor`) mirrors the whole original path beneath `archive/<YYYY>/`, and `originalPathFor` (`packages/contracts/src/paths.ts::originalPathFor`) strips exactly one such prefix. Stripping one rather than all of them keeps it a left inverse even for a memory archived twice. `git log --follow` reads through the move, and `diff -M` reports `R100` instead of a delete plus an add. No memory is removed from the repository.
+`archivePathFor` (`packages/contracts/src/paths.ts::archivePathFor`) mirrors the whole original path beneath `archive/<YYYY>/`, and `originalPathFor` (`packages/contracts/src/paths.ts::originalPathFor`) strips exactly one such prefix. Stripping one rather than all of them keeps it a left inverse for every path, a nested archive path included. `git log --follow` reads through the move, and `diff -M` reports a rename instead of a delete plus an add, below 100 percent similarity because the archive stamps edit the file's head. No memory is removed from the repository.
 
 A test pins the property: `originalPathFor(archivePathFor(p, y)) === p` for every generated path. That invertibility is what lets `memhtml doctor --fix` derive an archived target's new href rather than searching for it, and no rename-similarity score is consulted anywhere in the system.
 
@@ -62,7 +62,7 @@ Figure 1 draws the mapping as a ladder rather than as a round trip. From a twice
 ```d2 pad=20 src="_figures/archive-mapping.d2" title="Three paths stacked vertically as the rungs of a ladder: notes/x.html, then archive/2026/notes/x.html, then archive/2027/archive/2026/notes/x.html. A solid arrow labelled archivePathFor descends one rung at a time. A dashed arrow labelled originalPathFor ascends one rung at a time and never more than one, so from the bottom rung it reaches the middle one rather than the top."
 ```
 
-**Figure 1: `archivePathFor` descends one rung and `originalPathFor` climbs exactly one.** Descending is a `git mv` inside a commit, which `diff -M` reports as `R100`. Ascending is a pure function of the path, which is why those edges are dashed. Because each application moves one rung, the inverse stays a left inverse for a memory evicted twice, and a single return edge to the live path would describe that wrongly.
+**Figure 1: `archivePathFor` descends one rung and `originalPathFor` climbs exactly one.** An archive descends once, as a move inside a commit that `diff -M` reports as a rename, and no writer archives a path already under `archive/`. Ascending is a pure function of the path, which is why those edges are dashed. Because each application moves one rung, the inverse stays a left inverse even on a nested path, and a single return edge to the live path would describe that wrongly.
 
 ## 4. A path is an id
 

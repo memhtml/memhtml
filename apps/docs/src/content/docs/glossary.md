@@ -11,7 +11,7 @@ The terms are alphabetical, and each entry names the page that develops it. Seve
 
 ### Archive path
 
-`archive/<YYYY>/<original-path>`, the destination of an eviction. It mirrors the original path whole, so the mapping is injective and `originalPathFor` recovers the source path exactly. A path archived again while its year's slot is held goes to `archive/<YYYY>.<n>/<original-path>`, the year's first free generation, so an archive never writes over an earlier one. See [Store layout and path algebra](/internals/store-layout-and-path-algebra/).
+`archive/<YYYY>/<original-path>`, the destination of every archived memory, evicted or superseded. It mirrors the original path whole, so the mapping is injective and `originalPathFor` recovers the source path exactly. A path archived again while its year's slot is held goes to `archive/<YYYY>.<n>/<original-path>`, the year's first free generation, so an archive never writes over an earlier one. See [Store layout and path algebra](/internals/store-layout-and-path-algebra/).
 
 ### Checkout lock
 
@@ -55,7 +55,7 @@ The refusable quality gate. It asks whether the retrieval stack ranks a memory a
 
 ### Eviction
 
-Retiring a memory by `git mv` into the archive path, plus the stamps that record it. No file is deleted, so `git log --follow` reads through a memory's whole life and `diff -M` reports the move as `R100`. See [The write path](/internals/the-write-path/).
+Archiving a memory that no live memory supersedes, by moving it into its archive slot, `archive/<YYYY>/` or `archive/<YYYY>.<n>/` with the original path mirrored beneath, plus the stamps that record it. A correction or a fold moves the memory it replaces the same way, but the new memory's `supersedes` link makes that file superseded rather than evicted. The file is not deleted, so `git log --follow` reads through a memory's whole life and `diff -M` reports the move as a rename. See [The write path](/internals/the-write-path/).
 
 ### Four-arm RRF
 
@@ -63,7 +63,7 @@ The fusion of the four arms in one SQL statement: weighted `1/(rank + 60)` contr
 
 ### The git tree as system of record
 
-The invariant that the repository of HTML files is authoritative and everything else is derived from it: anything that has to survive `rm index.db` lives in a file. See [Internals](/internals/).
+The invariant that the repository of HTML files is authoritative and the index's memory rows are derived from it: anything that has to survive `rm index.db` lives in a file. See [Internals](/internals/).
 
 ### Head
 
