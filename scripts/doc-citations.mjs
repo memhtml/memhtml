@@ -58,7 +58,7 @@
  * Exits 0 with a one-line summary, or 1 with one `file:line: problem` line per failure.
  */
 import { spawnSync } from "node:child_process"
-import { existsSync, readFileSync, statSync } from "node:fs"
+import { closeSync, existsSync, fstatSync, openSync, readFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -688,21 +688,47 @@ const checkablePrefix = (path) => {
   return output === -1 ? literal : `${segments.slice(0, output).join("/")}/`
 }
 
+/**
+ * A descriptor for the regular file at `absolute`, or `null` when nothing is there or it is not a
+ * regular file. The caller checks and reads through this one descriptor, so the file it reads is
+ * the file it checked.
+ */
+const openRegularFile = (absolute) => {
+  let descriptor
+  try {
+    descriptor = openSync(absolute, "r")
+  } catch (error) {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") return null
+    throw error
+  }
+  if (fstatSync(descriptor).isFile()) return descriptor
+  closeSync(descriptor)
+  return null
+}
+
 const sources = new Map()
 /** The declarations of one repository file, or a reason they cannot be read. */
 const declarationsOf = (path) => {
   if (!sources.has(path)) {
-    const absolute = join(ROOT, path)
+    const descriptor = openRegularFile(join(ROOT, path))
     let entry
-    if (!existsSync(absolute) || !statSync(absolute).isFile()) entry = { problem: "no such file" }
-    else if (!CODE.test(path)) {
-      entry = {
-        problem: "symbols are read only from TypeScript and JavaScript; cite the bare path"
+    if (descriptor === null) entry = { problem: "no such file" }
+    else {
+      try {
+        if (!CODE.test(path)) {
+          entry = {
+            problem: "symbols are read only from TypeScript and JavaScript; cite the bare path"
+          }
+        } else {
+          const declarations = declarationsIn(readFileSync(descriptor, "utf8"))
+          entry =
+            declarations === null
+              ? { problem: "its declarations could not be read" }
+              : { declarations }
+        }
+      } finally {
+        closeSync(descriptor)
       }
-    } else {
-      const declarations = declarationsIn(readFileSync(absolute, "utf8"))
-      entry =
-        declarations === null ? { problem: "its declarations could not be read" } : { declarations }
     }
     sources.set(path, entry)
   }
