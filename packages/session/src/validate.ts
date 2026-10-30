@@ -68,7 +68,7 @@ export interface ValidateOptions {
   /**
    * The store's write bar (`writeBar` in `memhtml.config.json`, read by the CLI's
    * `loadStorePolicy`): the types it refuses and whether every new record must be anchored.
-   * {@link DEFAULT_WRITE_BAR} when omitted, which refuses no type and anchors nothing, so a caller
+   * `DEFAULT_WRITE_BAR` when omitted, which refuses no type and anchors nothing, so a caller
    * judging a real store passes the store's policy. Format, integrity, reserved paths, and the
    * batch cap hold whatever it says.
    */
@@ -154,7 +154,7 @@ const isAnchored = (path: string, entities: Iterable<string>): boolean =>
  * task under `projects/<slug>/tasks/` is anchored by its path, one in the inbox by an entity. An
  * archive destination is an existing record moving, never a new one, and is not judged. A file that
  * does not parse answers nothing here, because the format check has already refused it. With the
- * library default ({@link DEFAULT_WRITE_BAR}) nothing is refused.
+ * library default (`DEFAULT_WRITE_BAR`) nothing is refused.
  */
 export const writeBarReasons = (
   path: string,
