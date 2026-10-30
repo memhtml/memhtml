@@ -151,6 +151,12 @@ export interface ReceiptDrift {
   readonly actual: string | null
 }
 
+/** What {@link compareEntries} reports: the install state, and each entry whose hash on disk differs from the receipt. */
+export interface EntryComparison {
+  readonly state: InstallState
+  readonly drift: ReadonlyArray<ReceiptDrift>
+}
+
 /**
  * Hash every entry against disk and report `installed` or `modified`.
  *
@@ -166,7 +172,7 @@ export interface ReceiptDrift {
 export const compareEntries = async (
   entries: ReadonlyArray<ReceiptEntry>,
   current: (entry: ReceiptEntry) => Promise<string | null>
-): Promise<{ readonly state: InstallState; readonly drift: ReadonlyArray<ReceiptDrift> }> => {
+): Promise<EntryComparison> => {
   const drift: Array<ReceiptDrift> = []
   for (const entry of entries) {
     const actual = await current(entry)
