@@ -50,7 +50,7 @@ Read the three fields beside `hits` before you read the hits themselves.
 
 `degraded: true` means the vector arm did not fire. memhtml surfaces that rather than staying silent, because an agent comparing two searches needs to know that one of them was ranked by fewer signals. Retrieval never errors because Bedrock is down; the search gets narrower instead.
 
-`scopeEmpty` distinguishes an empty corpus from an over-narrow scope. It is `true` only when you named a scope, the scope narrowed the query, and nothing survived it, and it stays `false` for an unscoped empty result. That is the difference between "there is no answer" and "there is a typo in your `--workspace`", and `hits.length` cannot tell you which one you got. When it is `true`, `archivedMatches` says how many archived memories the same scope still matches and `archived` lists up to `limit` of them with the path that superseded each (or `null`), so a facet over a record that compress or eviction moved into `archive/` points at where it went instead of reading as never written. Both stay at `0` and `[]` otherwise.
+`scopeEmpty` distinguishes an empty corpus from an over-narrow scope. It is `true` only when you named a scope, the scope narrowed the query, and nothing survived it, and it stays `false` for an unscoped empty result. That is the difference between "there is no answer" and "there is a typo in your `--workspace`", and `hits.length` cannot tell you which one you got. When it is `true`, `archivedMatches` says how many archived memories the same scope still matches and `archived` lists up to `limit` of them with the path that superseded each (or `null`), so a facet over a record that a correction, a fold, or an eviction moved into `archive/` points at where it went instead of reading as never written. Both stay at `0` and `[]` otherwise.
 
 `score` is the fused RRF score. It is unitless and comparable only within one result set: a score of 0.5 in one search and 0.5 in another mean nothing to each other.
 
@@ -68,7 +68,7 @@ memhtml search "rollback" --include-archived
 memhtml search "rollback" --as-of 2026-06-01T00:00:00Z
 ```
 
-`--type` and `--tag` are repeatable, and each occurrence broadens the query as an ANY-of. `--workspace` is strict: a scoped query never returns a memory with no workspace. `--as-of` is a point-in-time view, returning what was believed valid at that instant, including since-superseded memories, each marked `supersededBy`. That history is read from validity windows stamped in the files, so it survives a full index rebuild.
+`--type` and `--tag` are repeatable, and each occurrence broadens the query as an ANY-of. `--workspace` is strict: a scoped query never returns a memory with no workspace. `--as-of` is a point-in-time view read from the validity windows stamped in the files, so it survives a full index rebuild, and a superseded hit in it is marked `supersededBy`. A correction stamps the end of the original's window. A fold or an eviction stamps none, so a memory either one archived still appears at a later instant.
 
 A query is prose rather than a query language. You can type an apostrophe, a `type:name` reference, or a leading hyphen and get results instead of a driver error, because memhtml sanitizes the query text before it reaches `MATCH` (`packages/index/src/fts-query.ts::ftsQueryForms`). A search that errors is a bug, and a bad query is not. A sentence finds a memory even when only one of its words is stored: the lexical arm requires every word first and falls back to any of them, ranked by how many of the words a memory holds and how rare they are. The one piece of syntax is a double-quoted span, which demands those words in that order: `"drain the vip"`.
 
@@ -110,7 +110,7 @@ memhtml recall "one writer many readers" --budget 2000
 }
 ```
 
-`recall` runs the same ranking and then layers a disclosure fold on top of it:
+`recall` runs the same fusion without the MMR pass and then layers a disclosure fold on top of it:
 
 - Two envelopes rather than one list. `arcs` and `memories` are folded separately under their own character budgets, so an arc, which is a behavioral summary curation synthesizes, does not compete with the memories it summarizes.
 - `disclosed` is quoted and `indexLines` is not. A candidate that fits the budget arrives with its body. One that does not becomes an index line, carrying the claim plus the path, so you drill down deliberately with `memhtml read`. Rank order is authoritative, so a candidate is never promoted past a better-ranked one to make it fit, and the fold continues past a candidate that did not fit, because the budget counts characters rather than positions. Without that, one long memory in the middle of the list would silently truncate every shorter one after it.

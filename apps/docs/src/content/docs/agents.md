@@ -23,9 +23,9 @@ Each item below is a place where memhtml behaves unlike the system you are patte
 
 Branch on `code` and never on `error`. A failure envelope carries four fields: `{apiVersion, error, code, suggestions}`. The `code` values are append-only, so a shipped code keeps its meaning for good and is never removed. The `error` string is prose for a human, and whoever improves the wording rewrites it freely, so a matcher over that string gives you a test that passes until someone edits a sentence. See [error codes](/reference/error-codes/) and [the envelope](/reference/envelope/).
 
-An absent path was archived. memhtml removes nothing from a store. Eviction is a `git mv` into `archive/<YYYY>/` that mirrors the original path, so `git log --follow` reads through a memory's whole life. When a path you were holding stops appearing in results, retry with `--include-archived` before you conclude the fact is gone. See [store layout and path algebra](/internals/store-layout-and-path-algebra/).
+An absent path was archived or moved. memhtml deletes no memory file. Archiving moves a file to `archive/<YYYY>/`, or `archive/<YYYY>.<n>/` when an earlier archiving holds that slot, mirroring the original path, so `git log --follow` reads through a memory's whole life. When a path you were holding stops appearing in results, retry with `--include-archived` before you conclude the fact is gone. See [store layout and path algebra](/internals/store-layout-and-path-algebra/).
 
-The git tree is the system of record and the index is disposable. `.memhtml/index.db` is a projection, and `memhtml index rebuild` reconstructs it from the tree, so anything that has to survive lives in a file: authored links are `<link>` elements and metadata is `<meta>` elements. Read a query result as a pointer to a file, and the file as the fact. See [the index plane and the state plane](/internals/index-plane-and-state-plane/).
+The git tree is the system of record, and `.memhtml/index.db` holds a projection of it. `memhtml index rebuild` recomputes every memory row from the tree, so anything that has to survive lives in a file: authored links are `<link>` elements and metadata is `<meta>` elements. Read a query result as a pointer to a file, and the file as the fact. See [the index plane and the state plane](/internals/index-plane-and-state-plane/).
 
 One memory holds one fact. A memory is a single claim. Writing a five-paragraph summary as one memory defeats retrieval, because the arm that should rank one of those claims scores the whole blob instead. Split the summary into claims and let `memhtml link` carry the relationships between them. See [the memory file format](/internals/the-memory-file-format/).
 
@@ -43,7 +43,7 @@ Two surfaces reach the same store, and the test for which one you have is free.
 | You can run a shell command          | CLI       | `memhtml manifest`, then the command you need.                   |
 | Neither                              | Read-only | You are reading documentation. Fetch the Markdown, not the HTML. |
 
-The MCP server is the same binary. `memhtml serve mcp` speaks stdio and composes the same services the command line does, so both surfaces agree on which store, which database, and which vector space a call reaches. A tool's arguments mirror its command's flags. See [MCP tools](/reference/mcp-tools/) and the [reference overview](/reference/), which links one page per command.
+The MCP server is the same binary. `memhtml serve mcp` speaks stdio and composes the same services the command line does, so both surfaces agree on which store and which vector space a call reaches. A tool's arguments mirror its command's flags. See [MCP tools](/reference/mcp-tools/) and the [reference overview](/reference/), which links one page per command.
 
 :::agent
 
@@ -62,7 +62,7 @@ memhtml write --title … --claim …     # one memory, one fact, one commit
 memhtml search "prose, not a query language" --dense
 ```
 
-Make `--dense` a habit on every call. It emits minified JSON with null fields dropped, which is what you want when the output goes into a prompt. `memhtml recall` runs the same retrieval under a character budget, for when you want a context pack rather than a hit list.
+Make `--dense` a habit on every call. It emits minified JSON with null fields dropped, which is what you want when the output goes into a prompt. `memhtml recall` runs the same fusion without the MMR pass, under a character budget, for when you want a context pack rather than a hit list.
 
 Every command writes exactly one JSON envelope to stdout and nothing else, and sends its logs to stderr. The one exception is `memhtml help` on a terminal, which writes Markdown; piped, or with `--json`, it is an envelope like every other command. Exit 0 is success. Exit 2 is a usage error you fix by changing the call. Exit 1 is a runtime failure you fix by changing the store or the environment.
 
@@ -77,7 +77,7 @@ memhtml integrations install    # claude, codex, cursor, opencode; omitted, it d
 - Scraping these pages. Every one of them is served as Markdown; section 7 has the URLs.
 - Parsing the `error` prose. Section 2 explains what that costs you.
 - Writing a query language into `memhtml search`. The argument is prose, and retrieval fuses four ranking arms, so an operator syntax has nothing to bind to.
-- Bundling unrelated writes. The store owns staging and every corpus change is exactly one commit, so a caller cannot make one commit mean two things. Use `memhtml apply` when the writes are one change.
+- Bundling unrelated writes. The store owns staging and every write lands whole as one commit, so a caller cannot make one commit mean two things. Use `memhtml apply` when the writes are one change.
 - Spending a tool call per hop. A question that needs several traversals of the corpus is one `memhtml exec` script against a read-only mount. See [the code-mode guide](/reference/guide/code-mode/).
 - Editing `.memhtml/index.db`, or hand-writing a memory file's markup from memory. Write through the commands, which own the commit and the validation.
 
