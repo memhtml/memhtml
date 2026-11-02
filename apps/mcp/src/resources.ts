@@ -103,6 +103,18 @@ interface TemplateSpec<E, R> {
 }
 
 /**
+ * One resource's layer, carrying the template it registers.
+ *
+ * The template rides on the layer so the reference page (`mcp-doc.ts`) can list what
+ * `resources/templates/list` publishes without building the app graph or opening a session. It is
+ * the same instance `addResourceTemplate` registers, so the page and the wire cannot describe two
+ * different templates.
+ */
+export type ResourceLayer<R> = Layer.Layer<never, never, R> & {
+  readonly template: McpSchema.ResourceTemplate
+}
+
+/**
  * One resource template, registered on the server.
  *
  * `McpServer.addResourceTemplate` rather than the `McpServer.resource` tagged template, because the
@@ -120,18 +132,19 @@ interface TemplateSpec<E, R> {
  * reference, so the registry this writes into is the one `layerStdio` serves from: a layer is
  * memoized per build, so naming it here twice is naming it once.
  */
-const templateLayer = <E, R>(spec: TemplateSpec<E, R>): Layer.Layer<never, never, R> =>
-  Layer.effectDiscard(
+const templateLayer = <E, R>(spec: TemplateSpec<E, R>): ResourceLayer<R> => {
+  const template = new McpSchema.ResourceTemplate({
+    uriTemplate: spec.uriTemplate,
+    name: spec.name,
+    description: spec.description,
+    mimeType: spec.mimeType
+  })
+  const layer = Layer.effectDiscard(
     Effect.gen(function* () {
       const registry = yield* McpServer.McpServer
       const services = yield* Effect.context<R>()
       yield* registry.addResourceTemplate({
-        template: new McpSchema.ResourceTemplate({
-          uriTemplate: spec.uriTemplate,
-          name: spec.name,
-          description: spec.description,
-          mimeType: spec.mimeType
-        }),
+        template,
         routerPath: routerPathFor(spec.section),
         annotations: Context.empty(),
         completions: {},
@@ -154,6 +167,8 @@ const templateLayer = <E, R>(spec: TemplateSpec<E, R>): Layer.Layer<never, never
       })
     })
   ).pipe(Layer.provide(McpServer.McpServer.layer))
+  return Object.assign(layer, { template })
+}
 
 /** `memhtml://file/{path}`: nothing readable behind this URI. */
 const fileRefusal = (uri: string): ToolFailure =>

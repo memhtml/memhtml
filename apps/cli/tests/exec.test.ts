@@ -682,6 +682,42 @@ describe("the envelope contract", () => {
     expect(envelope.code).toBe("ERR_INVALID_MEMORY")
   }, 120_000)
 
+  /**
+   * The report names the commit the worktree holds, so a ref resolves to its full sha first.
+   *
+   * (Mutation: passing `requested` through unresolved in `execCommand` fails this test.)
+   */
+  it("resolves a ref passed as --sha to the full commit the report names", async () => {
+    const result = await run([
+      "exec",
+      "--repo",
+      fixture.root,
+      "--sha",
+      "HEAD",
+      "--script",
+      "console.log(1)"
+    ])
+    expect(result.exitCode).toBe(0)
+    const envelope = JSON.parse(result.stdout) as { type: string; data: { sha: string } }
+    expect(envelope.type).toBe("exec.report")
+    expect(envelope.data.sha).toMatch(/^[0-9a-f]{40}$/)
+  }, 120_000)
+
+  /** A dash-led value would reach `git worktree add` as an option, so it is a usage error. */
+  it("refuses a --sha that git would read as an option, before anything is mounted", async () => {
+    const result = await run([
+      "exec",
+      "--repo",
+      fixture.root,
+      "--sha=--no-checkout",
+      "--script",
+      "console.log(1)"
+    ])
+    expect(result.exitCode).toBe(2)
+    const envelope = JSON.parse(result.stdout) as { code: string }
+    expect(envelope.code).toBe("ERR_INVALID_FLAG")
+  }, 120_000)
+
   it("reads the script from stdin under `--file -`, the flag spelling of the dash", async () => {
     /**
      * The docs promise three stdin spellings — a bare call, a positional `-`, and `--file -` — and

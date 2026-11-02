@@ -108,7 +108,12 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
   {
     name: "MEMHTML_ROOT",
     description: "The memory repo's root: a git repository holding the corpus and `.memhtml/`.",
-    fallback: join("~", "memhtml")
+    /**
+     * A literal and not `join("~", …)`: this display default is published in the manifest and
+     * AGENTS.md, and `join` renders `~\memhtml` on Windows, so the generated doc would differ by
+     * platform. `expandRoot` expands the tilde at read time in the platform's own spelling.
+     */
+    fallback: "~/memhtml"
   },
   {
     /**
@@ -131,7 +136,7 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
     name: "MEMHTML_TRACE_ROOT",
     description:
       "Where `memhtml trace index` reads Claude Code transcripts from. Read-only; never written.",
-    fallback: join("~", ".claude")
+    fallback: "~/.claude"
   },
   {
     name: "MEMHTML_AWS_REGION",
@@ -275,7 +280,8 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
  * config, and a cron line, and only the shell expands tildes on its own.
  */
 export const MemhtmlRoot = Config.String("MEMHTML_ROOT").pipe(
-  Config.withDefault(join("~", "memhtml")),
+  // The literal the manifest row publishes; `expandRoot` turns it into this platform's path.
+  Config.withDefault("~/memhtml"),
   Config.map(expandRoot)
 )
 

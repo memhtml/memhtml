@@ -1,7 +1,8 @@
 import { access, chmod, lstat, mkdir, rm, stat } from "node:fs/promises"
-import { createServer, type IncomingMessage } from "node:http"
+import { createServer } from "node:http"
 import { createConnection } from "node:net"
 import { dirname } from "node:path"
+import type { Readable } from "node:stream"
 
 import type { InvalidMemory, ModelUnavailable, StoreConfigInvalid } from "@memhtml/contracts/errors"
 import { StorageFailure } from "@memhtml/contracts/errors"
@@ -221,7 +222,7 @@ const EXEC_DRAIN_MAX_BYTES = 64 * EXEC_BODY_MAX_BYTES
  * open, until {@link EXEC_DRAIN_MAX_BYTES} have come in, where the request is destroyed.
  */
 const readCapped = (
-  incoming: IncomingMessage,
+  incoming: Readable,
   cap: number
 ): Promise<{ readonly text: string } | { readonly tooLarge: true } | { readonly bad: string }> =>
   new Promise((resolve) => {
@@ -1029,10 +1030,10 @@ export const startHeadServer = (
       Effect.gen(function* () {
         const tip = yield* fresh
         if (sha === tip.sha) return { version: tip, base: "tip" as const }
-        const ancestor = yield* git.run(["merge-base", "--is-ancestor", sha, tip.sha]).pipe(
-          Effect.as(true),
-          Effect.catchTag("GitFailure", () => Effect.succeed(false))
-        )
+        // A base git cannot compare with the tip (logged by the git service) is declined too.
+        const ancestor = yield* git
+          .isAncestor(sha, tip.sha)
+          .pipe(Effect.catchTag("GitFailure", () => Effect.succeed(false)))
         if (!ancestor) {
           return {
             unservable: `the session's base ${sha} is neither ${ref}'s tip ${tip.sha} nor an ancestor of it`
@@ -1165,10 +1166,10 @@ export const startHeadServer = (
       Effect.gen(function* () {
         const tip = yield* fresh
         if (sha === tip.sha) return { version: tip, base: "tip" as const }
-        const ancestor = yield* git.run(["merge-base", "--is-ancestor", sha, tip.sha]).pipe(
-          Effect.as(true),
-          Effect.catchTag("GitFailure", () => Effect.succeed(false))
-        )
+        // A base git cannot compare with the tip (logged by the git service) takes the load below.
+        const ancestor = yield* git
+          .isAncestor(sha, tip.sha)
+          .pipe(Effect.catchTag("GitFailure", () => Effect.succeed(false)))
         if (ancestor) return { version: yield* versionAt(sha), base: "ancestor" as const }
         const kept = recall(sha)
         if (kept !== undefined) return { version: kept, base: "loaded" as const }

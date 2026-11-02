@@ -239,6 +239,8 @@ describe("manifest", () => {
       "head search",
       "head snapshot",
       "head embed",
+      // The read-only answer to where a write would land, over the version at HEAD.
+      "path",
       // The head server (`docs/design.md` §22): the process the three lookups ask first.
       "head serve",
       /**

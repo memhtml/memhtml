@@ -53,21 +53,6 @@ export interface LoadedVersion {
   readonly reparsed: number | null
 }
 
-/** `merge-base --is-ancestor`: exit 1 is "no", an answer rather than a failure. */
-const isAncestor = (
-  root: string,
-  sha: string,
-  target: string
-): Effect.Effect<boolean, GitFailure> =>
-  makeGit(root)
-    .run(["merge-base", "--is-ancestor", sha, target])
-    .pipe(
-      Effect.as(true),
-      Effect.catchTag("GitFailure", (failure) =>
-        failure.exitCode === 1 ? Effect.succeed(false) : Effect.fail(failure)
-      )
-    )
-
 /** How many memory paths differ between two trees, the count `advanceHead` will re-parse over. */
 const changedCandidates = (
   root: string,
@@ -88,21 +73,23 @@ export interface AncestorSnapshot {
 /**
  * The snapshots to advance from when `target` has none of its own, best first: those whose sha is
  * an ancestor of `target`, by fewest changed memory paths, ties to the newer file. Empty when no
- * snapshot is an ancestor (a fresh clone, or a target on an unrelated branch). A snapshot whose
- * sha git cannot judge (a commit gc'd with the branch that made it) is passed over with a log line.
+ * snapshot is an ancestor (a fresh clone, or a target on an unrelated branch). A snapshot that is
+ * not an ancestor is passed over silently, since "no" is an answer. A snapshot whose sha git cannot
+ * judge (a commit gc'd with the branch that made it) is passed over with a log line.
  */
 export const ancestorSnapshots = (
   root: string,
   target: string
 ): Effect.Effect<ReadonlyArray<AncestorSnapshot>, StorageFailure> =>
   Effect.gen(function* () {
+    const git = makeGit(root)
     const found: Array<AncestorSnapshot> = []
     // `listSnapshots` is newest first and the sort is stable, so equal counts keep that order.
     for (const entry of yield* listSnapshots(root)) {
       if (entry.sha === target) continue
       const probed = yield* Effect.result(
         Effect.gen(function* () {
-          if (!(yield* isAncestor(root, entry.sha, target))) return null
+          if (!(yield* git.isAncestor(entry.sha, target))) return null
           return yield* changedCandidates(root, entry.sha, target)
         })
       )

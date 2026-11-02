@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { DatabaseSync } from "node:sqlite"
+import { fileURLToPath } from "node:url"
 
 import { Effect, Result } from "effect"
 import { describe, expect, it } from "vitest"
@@ -13,7 +14,7 @@ import { type DatabaseShape, isBusyCause, makeDatabase } from "../src/database.j
  * isolates the ledger machinery from what the seven real migrations happen to create. The shipped DDL
  * is exercised against the real driver in `migrations.test.ts`.
  */
-const MIGRATIONS = new URL("./fixtures/no-migrations", import.meta.url).pathname
+const MIGRATIONS = fileURLToPath(new URL("./fixtures/no-migrations", import.meta.url))
 
 /** Runs a scoped program against a fresh in-memory database. */
 const withDb = <A, E>(body: (db: DatabaseShape) => Effect.Effect<A, E>) =>

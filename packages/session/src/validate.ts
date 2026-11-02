@@ -1,6 +1,9 @@
 import type { HeadView, OverlayOp, WriteBarPolicy } from "@memhtml/contracts"
 import {
   ARCS_DIR,
+  activeRecordPathViolation,
+  archiveSlotFor,
+  archiveYearOf,
   DEFAULT_WRITE_BAR,
   hrefToPath,
   isArchivePath,
@@ -13,7 +16,14 @@ import {
   pathToHref,
   STORE_CONFIG_FILE
 } from "@memhtml/contracts"
-import { checkMemory, contentHash, isRootRelativeHref, parseMemory, readLinks } from "@memhtml/html"
+import {
+  blockTagInArticle,
+  checkMemory,
+  contentHash,
+  isRootRelativeHref,
+  parseMemory,
+  readLinks
+} from "@memhtml/html"
 import { Effect, Exit } from "effect"
 
 /**
@@ -105,6 +115,24 @@ const WORKSPACE_PREFIX = "projects/"
  */
 export const UNANCHORED_REASON =
   'names no system, project, or person: add at least one memhtml-entity (<meta name="memhtml-entity" content="system:<name>"> in the head, an entities value in a write op, or a label op) or write it in a workspace (projects/<slug>/)'
+
+/**
+ * Why a put's article falls to the block-tag rule, or nothing when it does not.
+ *
+ * The prose path escapes every claim and paragraph, so markup a writer meant as `article_html`
+ * becomes the characters `&lt;p&gt;` in the file, which every format constraint accepts. The doors
+ * refuse such a body before rendering it; this holds every put to the same rule, a `session exec`
+ * file and a curator's record included, with the one detector they share (`blockTagInArticle`).
+ * Only a put is judged: an archive or a move carries an existing record's bytes unchanged.
+ */
+const blockTagReasons = (html: string): ReadonlyArray<string> => {
+  const found = blockTagInArticle(html)
+  return found === undefined
+    ? []
+    : [
+        `a <${found.element}>'s text holds the block tag \`${found.tag}\` as characters, outside code: markup goes in as elements (\`article_html\` on a write line), and a tag the record discusses goes in <code>, or in backticks that open and close on one line`
+      ]
+}
 
 /** True when a record's entities or its path say what it is about: the write bar's anchor rule. */
 const isAnchored = (path: string, entities: Iterable<string>): boolean =>
@@ -227,6 +255,8 @@ export const validateOps = (
   const archived = new Set<string>()
   /** Archive destinations written so far in this batch, so one slot is never written twice. */
   const archiveDestinations = new Set<string>()
+  /** Each archive with no violation of its own, judged for edges left on its path after the walk. */
+  const archives: Array<{ readonly path: string; readonly to: string }> = []
   /**
    * Sources this batch moves, and each move's destination mapped back to its source. A moved source
    * has left its path: no later op may edit, archive, or move it there, and its edges and entities
@@ -265,7 +295,7 @@ export const validateOps = (
         const reasons: Array<string> = []
         const pathReason = memoryPathViolation(op.path)
         if (pathReason !== undefined) reasons.push(`path: ${pathReason}`)
-        reasons.push(...checkMemory(op.html).violations)
+        reasons.push(...checkMemory(op.html).violations, ...blockTagReasons(op.html))
         if (reasons.length > 0) {
           violations.push({ kind: "format", path: op.path, reasons })
           break
@@ -295,14 +325,38 @@ export const validateOps = (
           reasons.push("archive source is not an active record in the head")
         } else if (movedAway.has(normalizePath(op.path))) {
           reasons.push("archive source was moved away earlier in this batch")
+        } else if (archived.has(normalizePath(op.path))) {
+          reasons.push("archive source was archived earlier in this batch")
         }
+        // A put earlier in this batch satisfies the check above, and a put under archive/ passes
+        // every put check, so the source's path is judged on its own: archived again, it would land
+        // under archive/<YYYY>/archive/.
+        const sourcePath = activeRecordPathViolation(op.path)
+        if (sourcePath !== undefined) reasons.push(`archive source: ${sourcePath}`)
         if (originalPathFor(op.to) !== normalizePath(op.path)) {
-          reasons.push("archive destination is not archive/<YYYY>/<original path>")
+          reasons.push("archive destination is not archive/<YYYY>[.<n>]/<original path>")
         }
-        // A destination the head already holds is an earlier archive of this same path (the
-        // destination maps back to the source, checked above): a record archived once, recreated
-        // at its path, and archived again. The new copy replaces the old one, whose bytes stay in
-        // git history. Two archives of one source in a single batch are still refused.
+        // An archive takes its year's first free generation and never writes over a record. A slot
+        // the head holds is an earlier archiving's history, and the record in it need not even be
+        // this path's (its article is not checked); a later generation past a free one leaves a gap
+        // that readers taking the newest generation would not see past. Both reasons name the slot,
+        // so neither is given for a source refused above, whose free slot would be a nested one.
+        const year = archiveYearOf(op.to)
+        const to = normalizePath(op.to)
+        if (year !== undefined && sourcePath === undefined && !archiveDestinations.has(to)) {
+          const free = archiveSlotFor(
+            op.path,
+            year,
+            (slot) => view.get(slot) !== undefined || archiveDestinations.has(slot)
+          )
+          if (view.get(to) !== undefined) {
+            reasons.push(
+              `archive destination ${to} already holds a record; the free slot is ${free}`
+            )
+          } else if (to !== free && originalPathFor(to) === normalizePath(op.path)) {
+            reasons.push(`archive destination ${to} skips the free slot ${free}`)
+          }
+        }
         if (archiveDestinations.has(normalizePath(op.to))) {
           reasons.push("archive destination is written twice in this batch")
         }
@@ -320,6 +374,7 @@ export const validateOps = (
           reasons.push("archive op's article differs from the source record's")
         }
         if (reasons.length > 0) violations.push({ kind: "format", path: op.path, reasons })
+        else archives.push({ path: normalizePath(op.path), to: normalizePath(op.to) })
         archived.add(normalizePath(op.path))
         break
       }
@@ -449,23 +504,31 @@ export const validateOps = (
       }
     }
   }
-  // Every move, judged once the whole batch is walked, so the repointing edges may come before or
-  // after the move in the order. Under the anchor rule the destination is held to it (a record moved
-  // out of `projects/<slug>/` with no entity would name nothing), and no live record may still carry
-  // an edge to the path the record left, unless the batch puts a new record there: that edge would
-  // dangle.
-  for (const move of moves) {
-    if (bar.requireAnchor && !isAnchored(move.to, entitiesOf(move.to))) {
-      violations.push({ kind: "write-bar", path: move.to, reasons: [UNANCHORED_REASON] })
-    }
-    if (batchPuts.has(move.path) || movedInto.has(move.path)) continue
-    const href = pathToHref(move.path)
+  /**
+   * A `format` violation on `left.path` for every edge a live record still carries to it once the
+   * whole batch is walked, so the repointing edges may come before or after the op in the order: the
+   * record went to `left.to`, and the edge would dangle. For a move, nothing when the batch puts a
+   * new record at the path, or moves one into it. An archive has no such exemption: a record the
+   * batch put or moved in at the path is the one it archives, and the path ends empty.
+   */
+  const danglingAt = (
+    left: { readonly path: string; readonly to: string },
+    verb: "moved" | "archived"
+  ): void => {
+    if (verb === "moved" && (batchPuts.has(left.path) || movedInto.has(left.path))) return
+    const href = pathToHref(left.path)
     const holders = new Set<string>([...view.inbound(href), ...batchEdges.keys()])
     for (const holder of [...holders].sort()) {
       const path = normalizePath(holder)
       // A record the batch archived keeps the edge in its history, and one it moved carries its
       // edges under its destination, which is a holder of its own here.
       if (archived.has(path) || movedAway.has(path)) continue
+      // A holder this scope may not write (an arc or a people record under `session`) is one no
+      // batch of this writer can repoint, so an archive leaves its edge to the curator, whose
+      // briefing lists it among the dangling edges with the archived form to repoint it to;
+      // otherwise a session could never retire a record a curated one cites. A move is placement,
+      // the curator's own work, and is held to every holder.
+      if (verb === "archived" && isReservedPath(path, scope)) continue
       const edges = batchEdges.get(path)
       const stale =
         edges === undefined
@@ -478,14 +541,26 @@ export const validateOps = (
       for (const link of stale) {
         violations.push({
           kind: "format",
-          path: move.path,
+          path: left.path,
           reasons: [
-            `moved to ${move.to}, but ${path} still carries ${link.rel} -> ${href}: repoint it with an unlink of that edge and a link of the same rel to ${pathToHref(move.to)} in the same batch`
+            `${verb} to ${left.to}, but ${path} still carries ${link.rel} -> ${href}: repoint it with an unlink of that edge and a link of the same rel to ${pathToHref(left.to)} in the same batch`
           ]
         })
       }
     }
   }
+  // Every move, judged once the whole batch is walked. Under the anchor rule the destination is held
+  // to it (a record moved out of `projects/<slug>/` with no entity would name nothing), and no live
+  // record may still carry an edge to the path the record left.
+  for (const move of moves) {
+    if (bar.requireAnchor && !isAnchored(move.to, entitiesOf(move.to))) {
+      violations.push({ kind: "write-bar", path: move.to, reasons: [UNANCHORED_REASON] })
+    }
+    danglingAt(move, "moved")
+  }
+  // Every archive the same way: its slot holds the record now, so an edge a live record still
+  // carries to the path it left is repointed to the slot or the batch is refused.
+  for (const archive of archives) danglingAt(archive, "archived")
   // The anchor rule, when the store holds it, over every record an `unlabel` edited, as the whole
   // batch left it, so a batch that swaps one label for another passes in either order and one that
   // drops the last fails. A record the batch archives is exempt: the archived copy is a destination,

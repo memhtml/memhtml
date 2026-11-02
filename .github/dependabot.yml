@@ -56,6 +56,23 @@ updates:
         update-types:
           - "version-update:semver-minor"
           - "version-update:semver-major"
+      # `just-bash` 3.6.0 depends on `guarded-fetch` 0.1.3 exactly, and that release pins `undici`
+      # 7.29.0 exactly. undici 7.29.0 carries three high advisories (GHSA-w293-vg96-wgc3,
+      # GHSA-rfgv-xxqx-mfg5, GHSA-xjj6-f33q-929c), the last fixed only in 7.30.1, and an exact pin
+      # two levels down reaches every installer of the published package, where no override of
+      # ours applies. The newest `guarded-fetch`, 0.1.6 (2026-10-15), still pins 7.30.0. Checked
+      # 2026-10-26, when 3.6.0 was the newest `just-bash`; `apps/cli` stays on 3.4.2, whose
+      # `undici` range resolves 7.30.1. Lift this when a `just-bash` release resolves an undici at
+      # or above 7.30.1. A 3.7 or later still reaches a PR, where dependency-review checks it.
+      - dependency-name: just-bash
+        versions: ["3.6.x"]
+      # `starlight-md-txt` 0.2.0 (2026-10-23) moves the site root's raw Markdown twin from `/.md` to
+      # `/index.md` and starts rewriting links inside the twins. `apps/docs/src/lib/llms-pages.ts`
+      # reads the root twin at `/.md`, so the docs build fails on 0.2.0 (checked 2026-10-26), and
+      # `agent-surface.ts`, `base-raw-links.ts` and their tests assume the same route. Moving to
+      # 0.2 is a docs-site change with its own PR, not a weekly bump; 0.1.x patches still flow.
+      - dependency-name: starlight-md-txt
+        versions: ["0.2.x"]
     groups:
       # Effect v4 is pre-release and `pnpm-workspace.yaml`'s catalog holds its four packages at ONE
       # string, so they move together or the catalog is a state it refuses. This group carries NO

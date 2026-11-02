@@ -1,10 +1,12 @@
 import type { StorageFailure } from "@memhtml/contracts/errors"
+import { paraBucketOf } from "@memhtml/contracts/paths"
 import { escapeAttribute, escapeText } from "@memhtml/html"
-import type { DatabaseShape } from "@memhtml/index"
+import { type DatabaseShape, isIndexablePath } from "@memhtml/index"
 import type { Effect } from "effect"
 
 /**
- * The generated artifacts: one `index.html` per directory and a root `sitemap.xml`.
+ * The generated artifacts: one `index.html` per directory and a root `sitemap.xml`, and which
+ * tracked listings they no longer include.
  *
  * **This lives beside `memhtml publish`, its one caller.** The generator needs the index, because a
  * listing shows each memory's title, gist, type, and updated stamp, all of which are projections, and
@@ -177,6 +179,48 @@ export const generateArtifacts = (rows: ReadonlyArray<PublishRow>): ReadonlyArra
   [...generateIndexes(rows), generateSitemap(rows)].sort((left, right) =>
     left.path < right.path ? -1 : left.path > right.path ? 1 : 0
   )
+
+/**
+ * The tracked listings `memhtml publish` removes: every `index.html` under one of the four buckets
+ * that is not among the `generated` artifacts and whose directory holds no `tracked` record at any
+ * depth. Path-ordered, each path once.
+ *
+ * {@link generateIndexes} lists a directory only while a record sits at or below it, so once a
+ * directory's records are archived or moved its listing is no longer generated, and nothing else
+ * can delete it: `index.html` is reserved in every session scope and deletion is not an operation.
+ * The filename under a bucket is the generator's by rule, so a hand-written `index.html` in a
+ * directory with no record is named too. The root listing and the sitemap sit outside every bucket
+ * and are never named, nor is anything else outside the buckets.
+ *
+ * The generated set alone cannot say a directory is empty, because it comes from the index, which
+ * can be behind the tree: a pull it has not caught up with, an interrupted rebuild, a record that
+ * no longer parses. So a listing is stale only when the tree publish is about to commit also holds
+ * no record below its directory, judged by the indexer's own path rule.
+ */
+export const staleListings = (
+  tracked: ReadonlyArray<string>,
+  generated: ReadonlyArray<GeneratedFile>
+): ReadonlyArray<string> => {
+  const current = new Set(generated.map((artifact) => artifact.path))
+  const live = new Set<string>()
+  for (const path of tracked) {
+    if (!isIndexablePath(path)) continue
+    // Deepest first, stopping at a directory already marked, whose ancestors are marked with it.
+    let directory = directoryOf(path)
+    while (directory !== "" && !live.has(directory)) {
+      live.add(directory)
+      directory = directoryOf(directory)
+    }
+  }
+  const stale = tracked.filter(
+    (path) =>
+      paraBucketOf(path) !== undefined &&
+      path.slice(path.lastIndexOf("/") + 1) === INDEX_FILENAME &&
+      !current.has(path) &&
+      !live.has(directoryOf(path))
+  )
+  return [...new Set(stale)].sort()
+}
 
 /** XML text escaping. The sitemap is XML, not HTML, so it has its own five-character rule. */
 const escapeXml = (value: string): string =>

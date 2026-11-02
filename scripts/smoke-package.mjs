@@ -708,6 +708,25 @@ const checkEveryCommand = async ({ bin, work, env, vipPath }) => {
     ],
     ["head status", ["head", "status"]],
     ["head search", ["head", "search", "VIP revert"]],
+    /*
+     * `path` over the head the session rows above landed on: the `smoke` session put the same title
+     * in the same workspace, so the answer steps past that record to `-2`, and nothing is written.
+     */
+    [
+      "path",
+      [
+        ...["path", "--title", "Landed through a v2 session", "--type", "semantic"],
+        ...["--workspace", "checkout-api"]
+      ],
+      env,
+      (answer) => ({
+        ok:
+          answer.type === "memory.path" &&
+          answer.data?.path === "projects/checkout-api/landed-through-a-v2-session-2.html" &&
+          answer.data?.ordinal === 2,
+        detail: `${String(answer.data?.path)} at ordinal ${String(answer.data?.ordinal)}`
+      })
+    ],
     [
       "head snapshot",
       ["head", "snapshot", "--write"],

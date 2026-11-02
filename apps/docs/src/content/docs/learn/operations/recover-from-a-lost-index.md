@@ -3,7 +3,7 @@ title: Recover from a lost index
 description: Restore a store from a clone in four commands, in the order that matters, and know exactly what a rebuild cannot bring back.
 ---
 
-Losing `.memhtml/` costs you time and nothing else, as long as the tree and the sidecar are pushed.
+As long as the tree and the sidecar are pushed, losing `.memhtml/` costs you time, the access history since the last `state export`, any session operations that never landed, and the memory-session links that `memhtml trace links` reads.
 
 ```bash
 git clone <remote> ~/memhtml
@@ -27,7 +27,7 @@ Run `memhtml state import` right after `memhtml init`, before any export. An exp
 
 Run the rebuild last, because it is the only step that spends Bedrock calls and the one you re-run if it gets interrupted.
 
-None of the three destroys anything on a fresh clone, so a recovery interrupted anywhere is finished by running the sequence again. Once the clone has recorded reinforcements, a second `memhtml state import` rolls their outcome scores back to the file's values.
+None of the three destroys anything on a fresh clone, so a recovery interrupted anywhere is finished by running the sequence again. Once the clone has recorded reinforcements, a second `memhtml state import` keeps each row's higher counts but sets its outcome EWMA back to the file's value.
 
 ## What survives, and what it survives as
 
@@ -35,7 +35,7 @@ The git tree is the system of record. It holds every memory, every authored `<li
 
 | Artifact                                                                                                                  | Rebuilds from                 | Cost                                                                                                              |
 | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `index.db`: embeddings, mined edges, chunks, full-text search                                                             | The tree                      | `memhtml index rebuild --embed`. The Bedrock calls are the only real expense.                                     |
+| `index.db`: embeddings, authored edges, chunks, full-text search                                                          | The tree                      | `memhtml index rebuild --embed`. The Bedrock calls are the only real expense.                                     |
 | `state.db`: access counts, reinforcement counts, and the outcome EWMA, a running average of positive and negative signals | The sidecar only              | `memhtml state import`. Anything since the last export is gone.                                                   |
 | The trace tables                                                                                                          | `$MEMHTML_TRACE_ROOT`         | `memhtml trace index` from a zero watermark: slow, and it loses nothing.                                          |
 | An unmerged `curate/<date>` branch                                                                                        | Nothing, unless it was pushed | Run `memhtml curate run` again. A run never moved `main`, so it's safe to repeat.                                 |
@@ -48,7 +48,7 @@ The git tree is the system of record. It holds every memory, every authored `<li
 
 :::
 
-The one lossy row in that table is `state.db`, and the size of the loss is bounded by how recently `state export` ran. Nothing runs it for you, so put it on the cron and run it by hand as well before a machine goes away. See [preserve the state plane](/learn/operations/preserve-the-state-plane/).
+Two rows in that table lose data that nothing regenerates: `state.db`, by everything since the last `state export`, and a session's operations that never landed. Nothing runs `state export` for you, so run it regularly and by hand before a machine goes away. See [preserve the state plane](/learn/operations/preserve-the-state-plane/).
 
 ## Confirming the recovery
 
@@ -75,6 +75,6 @@ If only `index.db` is gone, the next `memhtml index update` rebuilds it. On the 
 
 ## What a rebuild leaves alone
 
-A rebuild deletes every memory table, reads the tree again, and reprojects it, keeping every stored vector whose chunk id comes back (`truncateForRebuild` in `packages/index/src/indexer.ts`). It destroys nothing outside `.memhtml/`, and inside `.memhtml/` it leaves the trace tables and the attached state plane untouched.
+A rebuild reads the tree at HEAD first, then empties every memory table and reprojects what it read, keeping every stored vector in the configured model's space whose chunk id comes back (`packages/index/src/indexer.ts::makeIndexer::reproject`, `packages/index/src/indexer.ts::makeIndexer::truncateForRebuild`). It destroys nothing outside `.memhtml/`, and inside `.memhtml/` it leaves the trace tables and the attached state plane untouched.
 
-So running `memhtml index rebuild` as a diagnostic is cheap and safe: it cannot lose an access count, and it cannot cost you a re-walk of `$MEMHTML_TRACE_ROOT`.
+So running `memhtml index rebuild` as a diagnostic is safe: it cannot lose an access count, and it cannot cost you a re-walk of `$MEMHTML_TRACE_ROOT`.

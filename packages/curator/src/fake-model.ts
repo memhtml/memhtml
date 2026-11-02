@@ -72,11 +72,19 @@ export const fakeDedupScript = (
     'const ROOT = "/mnt/memhtml"',
     `const YEAR = ${JSON.stringify(year)}`,
     `const GROUPS = ${JSON.stringify(groups.map((group) => [...group.paths].sort()))}`,
+    // The year's first free archive slot, in the order `archiveSlotFor` tries them: the bare year,
+    // then `.2`, `.3`, ..., so an archive never lands on a record an earlier archiving left there.
+    "const slotFor = (path) => {",
+    "  for (let n = 1; ; n += 1) {",
+    '    const to = "archive/" + YEAR + (n === 1 ? "" : "." + n) + "/" + path',
+    '    if (!fs.existsSync(ROOT + "/" + to)) return to',
+    "  }",
+    "}",
     "const archived = []",
     "for (const paths of GROUPS) {",
     "  const kept = paths[0]",
     "  for (const path of paths.slice(1)) {",
-    '    const to = "archive/" + YEAR + "/" + path',
+    "    const to = slotFor(path)",
     '    fs.mkdirSync(ROOT + "/" + to.slice(0, to.lastIndexOf("/")), { recursive: true })',
     '    fs.writeFileSync(ROOT + "/" + to, fs.readFileSync(ROOT + "/" + path, "utf8"))',
     '    fs.unlinkSync(ROOT + "/" + path)',
@@ -258,7 +266,7 @@ export const fakeCanonicalHtml = (briefing: CollapseBriefing): string => {
       ? []
       : archivable.map((member) => ({
           rel: "supersedes" as const,
-          href: `/archive/${briefing.archiveYear}/${member.path}`
+          href: `/${member.archiveTo}`
         }))
   })
 }

@@ -1,6 +1,6 @@
 {
   "name": "@memhtml/contracts",
-  "version": "0.16.1",
+  "version": "0.18.0",
   "private": true,
   "description": "Schemas, enums, errors, and path algebra. Zero I/O.",
   "type": "module",
@@ -61,9 +61,9 @@
     "effect": "catalog:"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.15",
+    "@biomejs/biome": "2.6.4",
     "@effect/vitest": "catalog:",
-    "@types/node": "26.6.5",
+    "@types/node": "26.6.6",
     "fast-check": "catalog:",
     "typescript": "7.0.2",
     "vitest": "5.0.5"

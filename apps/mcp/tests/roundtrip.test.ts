@@ -11,8 +11,9 @@ import { ToolHandlers } from "../src/handlers.js"
 import { MemhtmlToolkit } from "../src/tools.js"
 
 /**
- * A round trip through the REAL toolkit layer: `kit.toLayer(handlers)` over the CLI's own `AppLive`,
- * against a real temp git repo and real migrations.
+ * A round trip through the REAL toolkit layer: `kit.toLayer(handlers)` over the CLI's own
+ * `layerAppWith`, the production `layerCore` with a deterministic embedder, against a real temp git
+ * repo and real migrations.
  *
  * This exercises the whole path an MCP client's `tools/call` takes minus the transport — parameter
  * DECODE against the published schema, the handler, the shared use case, and the success ENCODE. The
@@ -544,6 +545,106 @@ describe("a tool call through the toolkit layer", () => {
     expect([...bumped, ...cooled]).toEqual([path])
   })
 
+  describe("memory_reinforce's singular path", () => {
+    /**
+     * A memory no earlier case has opened, so its first reinforcement is outside every cooldown and
+     * lands in `bumped`. A write stamps no access row; only a read or a reinforcement does.
+     */
+    const freshPath = async (title: string, body: string): Promise<string> => {
+      const written = await call("memory_write", { title, body, memory_type: "semantic" })
+      return written.path as string
+    }
+
+    it("reinforces `path` exactly as it reinforces `paths: [path]`", async () => {
+      /**
+       * `path` is how `memory_read`, `memory_archive`, `memory_neighbors`, and `memory_resolve` name one
+       * memory, so it is the key an agent reinforcing the one memory it just used reaches for. It has
+       * to land on the same row the plural would: the closing call, in the plural, finds that row
+       * inside its cooldown, which it could not if the singular had bumped anything else.
+       */
+      const single = await freshPath(
+        "Acme widget bins are relabeled on Mondays",
+        "The acme widget bins are relabeled every Monday before the first pick wave."
+      )
+      const plural = await freshPath(
+        "Acme widget pallets ship shrink-wrapped",
+        "Every acme widget pallet ships shrink-wrapped, including partial pallets."
+      )
+
+      expect(await call("memory_reinforce", { path: single, signal: "positive" })).toEqual({
+        bumped: [single],
+        cooled_down: []
+      })
+      expect(await call("memory_reinforce", { paths: [plural], signal: "positive" })).toEqual({
+        bumped: [plural],
+        cooled_down: []
+      })
+      expect(await call("memory_reinforce", { paths: [single], signal: "positive" })).toEqual({
+        bumped: [],
+        cooled_down: [single]
+      })
+    })
+
+    it("reinforces every path a call names when it sends both `paths` and `path`", async () => {
+      /**
+       * Merged, not refused. Two lists of paths have one union, and `reinforce` dedups it, so nothing
+       * the caller sent is dropped. A path named on both sides is one path and is bumped once.
+       */
+      const first = await freshPath(
+        "Acme widget returns go to dock four",
+        "Returned acme widgets are received at dock four, never at the main dock."
+      )
+      const second = await freshPath(
+        "Acme widget labels carry a lot number",
+        "Each acme widget label carries the lot number beside the barcode."
+      )
+      expect(
+        await call("memory_reinforce", { paths: [first], path: second, signal: "neutral" })
+      ).toEqual({ bumped: [first, second], cooled_down: [] })
+
+      const third = await freshPath(
+        "Acme widget cartons hold twelve units",
+        "A full acme widget carton holds twelve units in two layers."
+      )
+      expect(
+        await call("memory_reinforce", { paths: [third], path: third, signal: "neutral" })
+      ).toEqual({ bumped: [third], cooled_down: [] })
+    })
+
+    it("refuses a call that names no path, and the refusal names `paths`", async () => {
+      /**
+       * Neither key can be schema-required while the other may stand in for it, so the decoder admits
+       * a call naming no path, and a misspelled key decodes to exactly that: the schema drops a key it
+       * does not declare. The refusal is the only place such a caller learns which key this tool reads,
+       * so it has to name `paths` and say what to send.
+       */
+      const path = await freshPath(
+        "Acme widget cycle counts run weekly",
+        "Cycle counts for acme widget locations run weekly, on Thursday nights."
+      )
+      for (const params of [
+        { pathz: [path], signal: "positive" },
+        { paths: null, path: null, signal: "positive" },
+        { signal: "positive" }
+      ]) {
+        await expect(call("memory_reinforce", params)).rejects.toThrow(
+          /ERR_INVALID_MEMORY: memory_reinforce needs .*`paths`.* Try: call memory_reinforce again with paths/
+        )
+      }
+
+      // Nothing was recorded, so the path's first real reinforcement still lands.
+      expect(await call("memory_reinforce", { paths: [path], signal: "positive" })).toEqual({
+        bumped: [path],
+        cooled_down: []
+      })
+      // An empty `paths` names its paths, none of them, and answers as it always has.
+      expect(await call("memory_reinforce", { paths: [], signal: "positive" })).toEqual({
+        bumped: [],
+        cooled_down: []
+      })
+    })
+  })
+
   it("trace_links refuses a call with neither side named", async () => {
     /**
      * The failure path through the toolkit, and it must be a typed refusal rather than an unbounded
@@ -773,6 +874,78 @@ describe("a tool call through the toolkit layer", () => {
     )
   })
 
+  it("refuses a body holding HTML block markup with ERR_INVALID_FLAG, naming article_html", async () => {
+    /**
+     * `body` is prose and the template escapes it, so markup sent there would land as the literal
+     * characters `&lt;p&gt;` inside the claim. The same refusal `memhtml apply` gives, under the same
+     * code, because the field names are the same on both wires.
+     */
+    const attempt = call("memory_write", {
+      title: "Markup sent as prose",
+      body: "<p>One.</p><p>Two.</p>",
+      memory_type: "semantic"
+    })
+    await expect(attempt).rejects.toThrow(/^ERR_INVALID_FLAG: /)
+    await expect(attempt).rejects.toThrow(/`<p>`/)
+    await expect(attempt).rejects.toThrow(/article_html/)
+    // A call that names both fields gets the XOR's answer, which is the rule it broke first.
+    await expect(
+      call("memory_write", {
+        title: "Markup sent as prose and as markup",
+        body: "<p>One.</p>",
+        article_html: "<p><mark>One.</mark></p>",
+        memory_type: "semantic"
+      })
+    ).rejects.toThrow(/^ERR_INVALID_MEMORY: .*exactly one of body or article_html/)
+    const listed = await call("memory_list", {})
+    const files = listed.files as ReadonlyArray<{ title: string }>
+    expect(files.some((file) => file.title === "Markup sent as prose")).toBe(false)
+
+    // A record that discusses a tag in backticks is prose about markup, and it writes.
+    const discussed = await call("memory_write", {
+      title: "The paragraph element",
+      body: "The `<p>` element holds one paragraph.",
+      memory_type: "semantic"
+    })
+    expect(discussed.created).toBe(true)
+    expect((await call("memory_read", { path: discussed.path })).gist).toBe(
+      "The `<p>` element holds one paragraph."
+    )
+  })
+
+  it("writes article_html whose <p> holds an escaped block tag, in an atomic batch", async () => {
+    /**
+     * `article_html` is verbatim markup, and a caller that escapes third-party text into a `<p>`
+     * means the characters: a quoted reply holding `&lt;h1&gt;` is text about a heading. The
+     * block-tag rule judges a prose `body`, and a session's puts; supplied markup here is not
+     * judged by it, so one such op does not fail an atomic batch.
+     */
+    const before = (await call("memory_status", {})).head_sha as string
+    const batch = await call("memory_write_batch", {
+      ops: [
+        {
+          title: "Quoted reply with a heading",
+          article_html:
+            "<p><mark>The reply opened with &lt;h1&gt;Manage API Access&lt;/h1&gt;.</mark></p>",
+          memory_type: "episodic",
+          workspace: "quoted-markup"
+        },
+        {
+          title: "Quoted reply in prose",
+          body: "The second reply was plain prose.",
+          memory_type: "episodic",
+          workspace: "quoted-markup"
+        }
+      ]
+    })
+    const results = batch.results as ReadonlyArray<{ ok: boolean; path: string | null }>
+    expect(results.map((result) => result.ok)).toEqual([true, true])
+    expect((await call("memory_status", {})).head_sha).not.toBe(before)
+    expect((await call("memory_read", { path: results[0]?.path })).gist).toBe(
+      "The reply opened with <h1>Manage API Access</h1>."
+    )
+  })
+
   it("memory_correct supersedes through article_html, and refuses both or neither", async () => {
     const original = await call("memory_write", {
       title: "The stale claim a correction will replace",
@@ -800,6 +973,15 @@ describe("a tool call through the toolkit layer", () => {
         reason: "neither supplied"
       })
     ).rejects.toThrow(/exactly one of body or article_html/)
+    // Markup sent as prose: refused before the target is touched.
+    await expect(
+      call("memory_correct", {
+        target_path: original.path,
+        title: "A correction written as markup in prose",
+        body: "The retry budget is per-connection.\n\n<dl><dt>Measured</dt></dl>",
+        reason: "markup in body"
+      })
+    ).rejects.toThrow(/ERR_INVALID_FLAG: .*`<dl>`.*article_html/s)
     expect((await call("memory_read", { path: original.path })).archived).toBe(false)
 
     // Markup only: the correction lands, the target archives, and the authored `<mark>` is the new
@@ -1242,6 +1424,37 @@ describe("a tool call through the toolkit layer", () => {
       expect(await commitCount()).toBe(commitsBefore + 1)
       const listed = await call("memory_list", { workspace: "batch-continue" })
       expect(listed.files as ReadonlyArray<unknown>).toHaveLength(2)
+    })
+
+    it("refuses an op whose body holds block markup, naming the op, in both modes", async () => {
+      const ops = [
+        {
+          title: "Batch markup op one, plain prose",
+          body: "A plain fact that lands only in continue mode.",
+          memory_type: "semantic",
+          workspace: "batch-markup"
+        },
+        {
+          title: "Batch markup op two, markup as prose",
+          body: "&lt;ul&gt;&lt;li&gt;An item.&lt;/li&gt;&lt;/ul&gt;",
+          memory_type: "semantic",
+          workspace: "batch-markup"
+        }
+      ]
+      const before = (await call("memory_status", {})).head_sha as string
+      const attempt = call("memory_write_batch", { ops })
+      await expect(attempt).rejects.toThrow(/^ERR_INVALID_FLAG: ops\[1\]: /)
+      await expect(attempt).rejects.toThrow(/`&lt;ul&gt;`.*article_html/s)
+      expect((await call("memory_status", {})).head_sha).toBe(before)
+
+      const batch = await call("memory_write_batch", { ops, continue_on_error: true })
+      const results = resultsOf(batch)
+      expect(results[0]?.ok).toBe(true)
+      expect(results[1]?.ok).toBe(false)
+      expect(results[1]?.skipped).toBe(false)
+      expect(results[1]?.code).toBe("ERR_INVALID_FLAG")
+      expect(results[1]?.error).toMatch(/article_html/)
+      expect(batch.summary).toMatchObject({ total: 2, written: 1, failed: 1 })
     })
 
     it("refuses an op whose markup violates the format, and never bypasses the render gate", async () => {
