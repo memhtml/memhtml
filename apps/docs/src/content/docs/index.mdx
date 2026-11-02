@@ -90,8 +90,9 @@ it.
 Curation runs as a session on a `curate/<date>` branch, never in the write path. `memhtml curate
 run` lets a model work on that branch within a budget, and `memhtml curate merge` lands the branch on
 `main` only after a gate checks that retrieval didn't get worse. When a new claim shares a frame key
-with a live claim and a lexical check finds they differ, a session commit keeps both live with a
-`contradicts` edge; choosing a winner is a one-way door that stays with a writer or a human.
+with a live claim it does not supersede, and a lexical check finds they differ, a session commit
+keeps both live with a `contradicts` edge; choosing a winner is a one-way door that stays with a
+writer or a human.
 
 Every command writes one JSON envelope to stdout and nothing else, sends its logs to stderr, and
 exits 0 for success, 2 for a usage error, and 1 for a runtime failure. `memhtml manifest` prints
