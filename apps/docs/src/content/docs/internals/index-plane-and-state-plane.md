@@ -5,7 +5,7 @@ description: What git cannot reproduce, why it is gitignored anyway, and the byt
 
 ## 1. What git cannot reproduce
 
-The system keeps two databases, and this page calls them planes. The index plane, `.memhtml/index.db`, holds memory rows computed from the git tree. The state plane, `.memhtml/state.db`, holds the usage statistics no file in the tree records: access counts, reinforcement counts, the outcome EWMA (a running average of positive and negative signals), and the corroboration counts for edges and entity merges.
+The system keeps two databases, and this page calls them planes. The index plane, `.memhtml/index.db`, holds memory rows computed from the git tree. The state plane, `.memhtml/state.db`, holds the usage statistics no file in the tree records: access counts, reinforcement counts, and the outcome EWMA (a running average of positive and negative signals). It also keeps the corroboration tables for edges and entity merges, which nothing has written since 0.16.
 
 The access count moves each time a caller opens or reinforces a memory, at most once per path every 900 seconds, and search and recall leave it alone (`apps/cli/src/operations.ts::readMemory`, `packages/index/src/reinforce.ts::reinforce`). A commit per access bump would be a commit per memory an agent opens.
 

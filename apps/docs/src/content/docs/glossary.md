@@ -135,7 +135,7 @@ A pointer to one version of the corpus plus an ordered log of its own operations
 
 ### State plane
 
-`.memhtml/state.db`: gitignored like the index, and not rebuildable from the tree. It holds access counts, reinforcement counts, the outcome EWMA, and edge and entity corroboration, and only its access rows have a committed copy. See [The index plane and the state plane](/internals/index-plane-and-state-plane/).
+`.memhtml/state.db`: gitignored like the index, and not rebuildable from the tree. It holds access counts, reinforcement counts, the outcome EWMA, and edge and entity corroboration tables that nothing has written since 0.16, and only its access rows have a committed copy. See [The index plane and the state plane](/internals/index-plane-and-state-plane/).
 
 ### Store policy
 
