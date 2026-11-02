@@ -40,7 +40,7 @@ telemetry ← apps/cli, apps/mcp
 
 TypeScript project references enforce the direction, and a second, test-inclusive typecheck configuration applies the same check to the test files.
 
-`apps/mcp` depends on `@memhtml/cli` instead of composing the service graph again, so there is one answer to which database, which git root, and which vector space (`apps/mcp/src/server.ts:13-18`).
+`apps/mcp` depends on `@memhtml/cli` instead of composing the service graph again, so there is one answer to which database, which git root, and which vector space (`apps/mcp/src/server.ts::layerServer`).
 
 ## 3. A test enforces purity
 
@@ -50,9 +50,9 @@ The same grep pins the storage engine. Both database planes are plain SQLite rea
 
 ## 4. One composition root, and the one cycle it breaks
 
-`AppLive` (`apps/cli/src/api-layer.ts:67-90`) wires every service. The design's one dependency cycle is broken there. The store needs a SQL lookup to answer whether some content already exists, and `@memhtml/store` contains no SQL, so the lookup arrives as a function passed in.
+`layerApp` (`apps/cli/src/api-layer.ts::layerApp`, `apps/cli/src/api-layer.ts::layerCore`) wires every service. The design's one dependency cycle is broken there. The store needs a SQL lookup to answer whether some content already exists, and `@memhtml/store` contains no SQL, so the lookup arrives as a function passed in.
 
-Two other functions arrive the same way and for the same reason. One is the `onMove` hook the store calls at the single place a path can change, which keeps the state plane's keys in step (`packages/store/src/store.ts:174-181`, `apps/cli/src/api-layer.ts:209`). The other is the session-link recorder. Each keeps a layer's dependency direction intact while letting the composition root state the wiring in one visible place.
+Two other functions arrive the same way and for the same reason. One is the `onMove` hook the store calls when it archives a path, which keeps the state plane's keys in step for that move (`packages/store/src/store.ts::MoveCallback`, `packages/store/src/store.ts::makeStore::stageArchive`, `apps/cli/src/api-layer.ts::layerStore`); a session commit moves paths without it (`packages/session/src/commit.ts::stage`). The other is the session-link recorder. Each keeps a layer's dependency direction intact while letting the composition root state the wiring in one visible place.
 
 ## 5. Many packages, one published package
 

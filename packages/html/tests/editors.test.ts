@@ -1,6 +1,15 @@
+import { ALL_RELS, REL_TOKEN_PREFIX, relTokenFor } from "@memhtml/contracts/edges"
 import { describe, expect, it } from "vitest"
 
-import { addLink, addMeta, readMeta, removeLink, removeMeta, setMeta } from "../src/editors.js"
+import {
+  addLink,
+  addMeta,
+  readLinks,
+  readMeta,
+  removeLink,
+  removeMeta,
+  setMeta
+} from "../src/editors.js"
 import { contentHash } from "../src/hash.js"
 import { META_ORDER } from "../src/vocabulary.js"
 import { FORMAT_MD_EXAMPLE, fileWith, MINIMAL_ARTICLE, parseOk } from "./fixtures.js"
@@ -193,6 +202,16 @@ describe("addLink", () => {
     expect(addLink(once, "supports", "/areas/x.html")).toBe(once)
   })
 
+  it("recognizes an edge spelled with the rel's underscores and adds no second line", () => {
+    const html = fileWith(MINIMAL_ARTICLE, '<link rel="memhtml-part_of" href="/a.html">')
+    expect(readLinks(html)).toEqual([{ rel: "part_of", href: "/a.html" }])
+    expect(addLink(html, "part_of", "/a.html")).toBe(html)
+    // Another href under the same rel is a new edge, written in the hyphenated spelling.
+    expect(addLink(html, "part_of", "/b.html")).toContain(
+      '<link rel="memhtml-part-of" href="/b.html">'
+    )
+  })
+
   it("adds a second href under the same rel", () => {
     const twice = addLink(addLink(FORMAT_MD_EXAMPLE, "supports", "/a.html"), "supports", "/b.html")
     expect(parseOk(twice).links.filter((link) => link.rel === "supports")).toHaveLength(2)
@@ -228,6 +247,27 @@ describe("removeLink", () => {
     expect(parseOk(after).links).toHaveLength(2)
   })
 
+  it("cuts an edge spelled with the rel's underscores, one whole line", () => {
+    const html = fileWith(MINIMAL_ARTICLE, '<link rel="memhtml-part_of" href="/a.html">')
+    const after = removeLink(html, "part_of", "/a.html")
+    expect(readLinks(after)).toEqual([])
+    expect(after).toBe(fileWith(MINIMAL_ARTICLE))
+  })
+
+  it("drops every spelling of a rel when no href is named, and no other rel", () => {
+    const html = fileWith(
+      MINIMAL_ARTICLE,
+      [
+        '<link rel="memhtml-relates-to" href="/a.html">',
+        '<link rel="memhtml-relates_to" href="/b.html">',
+        '<link rel="memhtml-supports" href="/c.html">'
+      ].join("\n")
+    )
+    expect(readLinks(removeLink(html, "relates_to"))).toEqual([
+      { rel: "supports", href: "/c.html" }
+    ])
+  })
+
   it("supports the integrity phase's repoint — remove then add", () => {
     const moved = addLink(
       removeLink(FORMAT_MD_EXAMPLE, "part_of", "/areas/arcs/reversibility-first.html"),
@@ -239,6 +279,20 @@ describe("removeLink", () => {
       { rel: "part_of", href: "/archive/2026/areas/arcs/reversibility-first.html" }
     ])
     expect(contentHash(moved)).toBe(contentHash(FORMAT_MD_EXAMPLE))
+  })
+})
+
+describe("addLink and removeLink read a rel token the way readLinks does", () => {
+  it("recognizes and cuts every rel in its hyphenated and in its underscored token", () => {
+    for (const rel of ALL_RELS) {
+      for (const token of new Set([relTokenFor(rel), `${REL_TOKEN_PREFIX}${rel}`])) {
+        const html = fileWith(MINIMAL_ARTICLE, `<link rel="${token}" href="/a.html">`)
+        // The reader accepts the token, so the edge is one a caller can name.
+        expect(readLinks(html), token).toEqual([{ rel, href: "/a.html" }])
+        expect(addLink(html, rel, "/a.html"), token).toBe(html)
+        expect(removeLink(html, rel, "/a.html"), token).toBe(fileWith(MINIMAL_ARTICLE))
+      }
+    }
   })
 })
 

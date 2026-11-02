@@ -16,6 +16,10 @@
     // which is authored — stays in scope.
     "/AGENTS.md",
     "/CHANGELOG.md",
+    // Written by `mise run mcp-doc` (gated by apps/mcp/tests/mcp-doc.test.ts). It quotes each
+    // tool description verbatim, and dprint would rewrite parts of that text: it shortens a
+    // three-backtick code span to one and collapses a double space.
+    "/docs/reference/mcp-tools.md",
     // The markdown plugin does not parse the JSX expressions MDX carries.
     "**/*.mdx",
     // Build outputs, mirrored from biome.json's excludes. dprint reads these

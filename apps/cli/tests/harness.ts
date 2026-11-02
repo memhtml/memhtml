@@ -11,7 +11,7 @@ import {
 import { ModelUnavailable } from "@memhtml/contracts/errors"
 import { EMBED_DIM, EMBED_WATERMARK } from "@memhtml/llm"
 import { makeFixtureRepo } from "@memhtml/store/testing"
-import { Effect, type Layer } from "effect"
+import { Effect, type Layer, Logger } from "effect"
 
 /**
  * The end-to-end harness: a real temp-dir git repo, real migrations against an on-disk SQLite
@@ -93,6 +93,20 @@ export const failingEmbedder = (): EmbedderShape => {
 
 /** An absent embedder: `MEMHTML_EMBED=off`, and every `index rebuild --no-embed`. */
 export const noEmbedder = (): EmbedderShape => ({ document: undefined, query: undefined })
+
+/** One entry a {@link recordingLogger} recorded. */
+export interface LogEntry {
+  readonly level: string
+  readonly message: string
+}
+
+/** A logger that records every entry into `entries` instead of printing it. */
+export const recordingLogger = (entries: Array<LogEntry>): Layer.Layer<never> =>
+  Logger.layer([
+    Logger.make((options) => {
+      entries.push({ level: options.logLevel, message: String(options.message) })
+    })
+  ])
 
 /** A scaffolded repo plus a `run` bound to it. */
 export interface Cli {

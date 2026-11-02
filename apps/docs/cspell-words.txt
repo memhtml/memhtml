@@ -41,6 +41,8 @@ formedness
 embedder
 dedup
 Dedup
+# `dedupable` in `packages/store/src/store.ts`: whether a write takes part in content-hash dedupe
+dedupable
 rels
 Rels
 RELS

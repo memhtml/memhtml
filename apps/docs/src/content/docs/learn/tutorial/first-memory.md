@@ -81,7 +81,7 @@ git -C "$MEMHTML_ROOT" log --oneline
 
 The claim is one sentence because the unit of a memory is the unit of a correction. `memhtml correct` writes the superseding file and archives the target in one commit, so an interrupted run can never leave two live memories contradicting each other. A file holding three facts cannot be corrected on one of them without rewriting the other two, and the diff then stops telling a reviewer which fact moved.
 
-No file is deleted. Eviction is a `git mv` into `archive/<YYYY>/` with the original path mirrored beneath, so `git log --follow` reads straight through a memory's whole life.
+No memory file is deleted. Archiving moves a file to `archive/<YYYY>/`, or `archive/<YYYY>.<n>/` when an earlier archiving holds that slot, with the original path mirrored beneath, so `git log --follow` reads straight through a memory's whole life.
 
 ## Add structure the indexer understands
 

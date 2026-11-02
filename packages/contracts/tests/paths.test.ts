@@ -3,10 +3,18 @@ import { describe, expect, it } from "vitest"
 
 import {
   ARCS_DIR,
+  activeRecordPathViolation,
+  archiveGenerationOf,
   archivePathFor,
+  archiveSlotFor,
   archiveYearOf,
+  compareArchivings,
+  DETECTION_DIGEST_CHARS,
+  DETECTION_PREFIX,
+  detectionKeyOf,
   INBOX_DIR,
   isArchivePath,
+  isDetectedTaskPath,
   isValidMemoryPath,
   memoryPathFor,
   memoryPathViolation,
@@ -135,6 +143,165 @@ describe("archive path algebra", () => {
   })
 })
 
+describe("archive generation slots", () => {
+  const generation = fc.integer({ min: 1, max: 10_000 })
+
+  it("reads a generation slot as the same year's archive of the same path", () => {
+    expect(originalPathFor("archive/2031.2/a/b.html")).toBe("a/b.html")
+    expect(archiveYearOf("archive/2031.2/a/b.html")).toBe(2031)
+    expect(isArchivePath("archive/2031.2/a/b.html")).toBe(true)
+    expect(archiveGenerationOf("archive/2031.2/a/b.html")).toBe(2)
+    expect(archiveGenerationOf("archive/2031/a/b.html")).toBe(1)
+    expect(archiveGenerationOf("areas/inbox/a.html")).toBeUndefined()
+  })
+
+  it("spells generation one as the bare year and every later one as <YYYY>.<n>", () => {
+    expect(archivePathFor("areas/inbox/a.html", 2031, 1)).toBe("archive/2031/areas/inbox/a.html")
+    expect(archivePathFor("areas/inbox/a.html", 2031, 2)).toBe("archive/2031.2/areas/inbox/a.html")
+    expect(archivePathFor("areas/inbox/a.html", 2031, 12)).toBe(
+      "archive/2031.12/areas/inbox/a.html"
+    )
+  })
+
+  it("inverts archivePathFor for every path, year, and generation", () => {
+    fc.assert(
+      fc.property(memoryPath, year, generation, (path, y, n) => {
+        const slot = archivePathFor(path, y, n)
+        expect(originalPathFor(slot)).toBe(path)
+        expect(archiveYearOf(slot)).toBe(y)
+        expect(archiveGenerationOf(slot)).toBe(n)
+        expect(paraBucketOf(slot)).toBe("archive")
+        expect(isValidMemoryPath(slot)).toBe(true)
+      }),
+      { numRuns: 1000 }
+    )
+  })
+
+  it("is injective over (path, year, generation), so no two archivings share a slot", () => {
+    fc.assert(
+      fc.property(
+        memoryPath,
+        memoryPath,
+        year,
+        year,
+        generation,
+        generation,
+        (a, b, ya, yb, na, nb) => {
+          if (a === b && ya === yb && na === nb) return
+          expect(archivePathFor(a, ya, na)).not.toBe(archivePathFor(b, yb, nb))
+        }
+      ),
+      { numRuns: 1000 }
+    )
+  })
+
+  it("gives each slot one spelling: a .0, .1, or zero-padded generation is not an archive path", () => {
+    for (const path of [
+      "archive/2031.0/a/b.html",
+      "archive/2031.1/a/b.html",
+      "archive/2031.02/a/b.html",
+      "archive/2031./a/b.html"
+    ]) {
+      expect(originalPathFor(path), path).toBeUndefined()
+      expect(archiveYearOf(path), path).toBeUndefined()
+      expect(archiveGenerationOf(path), path).toBeUndefined()
+    }
+  })
+
+  it("archiveSlotFor names the first generation of the year that no record holds", () => {
+    const path = "resources/acme-widget/b.html"
+    expect(archiveSlotFor(path, 2031, () => false)).toBe(
+      "archive/2031/resources/acme-widget/b.html"
+    )
+    const held = new Set([
+      "archive/2031/resources/acme-widget/b.html",
+      "archive/2031.2/resources/acme-widget/b.html"
+    ])
+    expect(archiveSlotFor(path, 2031, (slot) => held.has(slot))).toBe(
+      "archive/2031.3/resources/acme-widget/b.html"
+    )
+    // Another year's slots, and another path's, do not count against this one.
+    const elsewhere = new Set([
+      "archive/2030/resources/acme-widget/b.html",
+      "archive/2031/resources/acme-widget/c.html"
+    ])
+    expect(archiveSlotFor(path, 2031, (slot) => elsewhere.has(slot))).toBe(
+      "archive/2031/resources/acme-widget/b.html"
+    )
+  })
+
+  it("archiveSlotFor never answers a held slot, and always one that maps back to the path", () => {
+    fc.assert(
+      fc.property(memoryPath, year, fc.array(generation, { maxLength: 8 }), (path, y, taken) => {
+        const held = new Set(taken.map((n) => archivePathFor(path, y, n)))
+        const slot = archiveSlotFor(path, y, (candidate) => held.has(candidate))
+        expect(held.has(slot)).toBe(false)
+        expect(originalPathFor(slot)).toBe(path)
+        expect(archiveYearOf(slot)).toBe(y)
+      }),
+      { numRuns: 500 }
+    )
+  })
+
+  it("compareArchivings orders a path's archivings by year, then generation, as numbers", () => {
+    const path = "areas/inbox/a-fact.html"
+    // String order would put .10 before .9, and every generation before its own bare year.
+    expect(
+      compareArchivings(archivePathFor(path, 2031, 10), archivePathFor(path, 2031, 9))
+    ).toBeGreaterThan(0)
+    expect(
+      compareArchivings(archivePathFor(path, 2031, 2), archivePathFor(path, 2031, 1))
+    ).toBeGreaterThan(0)
+    expect(
+      compareArchivings(archivePathFor(path, 2031, 1), archivePathFor(path, 2030, 9))
+    ).toBeGreaterThan(0)
+    expect(compareArchivings(archivePathFor(path, 2031, 3), archivePathFor(path, 2031, 3))).toBe(0)
+    expect(compareArchivings(path, archivePathFor(path, 2031, 1))).toBeLessThan(0)
+    fc.assert(
+      fc.property(
+        memoryPath,
+        fc.array(fc.tuple(year, generation), { minLength: 1, maxLength: 12 }),
+        (p, slots) => {
+          const sorted = slots
+            .map(([y, n]) => archivePathFor(p, y, n))
+            .sort(compareArchivings)
+            .map((slot) => [archiveYearOf(slot) ?? 0, archiveGenerationOf(slot) ?? 0] as const)
+          const expected = [...slots].sort(([ya, na], [yb, nb]) => ya - yb || na - nb)
+          expect(sorted).toEqual(expected)
+        }
+      ),
+      { numRuns: 500 }
+    )
+  })
+})
+
+describe("detected task paths", () => {
+  const live = "areas/inbox/tasks/det-0123456789ab-confirm-one-subject.html"
+
+  it("reads the key from a live or an archived detected task's filename", () => {
+    expect(detectionKeyOf(live)).toBe("det-0123456789ab")
+    expect(isDetectedTaskPath(live)).toBe(true)
+    expect(isDetectedTaskPath(archivePathFor(live, 2031))).toBe(true)
+    expect(isDetectedTaskPath(`projects/acme-widget/tasks/det-${"f".repeat(12)}-x.html`)).toBe(true)
+  })
+
+  it("refuses the shapes task list's GLOB refuses", () => {
+    for (const path of [
+      "areas/inbox/tasks/t-confirm-one-subject.html",
+      "areas/inbox/tasks/det-0123456789xy-confirm.html",
+      "areas/inbox/tasks/det-0123456789a-confirm.html",
+      "areas/inbox/tasks/det-0123456789AB-confirm.html",
+      "areas/inbox/tasks/detonate-things.html",
+      "areas/inbox/det-0123456789ab/a-fact.html"
+    ]) {
+      expect(isDetectedTaskPath(path), path).toBe(false)
+      expect(detectionKeyOf(path), path).toBeUndefined()
+    }
+    expect(DETECTION_PREFIX).toBe("det-")
+    expect(DETECTION_DIGEST_CHARS).toBe(12)
+  })
+})
+
 describe("isValidMemoryPath", () => {
   it("accepts a bucket-rooted html path", () => {
     fc.assert(
@@ -200,6 +367,56 @@ const placement = fc.record<PlacementInput>({
   ),
   workspace: fc.oneof(fc.constant(""), segment),
   tags: fc.array(fc.oneof(fc.constant(""), fc.constant("People"), segment), { maxLength: 3 })
+})
+
+describe("activeRecordPathViolation", () => {
+  it("accepts a usable memory path outside the archive bucket", () => {
+    expect(activeRecordPathViolation("areas/inbox/a-fact.html")).toBeUndefined()
+    expect(activeRecordPathViolation("/resources/acme-widget/b.html")).toBeUndefined()
+  })
+
+  it("names an archive path as already archived, with or without a year partition", () => {
+    expect(activeRecordPathViolation("archive/2031/areas/inbox/a-fact.html")).toBe(
+      "already archived at archive/2031/areas/inbox/a-fact.html"
+    )
+    // The `<link href>` form normalizes first, so the reason names the git-tree path.
+    expect(activeRecordPathViolation("/archive/2031/areas/inbox/a-fact.html")).toBe(
+      "already archived at archive/2031/areas/inbox/a-fact.html"
+    )
+    expect(activeRecordPathViolation("archive/notes/a-fact.html")).toBe(
+      "already archived at archive/notes/a-fact.html"
+    )
+  })
+
+  it("refuses a `.` or `..` spelling, which the bucket test alone would read as outside archive/", () => {
+    // Both name an archived file once the filesystem resolves them, and `archivePathFor` would copy
+    // the spelling into the destination.
+    expect(activeRecordPathViolation("areas/../archive/2031/areas/inbox/a-fact.html")).toBe(
+      "path `areas/../archive/2031/areas/inbox/a-fact.html` is not a usable memory path: it carries a `..` path segment"
+    )
+  })
+
+  it("names a leading `.` or `..` segment rather than calling the path bucketless", () => {
+    // A path that visibly starts with a bucket after its `./` is not told it has none.
+    expect(activeRecordPathViolation("./projects/acme-widget/the-widget-pool-size.html")).toBe(
+      "path `./projects/acme-widget/the-widget-pool-size.html` is not a usable memory path: it starts with a `.` segment; drop the leading `./`"
+    )
+    expect(activeRecordPathViolation("./archive/2031/areas/inbox/a-fact.html")).toBe(
+      "path `./archive/2031/areas/inbox/a-fact.html` is not a usable memory path: it starts with a `.` segment; drop the leading `./`"
+    )
+    expect(activeRecordPathViolation("../archive/2031/areas/inbox/a-fact.html")).toBe(
+      "path `../archive/2031/areas/inbox/a-fact.html` is not a usable memory path: it starts with a `..` segment"
+    )
+  })
+
+  it("refuses every archive path the archive mapping produces", () => {
+    fc.assert(
+      fc.property(memoryPath, year, (path, y) => {
+        expect(activeRecordPathViolation(archivePathFor(path, y))).toMatch(/^already archived at /)
+      }),
+      { numRuns: 500 }
+    )
+  })
 })
 
 describe("placementFor", () => {
@@ -359,6 +576,29 @@ describe("memoryPathFor", () => {
         expect(isValidMemoryPath(memoryPathFor({ ...input, title, at }))).toBe(true)
       }),
       { numRuns: 1000 }
+    )
+  })
+
+  /**
+   * A folder name is recomputed from the workspace or tag on every write, so it keeps the plain cut
+   * at 80 characters and a long workspace stays one folder. Only the filename stem, computed once
+   * when a record is minted, takes the word-boundary cut.
+   */
+  it("keeps a long workspace or tag in one folder and cuts only the filename at a word", () => {
+    const long =
+      "Acme widget release engineering, packaging, signing and staged rollout coordination workstream"
+    const folder =
+      "acme-widget-release-engineering-packaging-signing-and-staged-rollout-coordinatio"
+    const title =
+      "The acme-widget release checklist covers signing, packaging, smoke tests, staged rollout and rollback drills for every region"
+    const stem = "the-acme-widget-release-checklist-covers-signing-packaging-smoke-tests-staged"
+    expect(placementFor({ memoryType: "semantic", workspace: long })).toBe(`projects/${folder}`)
+    expect(placementFor({ memoryType: "task", workspace: long })).toBe(
+      `projects/${folder}/${TASKS_SUBDIR}`
+    )
+    expect(placementFor({ memoryType: "semantic", tags: [long] })).toBe(`resources/${folder}`)
+    expect(memoryPathFor({ memoryType: "semantic", workspace: long, title, at })).toBe(
+      `projects/${folder}/${stem}.html`
     )
   })
 })

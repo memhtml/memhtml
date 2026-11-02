@@ -1,9 +1,10 @@
 import { readdir, readFile } from "node:fs/promises"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 
 import { describe, expect, it } from "vitest"
 
-const DIST = new URL("../dist", import.meta.url).pathname
+const DIST = fileURLToPath(new URL("../dist", import.meta.url))
 
 /**
  * Every module specifier that survives compilation, per emitted file. A type-only import is

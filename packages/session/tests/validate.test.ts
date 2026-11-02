@@ -1,4 +1,5 @@
-import type { OverlayOp } from "@memhtml/contracts"
+import { archivePathFor, type OverlayOp } from "@memhtml/contracts"
+import { addLink, renderTemplate } from "@memhtml/html"
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
 
@@ -10,7 +11,7 @@ import {
   validateOps,
   writeBarReasons
 } from "../src/validate.js"
-import { mapHead, memory, recordFrom, STRICT_BAR } from "./helpers.js"
+import { FIXTURE_ENTITY, mapHead, memory, recordFrom, STRICT_BAR } from "./helpers.js"
 
 /**
  * The mechanical checks, over a `Map`-backed head. Pure, so no repo.
@@ -27,8 +28,18 @@ import { mapHead, memory, recordFrom, STRICT_BAR } from "./helpers.js"
  * - format: skip `checkMemory` -> "collects format violations".
  * - archive hash: drop the `contentHash(op.html) !== sourceHash` reason -> "refuses an archive op
  *   whose article is not the source's".
- * - archive slot twice: drop the `archiveDestinations.has(...)` reason -> "archives over an earlier
- *   archived copy of its own path, and writes one slot once per batch" (the doubled archive passes).
+ * - archive slot twice: drop the `archiveDestinations.has(...)` reason -> "never archives over a
+ *   held slot: it names the free generation, which it then takes" (the doubled archive passes).
+ * - archive slot held: drop the `view.get(to)` reason -> the same case and "refuses an archive onto
+ *   a slot another record's history holds" (both archives onto a held slot pass).
+ * - archive slot gap: drop the `to !== free` reason -> "takes the year's first free generation, and
+ *   archives one source once per batch" (the `.2` past a free bare year passes).
+ * - archive source twice: drop the `archived.has(...)` source reason -> the same case (the second
+ *   archive of one source, into the next slot, passes).
+ * - archive source path: drop the `activeRecordPathViolation(op.path)` reason -> "refuses an archive
+ *   op whose source is under archive/, even one put earlier in the batch" (the pair passes).
+ * - archive slot for a refused source: drop the `sourcePath === undefined` guard -> "names no free
+ *   slot for a source it refuses as already archived" (a held-slot reason names a nested slot).
  * - link target: drop the `view.get(target) === undefined` check -> "a link must point at a record
  *   in the head or in the batch" (the missing target passes).
  * - unlink edge: drop the `!edgesOf(op.path).has(...)` reason -> "an unlink must name an edge the
@@ -75,6 +86,15 @@ import { mapHead, memory, recordFrom, STRICT_BAR } from "./helpers.js"
  *   comes off with no violation).
  * - unlabel anchor, archives: the `archived.has(...)` exemption removed -> the same case (an
  *   unlabel followed by an archive of its record is refused).
+ * - archive inbound (2026-10-26): the closing `danglingAt(archive, "archived")` loop dropped -> "an
+ *   archive that leaves a live edge to its path behind is refused, naming the holder" (the bare
+ *   archive passes).
+ * - archive scope (2026-10-26): the `verb === "archived" && isReservedPath(...)` skip dropped -> "an
+ *   archive leaves the edge of a holder its scope may not write, and a move does not" (the
+ *   session-scope archive is refused on the arc).
+ * - archive of a batch put (2026-10-26): the `verb === "moved"` guard dropped from the put and
+ *   move-in exemption -> "an archive of a record the batch put is held to the edges the batch aimed
+ *   at it" (the dangling link passes).
  */
 
 const CAPITAL = memory("Capital", "The capital of India is New Delhi.")
@@ -230,6 +250,96 @@ describe("validateOps", () => {
     }
   })
 
+  it("refuses a put whose <mark> or <p> text holds an escaped block tag, and takes one in code", async () => {
+    /**
+     * The prose path escapes its text, so markup a writer meant as `article_html` lands as the
+     * characters `&lt;p&gt;` inside the claim's `<mark>`. The doors refuse that line; this holds a
+     * `session exec` script's file, and any other put, to the same rule.
+     */
+    const view = await head()
+    const [escaped] = validateOps(view, [
+      put("areas/inbox/markup.html", memory("Markup", "<p>One.</p><p>Two.</p>"))
+    ])
+    expect(escaped?.kind).toBe("format")
+    if (escaped?.kind === "format") {
+      expect(escaped.path).toBe("areas/inbox/markup.html")
+      expect(escaped.reasons).toHaveLength(1)
+      expect(escaped.reasons[0]).toContain("`<p>`")
+      expect(escaped.reasons[0]).toContain("article_html")
+    }
+    const [inBody] = validateOps(view, [
+      put(
+        "areas/inbox/list.html",
+        memory("List", "A list follows.", { body: ["Its items are &lt;li&gt; rows."] })
+      )
+    ])
+    expect(inBody?.kind === "format" && inBody.reasons[0]).toContain("`&lt;li&gt;`")
+
+    // A tag the record discusses, in backticks (the prose path's own spelling) or in <code>.
+    expect(
+      validateOps(view, [
+        put("areas/inbox/tags.html", memory("Tags", "The `<p>` element holds one paragraph.")),
+        put(
+          "areas/inbox/code.html",
+          renderTemplate({
+            title: "Code",
+            claim: "",
+            articleHtml: "<p><mark>The <code>&lt;ul&gt;</code> element holds a list.</mark></p>",
+            entities: [FIXTURE_ENTITY],
+            memoryType: "semantic",
+            at: "2031-01-01T00:00:00Z"
+          })
+        )
+      ])
+    ).toEqual([])
+  })
+
+  it("reads a code element as a space and lowercase names only, as the doors do", async () => {
+    const view = await head()
+    const authored = (path: string, articleHtml: string): OverlayOp =>
+      put(
+        path,
+        renderTemplate({
+          title: "Authored",
+          claim: "",
+          articleHtml,
+          entities: [FIXTURE_ENTITY],
+          memoryType: "semantic",
+          at: "2031-01-01T00:00:00Z"
+        })
+      )
+    expect(
+      validateOps(view, [
+        authored(
+          "areas/inbox/tab.html",
+          "<p><mark>Type a &lt;<code>Tab</code>p&gt; to indent.</mark></p>"
+        ),
+        authored(
+          "areas/inbox/table.html",
+          "<p><mark>A &lt;Table&gt; component renders rows.</mark></p>"
+        ),
+        authored("areas/inbox/generic.html", "<p><mark>It returns List&lt;Article&gt;.</mark></p>")
+      ])
+    ).toEqual([])
+  })
+
+  it("holds only a put to the block-tag rule, so an existing record carrying one still archives", async () => {
+    const legacy = memory("Legacy", "<p>Old.</p>")
+    const view = await mapHead("0".repeat(40), [
+      await recordFrom("areas/inbox/legacy.html", legacy)
+    ])
+    expect(
+      validateOps(view, [
+        {
+          kind: "archive",
+          path: "areas/inbox/legacy.html",
+          to: "archive/2031/areas/inbox/legacy.html",
+          html: legacy
+        }
+      ])
+    ).toEqual([])
+  })
+
   it("checks an archive op's source, destination shape, and a link op's source and rel", async () => {
     const view = await head()
     const archive: OverlayOp = {
@@ -243,7 +353,7 @@ describe("validateOps", () => {
       {
         kind: "format",
         path: "areas/inbox/capital.html",
-        reasons: ["archive destination is not archive/<YYYY>/<original path>"]
+        reasons: ["archive destination is not archive/<YYYY>[.<n>]/<original path>"]
       }
     ])
     expect(
@@ -272,28 +382,165 @@ describe("validateOps", () => {
     ])
   })
 
-  it("archives over an earlier archived copy of its own path, and writes one slot once per batch", async () => {
-    // A record archived once, recreated at its path, and archived again (the 64 people stubs on
-    // the live store, 2026-09-28): the destination holds the earlier copy, which the new one replaces.
+  it("refuses an archive op whose source is under archive/, even one put earlier in the batch", () => {
+    // A put under archive/ is a record the index reads as archived, and the batch's own put makes the
+    // active-record check find it, so the source's path is judged on its own. Archived again, it would
+    // land under archive/<YYYY>/archive/.
+    const html = memory("A widget note", "The widget pool holds eight.")
+    const path = "archive/2031/areas/inbox/a-widget-note.html"
+    const archive: OverlayOp = { kind: "archive", path, to: `archive/2031/${path}`, html }
+    expect(validateOps(mapHead("0".repeat(40), []), [put(path, html), archive])).toEqual([
+      { kind: "format", path, reasons: [`archive source: already archived at ${path}`] }
+    ])
+  })
+
+  it("names no free slot for a source it refuses as already archived", async () => {
+    // The nested slot is held, yet the source's refusal is the whole answer: a free slot for it
+    // would be `archive/2031.2/archive/...`, a second archive of an archived record.
+    const html = memory("A widget note", "The widget pool holds eight.")
+    const path = "archive/2031/areas/inbox/a-widget-note.html"
+    const nested = `archive/2031/${path}`
+    const view = mapHead("0".repeat(40), [
+      await recordFrom(nested, memory("A gadget note", "The gadget pool holds four."))
+    ])
+    const archive: OverlayOp = { kind: "archive", path, to: nested, html }
+    expect(validateOps(view, [put(path, html), archive])).toEqual([
+      { kind: "format", path, reasons: [`archive source: already archived at ${path}`] }
+    ])
+  })
+
+  it("never archives over a held slot: it names the free generation, which it then takes", async () => {
+    // A record archived once, recreated at its path, and archived again. The earlier copy keeps its
+    // slot, and the reason names the next generation of the same year.
+    const PERSON = memory("Ada Example", "Ada Example maintains the acme widget build.", {
+      entities: ["person:ada-example"]
+    })
     const view = await mapHead("0".repeat(40), [
-      await recordFrom("areas/inbox/capital.html", CAPITAL),
+      await recordFrom("resources/people/p.html", PERSON),
       await recordFrom(
-        "archive/2026/areas/inbox/capital.html",
-        memory("Capital", "The capital of india is new delhi.")
+        "archive/2031/resources/people/p.html",
+        memory("Ada Example", "Ada Example joined the acme widget project.", {
+          entities: ["person:ada-example"]
+        })
+      ),
+      await recordFrom(
+        "archive/2031/resources/people/q.html",
+        memory("Grace Example", "Grace Example reviews the acme widget releases.", {
+          entities: ["person:grace-example"]
+        })
       )
     ])
-    const archive: OverlayOp = {
+    const archive = (to: string): OverlayOp => ({
+      kind: "archive",
+      path: "resources/people/p.html",
+      to,
+      html: PERSON
+    })
+    const curate = { scope: "curate" } as const
+    expect(validateOps(view, [archive("archive/2031/resources/people/p.html")], curate)).toEqual([
+      {
+        kind: "format",
+        path: "resources/people/p.html",
+        reasons: [
+          "archive destination archive/2031/resources/people/p.html already holds a record; the free slot is archive/2031.2/resources/people/p.html"
+        ]
+      }
+    ])
+    expect(validateOps(view, [archive("archive/2031.2/resources/people/p.html")], curate)).toEqual(
+      []
+    )
+    // One slot is still written once per batch.
+    const twice = archive("archive/2031.2/resources/people/p.html")
+    expect(validateOps(view, [twice, twice], curate)).toEqual([
+      {
+        kind: "format",
+        path: "resources/people/p.html",
+        reasons: [
+          "archive source was archived earlier in this batch",
+          "archive destination is written twice in this batch"
+        ]
+      }
+    ])
+    // A held destination that does not mirror its source names the source's own free slot.
+    expect(validateOps(view, [archive("archive/2031/resources/people/q.html")], curate)).toEqual([
+      {
+        kind: "format",
+        path: "resources/people/p.html",
+        reasons: [
+          "archive destination is not archive/<YYYY>[.<n>]/<original path>",
+          "archive destination archive/2031/resources/people/q.html already holds a record; the free slot is archive/2031.2/resources/people/p.html"
+        ]
+      }
+    ])
+  })
+
+  it("takes the year's first free generation, and archives one source once per batch", async () => {
+    const view = await head()
+    const archive = (to: string): OverlayOp => ({
       kind: "archive",
       path: "areas/inbox/capital.html",
-      to: "archive/2026/areas/inbox/capital.html",
+      to,
       html: CAPITAL
-    }
-    expect(validateOps(view, [archive])).toEqual([])
-    expect(validateOps(view, [archive, archive])).toEqual([
+    })
+    // The bare year is free, so a later generation would leave a gap no reader looks past.
+    expect(validateOps(view, [archive("archive/2031.2/areas/inbox/capital.html")])).toEqual([
       {
         kind: "format",
         path: "areas/inbox/capital.html",
-        reasons: ["archive destination is written twice in this batch"]
+        reasons: [
+          "archive destination archive/2031.2/areas/inbox/capital.html skips the free slot archive/2031/areas/inbox/capital.html"
+        ]
+      }
+    ])
+    // Two archives of one source, each into a slot free when it runs, would write two copies.
+    expect(
+      validateOps(view, [
+        archive("archive/2031/areas/inbox/capital.html"),
+        archive("archive/2031.2/areas/inbox/capital.html")
+      ])
+    ).toEqual([
+      {
+        kind: "format",
+        path: "areas/inbox/capital.html",
+        reasons: ["archive source was archived earlier in this batch"]
+      }
+    ])
+  })
+
+  it("refuses an archive onto a slot another record's history holds, naming the held slot", async () => {
+    // The slot mirrors the source's path, yet the record in it is a different one: its article is
+    // not the source's. An archive there would replace that record's only live copy.
+    const LIVE = memory("Widget owner", "Ada Example owns the acme widget release.", {
+      entities: ["person:ada-example"]
+    })
+    const view = await mapHead("0".repeat(40), [
+      await recordFrom("resources/people/x-2.html", LIVE),
+      await recordFrom(
+        "archive/2031/resources/people/x-2.html",
+        memory("Gadget owner", "Grace Example owned the acme gadget pilot.", {
+          entities: ["person:grace-example"]
+        })
+      )
+    ])
+    const violations = validateOps(
+      view,
+      [
+        {
+          kind: "archive",
+          path: "resources/people/x-2.html",
+          to: "archive/2031/resources/people/x-2.html",
+          html: LIVE
+        }
+      ],
+      { scope: "curate" }
+    )
+    expect(violations).toEqual([
+      {
+        kind: "format",
+        path: "resources/people/x-2.html",
+        reasons: [
+          "archive destination archive/2031/resources/people/x-2.html already holds a record; the free slot is archive/2031.2/resources/people/x-2.html"
+        ]
       }
     ])
   })
@@ -340,6 +587,150 @@ describe("validateOps", () => {
     }
     expect(validateOps(view, [archive, supersedes])).toEqual([])
     expect(validateOps(view, [supersedes, archive])).toEqual([])
+  })
+
+  it("an archive that leaves a live edge to its path behind is refused, naming the holder", async () => {
+    const retired = "resources/acme-widget/b.html"
+    const successor = "resources/acme-widget/a.html"
+    const slot = archivePathFor(retired, 2031)
+    const retiredHtml = memory("Widget batch size", "The acme widget ships in batches of twelve.")
+    const view = mapHead("0".repeat(40), [
+      await recordFrom(retired, retiredHtml),
+      await recordFrom(
+        successor,
+        addLink(
+          memory("Widget batch size, revised", "The acme widget ships in batches of twenty."),
+          "supersedes",
+          `/${retired}`
+        )
+      ),
+      await recordFrom(
+        archivePathFor("resources/acme-widget/c.html", 2030),
+        addLink(memory("Old widget note", "An older widget fact."), "relates_to", `/${retired}`)
+      )
+    ])
+    const archive: OverlayOp = { kind: "archive", path: retired, to: slot, html: retiredHtml }
+    const dangling = (holder: string, rel: string) => ({
+      kind: "format",
+      path: retired,
+      reasons: [
+        `archived to ${slot}, but ${holder} still carries ${rel} -> /${retired}: repoint it with an unlink of that edge and a link of the same rel to /${slot} in the same batch`
+      ]
+    })
+    // The bare archive: the live successor's edge would dangle. The archived holder keeps its edge
+    // as history and is never asked to move it.
+    expect(validateOps(view, [archive])).toEqual([dangling(successor, "supersedes")])
+    // The repoint may come before or after the archive in the order.
+    const repoint: ReadonlyArray<OverlayOp> = [
+      { kind: "unlink", path: successor, rel: "supersedes", href: `/${retired}` },
+      { kind: "link", path: successor, rel: "supersedes", href: `/${slot}` }
+    ]
+    expect(validateOps(view, [...repoint, archive])).toEqual([])
+    expect(validateOps(view, [archive, ...repoint])).toEqual([])
+    // A holder the batch archives too keeps the edge in its archived copy.
+    const both: OverlayOp = {
+      kind: "archive",
+      path: successor,
+      to: archivePathFor(successor, 2031),
+      html: view.get(successor)?.html ?? ""
+    }
+    expect(validateOps(view, [both, archive])).toEqual([])
+    // An edge the batch's own put or link aims at the archived path dangles the same way.
+    const fresh = "resources/acme-widget/e.html"
+    const aimed = addLink(
+      memory("Widget crate", "A widget crate holds four batches."),
+      "relates_to",
+      `/${retired}`
+    )
+    expect(validateOps(view, [...repoint, put(fresh, aimed), archive])).toEqual([
+      dangling(fresh, "relates_to")
+    ])
+    expect(
+      validateOps(view, [
+        ...repoint,
+        { kind: "link", path: successor, rel: "relates_to", href: `/${retired}` },
+        archive
+      ])
+    ).toEqual([dangling(successor, "relates_to")])
+  })
+
+  it("an archive of a record the batch put is held to the edges the batch aimed at it", async () => {
+    const holder = "resources/acme-widget/a.html"
+    const fresh = "resources/acme-widget/f.html"
+    const slot = archivePathFor(fresh, 2031)
+    const freshHtml = memory("Widget pallet load", "A widget pallet carries six crates.")
+    const view = mapHead("0".repeat(40), [
+      await recordFrom(holder, memory("Widget pallet note", "Widget pallets are wrapped twice."))
+    ])
+    const archive: OverlayOp = { kind: "archive", path: fresh, to: slot, html: freshHtml }
+    // The put is the record the archive moves, so the path ends empty and the edge to it dangles.
+    expect(
+      validateOps(view, [
+        put(fresh, freshHtml),
+        { kind: "link", path: holder, rel: "relates_to", href: `/${fresh}` },
+        archive
+      ])
+    ).toEqual([
+      {
+        kind: "format",
+        path: fresh,
+        reasons: [
+          `archived to ${slot}, but ${holder} still carries relates_to -> /${fresh}: repoint it with an unlink of that edge and a link of the same rel to /${slot} in the same batch`
+        ]
+      }
+    ])
+    // Linked to the slot instead, the batch passes.
+    expect(
+      validateOps(view, [
+        put(fresh, freshHtml),
+        { kind: "link", path: holder, rel: "relates_to", href: `/${slot}` },
+        archive
+      ])
+    ).toEqual([])
+  })
+
+  it("an archive leaves the edge of a holder its scope may not write, and a move does not", async () => {
+    const retired = "resources/acme-widget/b.html"
+    const slot = archivePathFor(retired, 2031)
+    const arc = "areas/arcs/acme-widget-arc.html"
+    const retiredHtml = memory("Widget batch size", "The acme widget ships in batches of twelve.")
+    const view = mapHead("0".repeat(40), [
+      await recordFrom(retired, retiredHtml),
+      await recordFrom(
+        arc,
+        addLink(
+          memory("Widget arc", "Four widget facts show how batches grew."),
+          "part_of",
+          `/${retired}`
+        )
+      )
+    ])
+    const archive: OverlayOp = { kind: "archive", path: retired, to: slot, html: retiredHtml }
+    // Under `session` no batch can edit the arc, so the archive leaves its edge to the curator.
+    expect(validateOps(view, [archive])).toEqual([])
+    // Under `curate` the arc is writable, and its edge is held like any other.
+    expect(validateOps(view, [archive], { scope: "curate" })).toEqual([
+      {
+        kind: "format",
+        path: retired,
+        reasons: [
+          `archived to ${slot}, but ${arc} still carries part_of -> /${retired}: repoint it with an unlink of that edge and a link of the same rel to /${slot} in the same batch`
+        ]
+      }
+    ])
+    // A move is placement, and is held to the arc under either scope.
+    const moved = "resources/acme-gadget/b.html"
+    expect(
+      validateOps(view, [{ kind: "move", path: retired, to: moved, html: retiredHtml }])
+    ).toEqual([
+      {
+        kind: "format",
+        path: retired,
+        reasons: [
+          `moved to ${moved}, but ${arc} still carries part_of -> /${retired}: repoint it with an unlink of that edge and a link of the same rel to /${moved} in the same batch`
+        ]
+      }
+    ])
   })
 
   it("refuses an archive op whose article is not the source's, and takes one whose head differs", async () => {

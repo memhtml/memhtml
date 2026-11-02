@@ -1,4 +1,4 @@
-import type { HeadView } from "@memhtml/contracts"
+import { archiveSlotFor, type HeadView } from "@memhtml/contracts"
 
 import type { CollapseCluster, CollapsePlan, Ruling } from "./planner/types.js"
 
@@ -19,6 +19,12 @@ import type { CollapseCluster, CollapsePlan, Ruling } from "./planner/types.js"
 
 export interface CollapseBriefingMember {
   readonly path: string
+  /**
+   * The slot the member's archive takes: the archive year's first free generation in the view, so
+   * a `supersedes` link names the member's own archived copy and never an older record holding the
+   * bare-year slot.
+   */
+  readonly archiveTo: string
   readonly claim: string
   readonly memoryType: string
   readonly tags: ReadonlyArray<string>
@@ -83,6 +89,11 @@ export const collapseBriefingOf = (input: RenderCollapseInput): CollapseBriefing
     const planned = input.cluster.members.find((member) => member.path === path)
     return {
       path,
+      archiveTo: archiveSlotFor(
+        path,
+        Number(input.plan.archiveYear),
+        (slot) => input.view.get(slot) !== undefined
+      ),
       claim: record?.claim ?? planned?.claim ?? "",
       memoryType: record?.memoryType ?? planned?.memoryType ?? input.cluster.memoryType,
       tags: record?.tags ?? [],
@@ -136,7 +147,7 @@ export const renderCollapseBriefing = (input: RenderCollapseInput): string => {
     )
   } else {
     lines.push(
-      `Write one \`<link rel="memhtml-supersedes" href="/archive/${briefing.archiveYear}/<member path>">\` per member in the canonical's head, then propose an archive op for every member, naming only its source path.`,
+      `Write one \`<link rel="memhtml-supersedes" href="/<member archiveTo>">\` per member in the canonical's head, where \`archiveTo\` is the member's archive slot in the block below (\`archive/${briefing.archiveYear}/<member path>\`, or a later generation such as \`archive/${briefing.archiveYear}.2/<member path>\` when an older record holds that one), then propose an archive op for every member, naming only its source path.`,
       ""
     )
   }

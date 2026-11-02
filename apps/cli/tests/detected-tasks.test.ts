@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
+import { fileURLToPath } from "node:url"
 
 import { describe, expect, it } from "vitest"
 
@@ -51,7 +52,7 @@ describe("the detection key's delimiter", () => {
      * greppable, and this is the assertion that stops the byte coming back.
      */
     const source = await readFile(
-      new URL("../src/detected-tasks.ts", import.meta.url).pathname,
+      fileURLToPath(new URL("../src/detected-tasks.ts", import.meta.url)),
       "utf8"
     )
     expect(source.includes(String.fromCharCode(0))).toBe(false)

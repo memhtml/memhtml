@@ -1,6 +1,7 @@
 import { appendFile, chmod, mkdir, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
@@ -10,7 +11,7 @@ import { extractFromText } from "../src/extract.js"
 import { mergePrompts, mergeTailExtract, scanTraceRoot, type WatermarkReader } from "../src/scan.js"
 import type { Watermark } from "../src/watermark.js"
 
-const FIXTURE_ROOT = new URL("./fixtures", import.meta.url).pathname
+const FIXTURE_ROOT = fileURLToPath(new URL("./fixtures", import.meta.url))
 const ALPHA = "11111111-1111-4111-8111-111111111111"
 
 /** Fails the test on an unexpected `StorageFailure`, which is what a rejected promise does. */
@@ -33,9 +34,13 @@ const FILE = { filePath: "/fixtures/projects/-tmp-x/s1.jsonl", slug: "-tmp-x" }
  * opens a mode-000 file. Under root the denial never happens, so the read SUCCEEDS and every
  * assertion about a failed read would be describing the wrong thing. Skipped there with the reason
  * on the record, because a green run that measured nothing is worse than a visibly absent one.
+ * win32 is the same case: it stores the mode bits but does not enforce them for the file's owner.
  */
-const RUNNING_AS_ROOT = process.getuid?.() === 0
-const CHMOD_INEFFECTIVE = "chmod 000 does not deny a read to uid 0, so the denial cannot be staged"
+const CHMOD_CANNOT_DENY = process.getuid?.() === 0 || process.platform === "win32"
+const CHMOD_INEFFECTIVE =
+  process.platform === "win32"
+    ? "win32 stores the POSIX mode bits but does not enforce them for the owner, so the denial cannot be staged"
+    : "chmod 000 does not deny a read to uid 0, so the denial cannot be staged"
 
 const userLine = (uuid: string, promptId: string, at: string, content: unknown) =>
   JSON.stringify({
@@ -169,7 +174,7 @@ describe("scanTraceRoot", () => {
   })
 
   it("holds the stored watermark through a failed tail so the next run indexes the append", async (ctx) => {
-    ctx.skip(RUNNING_AS_ROOT, CHMOD_INEFFECTIVE)
+    ctx.skip(CHMOD_CANNOT_DENY, CHMOD_INEFFECTIVE)
     const root = await mkdtempRoot()
     const slugDir = join(root, PROJECTS_DIR, "-tmp-fail")
     await mkdir(slugDir, { recursive: true })
@@ -213,7 +218,7 @@ describe("scanTraceRoot", () => {
   })
 
   it("retries a file whose first-ever read failed instead of skipping it forever", async (ctx) => {
-    ctx.skip(RUNNING_AS_ROOT, CHMOD_INEFFECTIVE)
+    ctx.skip(CHMOD_CANNOT_DENY, CHMOD_INEFFECTIVE)
     const root = await mkdtempRoot()
     const slugDir = join(root, PROJECTS_DIR, "-tmp-firstfail")
     await mkdir(slugDir, { recursive: true })

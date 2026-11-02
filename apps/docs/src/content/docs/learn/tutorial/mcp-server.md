@@ -16,7 +16,7 @@ memhtml serve mcp
 
 Nothing appears on stdout, and that is correct: stdout is the JSON-RPC stream. Anything else written there would corrupt the protocol, so every log goes to stderr. The server then waits for a client to speak first.
 
-`memhtml serve mcp` holds no database of its own. It spawns the `memhtml-mcp` entry point with inherited stdio and waits (`apps/cli/src/serve.ts:72`), so the supervisor holds no handle that could conflict with the child. Interrupting the supervisor kills the child, so Ctrl-C never leaves an orphaned server holding the database open (`apps/cli/src/serve.ts:97`). On exit you get the one envelope the contract promises:
+`memhtml serve mcp` holds no database of its own. It spawns the `memhtml-mcp` entry point with inherited stdio and waits (`apps/cli/src/serve.ts::serveMcp`), so the supervisor holds no handle that could conflict with the child. Interrupting the supervisor kills the child, so Ctrl-C never leaves an orphaned server holding the database open (`apps/cli/src/serve.ts::serveMcp`). On exit you get the one envelope the contract promises:
 
 ```json
 {
@@ -52,7 +52,7 @@ The handshake answers:
 {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"logging":{},"completions":{},"resources":{"subscribe":true,"listChanged":true},"tools":{"listChanged":true}},"serverInfo":{"name":"memhtml","version":"0.2.2"}}}
 ```
 
-`2025-06-18` is the protocol revision this server speaks, and it is the only adapter shipped, so a client negotiating a different revision will not connect. `serverInfo.version` is the released package version, so expect it to read higher than this transcript.
+`2025-06-18` is the protocol revision this server speaks, and the only one it configures, so a client that cannot speak `2025-06-18` will not connect. `serverInfo.version` is the released package version, so expect it to read higher than this transcript.
 
 `tools/list` publishes the tools in this order:
 

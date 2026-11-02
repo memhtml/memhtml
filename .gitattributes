@@ -1,0 +1,4 @@
+# Text files check out with LF on every platform, including a Windows clone whose global
+# `core.autocrlf=true` would otherwise hand biome and dprint CRLF bytes and fail `lint` and
+# `lint:md` for no change of the author's. `text=auto` leaves binary files byte-exact.
+* text=auto eol=lf

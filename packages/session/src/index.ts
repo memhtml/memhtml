@@ -13,7 +13,9 @@ export {
   commitSubject,
   type Landing,
   landOnRef,
-  type PlumbingFactory
+  type PlumbingFactory,
+  RESTATEMENT_REASONS,
+  type RestatementReason
 } from "./commit.js"
 export { GitFailure } from "./errors.js"
 export {
@@ -22,7 +24,7 @@ export {
   ensureExcludedQuietly,
   HEAD_SOCKET
 } from "./exclude.js"
-export { withRepoints } from "./moves.js"
+export { afterDroppedVacates, missingRepoints, type VacateFollower, withRepoints } from "./moves.js"
 export {
   GIT_REPO_SELECTION_ENV,
   gitPathOf,

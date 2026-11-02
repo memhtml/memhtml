@@ -3,6 +3,7 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 
 import { renderTemplate } from "@memhtml/html"
+import { snapshotPathFor } from "@memhtml/snapshot"
 import { makeGit } from "@memhtml/store"
 import { configureIdentity } from "@memhtml/store/testing"
 import { Effect } from "effect"
@@ -17,11 +18,12 @@ import { runBuilt } from "./spawned.js"
  * The held head a collapse reads (`makeHeadCache` in `curate-collapse.ts`) and the curator's tools
  * (`bindTools` in `curate-run.ts`) used to run their effects on a runtime of their own, outside the
  * command's stderr logger, so a line one of them logged reached stdout ahead of the envelope. The
- * case that showed it: a second collapse on another `curate/` ref finds the first one's snapshot,
- * which is no ancestor of `main`, and the snapshot lookup logs `git merge-base exited 1`.
+ * case that shows it: the second collapse's held head finds, beside the first one's snapshot, a
+ * snapshot of a commit the repository does not have (one gc'd with its branch), and the snapshot
+ * lookup passes over it with git's `merge-base exited 128` line and a warning.
  *
- * (Mutation 2026-10-18: `makeHeadCache` loading through `Effect.runPromise` again, as before the
- * fix -> red: the second collapse's stdout opens with the `git merge-base` line and does not parse.)
+ * (Mutation: `makeHeadCache` loading through `Effect.runPromise` -> red: the second collapse's
+ * stdout opens with the `git merge-base` line and does not parse.)
  */
 
 const AT = "2026-09-20T12:00:00Z"
@@ -88,6 +90,10 @@ describe("curate collapse over the built binary", () => {
     const collapse = (ref: string) =>
       runBuilt(root, ["curate", "collapse", "--model", "fake", "--ref", ref])
     const first = await collapse("curate/collapse-one")
+    // Only its name is read before the lookup passes over it, so the bytes do not matter.
+    const gone = snapshotPathFor(root, "f".repeat(40))
+    await mkdir(dirname(gone), { recursive: true })
+    await writeFile(gone, "a snapshot of a commit this repository does not have", "utf8")
     const second = await collapse("curate/collapse-two")
     for (const result of [first, second]) {
       expect(result.exitCode, result.stderr).toBe(0)
@@ -96,8 +102,11 @@ describe("curate collapse over the built binary", () => {
       expect(body.type).toBe("curate.collapse")
       expect(body.data.summary.committed).toBeGreaterThan(0)
     }
-    // The second run did log on the load path; the line went where logs go.
-    expect(second.stderr).toContain("git merge-base exited 1")
+    // The second run did log on the load path; the lines went where logs go.
+    expect(second.stderr).toContain("git merge-base exited 128")
+    expect(second.stderr).toContain("passing over it")
     expect(second.stdout).not.toContain("git merge-base")
+    // The first run's snapshot is not an ancestor of `main` either, and "no" logs nothing.
+    expect(second.stderr).not.toContain("git merge-base exited 1:")
   }, 180_000)
 })

@@ -1,6 +1,6 @@
 ---
 title: Rebuild the index
-description: When update is enough, when only a full rebuild will do, and how to clear a vector-space mismatch that a rebuild alone cannot.
+description: When update is enough, when only a full rebuild will do, and how a rebuild with an embedder configured clears a vector-space mismatch.
 ---
 
 ```bash
@@ -52,9 +52,9 @@ Vectors are keyed on content hash, so a `git mv`, which is what every archive an
 
 A store-wide embedding gap is not on that list. `memhtml index embed` closes it without emptying anything.
 
-`memhtml index update` with no recorded watermark falls through to a rebuild on its own (`update` in `packages/index/src/indexer.ts`). A deleted database therefore mostly heals itself: the cron line keeps working and the next pass takes longer than usual.
+`memhtml index update` with no `index_state` row, which is what a new, empty database has, falls through to a rebuild on its own (`packages/index/src/indexer.ts::makeIndexer::update`). A deleted database therefore mostly heals itself: whatever runs `index update` keeps working, and the next pass takes longer than usual. A row whose `head_sha` is NULL is different. It marks a rebuild that died partway, and `update` refuses it with `ERR_INDEX_STALE` until `memhtml index rebuild` runs.
 
-A rebuild deletes every memory table, reads the tree again, and reprojects it (`truncateForRebuild` in `packages/index/src/indexer.ts`). It keeps the vectors: the `embeddings` rows in the configured vector space are stashed before the delete and put back for every chunk id the reprojection produced again, and chunk ids are content-addressed, so a rebuild over an unchanged tree re-embeds nothing. The report's `embeddingsPreserved` says how many it kept. What it destroys is bounded. It touches nothing outside `.memhtml/`, and inside `.memhtml/` it leaves the trace tables and the attached state plane alone. So a rebuild costs no re-walk of `$MEMHTML_TRACE_ROOT` and loses no access counts.
+A rebuild reads the whole tree at HEAD first, then empties every memory table and reprojects what it read (`packages/index/src/indexer.ts::makeIndexer::reproject`, `packages/index/src/indexer.ts::makeIndexer::truncateForRebuild`), so a git failure leaves the old index whole. It keeps the vectors: the `embeddings` rows in the configured vector space are stashed before the delete and put back for every chunk id the reprojection produced again, and chunk ids are content-addressed, so a rebuild over an unchanged tree re-embeds nothing. The report's `embeddingsPreserved` says how many it kept. What it destroys is bounded. It touches nothing outside `.memhtml/`, and inside `.memhtml/` it leaves the trace tables and the attached state plane alone. So a rebuild costs no re-walk of `$MEMHTML_TRACE_ROOT` and loses no access counts.
 
 ## Fill missing vectors without a rebuild
 
@@ -86,11 +86,11 @@ The numbers above are the incident this command exists for. A `rebuild --no-embe
 
 `--no-embed` is the flag test harnesses and credential-free installs use, and it was run against a live store by accident. A store that carries vectors is a store somebody embedded on purpose, so when the `embeddings` table is non-empty and the stored model matches the configured one, `memhtml index rebuild --no-embed` exits 1 with `ERR_REBUILD_NO_EMBED_REFUSED`, names the count in `error` and in a WARN on stderr, and writes nothing. `--force` runs it anyway. The stored vectors survive either way; what `--no-embed` costs on a live store is that every new or changed chunk stays without a vector until `memhtml index embed` runs.
 
-## A mismatched embedding model is a hard refusal
+## A mismatched embedding model is refused unless a rebuild migrates it
 
-Both `rebuild` and `update` call `guardEmbedModel()` before they write anything (`guardEmbedModel` in `packages/index/src/indexer.ts`). An index built under one embedding model can therefore never accumulate rows under another. You get `ERR_EMBED_MODEL_MISMATCH`, naming the model the stored vectors came from and the model this process is configured to use.
+`memhtml index update`, `memhtml index embed`, and a rebuild that cannot write vectors (`--no-embed`, or `--embed` with `MEMHTML_EMBED=off`) call `guardEmbedModel()` before they write anything (`packages/index/src/indexer.ts::makeIndexer::guardEmbedModel`). Each answers `ERR_EMBED_MODEL_MISMATCH`, naming the vector space the index was built in and the one this process is configured to use. `memhtml index rebuild --embed` with an embedder configured skips the guard and migrates instead: it records the configured model before it writes a vector and carries no vector from the old one across, so an index never mixes two models.
 
-A rebuild alone leaves the refusal in place, because the guard fires before the rebuild writes. Delete the database and rebuild into the configured space:
+`memhtml index rebuild --embed` with an embedder configured clears the refusal on its own, and it is the command the error suggests. With `MEMHTML_EMBED=off`, `--embed` is refused the same way `--no-embed` is. Deleting the database first, as below, also works, but it drops the trace tables too, and `memhtml trace index` then has to rebuild them from `$MEMHTML_TRACE_ROOT`:
 
 ```bash
 memhtml status                                     # read embedModel and embedderUp

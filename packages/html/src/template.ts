@@ -3,6 +3,7 @@ import type { Confidence, Importance, MemoryType, TaskStatus } from "@memhtml/co
 
 import { detectLang } from "./detect.js"
 import type { MemoryDoc } from "./document.js"
+import type { FencedBlock } from "./fences.js"
 import { fencedBlockOf } from "./fences.js"
 import { contentHash } from "./hash.js"
 import { escapeAttribute, escapeText } from "./markup.js"
@@ -111,36 +112,90 @@ const codeBlockHtml = (block: { readonly lang?: string | undefined; readonly cod
 }
 
 /**
- * The article markup for an input: the claim wrapped in `<mark>` inside the first `<p>`, the
- * first body paragraph joined onto it as the claim's tail, and each remaining paragraph its own
- * `<p>`. Empty paragraphs are dropped rather than emitted, so a trailing blank in the tool
- * payload does not become an empty element.
+ * One paragraph of the article the prose path renders, before escaping: a `<p>` holding text, or
+ * a `<figure>` holding a fenced block. `index` is the body paragraph it came from.
+ */
+export type ProseParagraph =
+  | {
+      readonly kind: "p"
+      /** The claim, on the first paragraph only: the text of its `<mark>`. */
+      readonly claim?: string | undefined
+      /** The body paragraph's text, absent on a claim that stands alone. */
+      readonly text?: string | undefined
+      readonly index?: number | undefined
+    }
+  | { readonly kind: "figure"; readonly block: FencedBlock; readonly index: number }
+
+/**
+ * The paragraphs the prose path renders for a claim and body, in order: the claim's `<p>`, with
+ * the first body paragraph joined onto it as its tail, then each remaining paragraph. Empty
+ * paragraphs are dropped rather than emitted, so a trailing blank in the tool payload does not
+ * become an empty element.
  *
- * A body paragraph that is a fenced code block becomes a `<figure><pre><code>` instead of a
- * `<p>`, the one way the prose path can author real code markup. A fence is not joined onto
- * the claim's paragraph. When the first body paragraph is a fence, the claim stands alone in its
- * `<p>` and the figure follows, so the claim still leads the article (constraint 1) and code
- * stays out of the sentence.
+ * A body paragraph that is a fenced code block, whole, becomes a `<figure><pre><code>` instead of
+ * a `<p>`, the one way the prose path can author real code markup. A fence is not joined onto the
+ * claim's paragraph. When the first body paragraph is a fence, the claim stands alone in its `<p>`
+ * and the figure follows, so the claim still leads the article (constraint 1) and code stays out
+ * of the sentence.
+ *
+ * Exported because the doors judge a body by what it renders to: the text of each `<p>` here,
+ * read by `blockTagInRun`, is the text `blockTagInArticle` reads from the file.
+ */
+export const proseParagraphs = (
+  claim: string,
+  body: ReadonlyArray<string>
+): ReadonlyArray<ProseParagraph> => {
+  const parts = body.flatMap((text, index) =>
+    text.trim() === "" ? [] : [{ text: text.trim(), index, block: fencedBlockOf(text) }]
+  )
+  const [lead, ...rest] = parts
+  const joined = lead !== undefined && lead.block === undefined ? lead : undefined
+  const first: ProseParagraph = {
+    kind: "p",
+    claim: claim.trim(),
+    ...(joined === undefined ? {} : { text: joined.text, index: joined.index })
+  }
+  return [
+    first,
+    ...(joined === undefined ? parts : rest).map(
+      (part): ProseParagraph =>
+        part.block === undefined
+          ? { kind: "p", text: part.text, index: part.index }
+          : { kind: "figure", block: part.block, index: part.index }
+    )
+  ]
+}
+
+/** The text a rendered `<p>` holds once read: its claim, a space, and its body paragraph. */
+export const proseParagraphText = (paragraph: ProseParagraph & { readonly kind: "p" }): string =>
+  paragraph.claim === undefined
+    ? (paragraph.text ?? "")
+    : paragraph.text === undefined
+      ? paragraph.claim
+      : `${paragraph.claim} ${paragraph.text}`
+
+/** One planned paragraph as markup. */
+const paragraphHtml = (paragraph: ProseParagraph): string => {
+  if (paragraph.kind === "figure") return codeBlockHtml(paragraph.block)
+  const claim = paragraph.claim === undefined ? [] : [`<mark>${escapeText(paragraph.claim)}</mark>`]
+  const text = paragraph.text === undefined ? [] : [escapeText(paragraph.text)]
+  return `<p>${[...claim, ...text].join(" ")}</p>`
+}
+
+/**
+ * The article markup for an input: `articleHtml` verbatim when it is supplied, and otherwise the
+ * paragraphs {@link proseParagraphs} plans for the claim and body.
  */
 export const articleHtmlFor = (input: NewMemoryInput): string => {
   if (input.articleHtml !== undefined && input.articleHtml.trim() !== "") {
     return innerHtml(parseArticleFragment(input.articleHtml))
   }
-  const paragraphs = (input.body ?? [])
-    .filter((text) => text.trim() !== "")
-    .map((text) => {
-      const block = fencedBlockOf(text)
-      return block === undefined
-        ? { html: `<p>${escapeText(text.trim())}</p>`, tail: text.trim() }
-        : { html: codeBlockHtml(block), tail: undefined }
-    })
-  const [lead, ...rest] = paragraphs
-  const claim = `<mark>${escapeText(input.claim.trim())}</mark>`
-  const first =
-    lead?.tail === undefined ? `<p>${claim}</p>` : `<p>${claim} ${escapeText(lead.tail)}</p>`
-  const following = lead === undefined || lead.tail !== undefined ? rest : [lead, ...rest]
   return innerHtml(
-    parseArticleFragment([first, ...following.map((paragraph) => paragraph.html)].join("\n"))
+    parseArticleFragment(
+      proseParagraphs(input.claim, input.body ?? [])
+        .map(paragraphHtml)
+        .join("\n")
+    )
   )
 }
 

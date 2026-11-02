@@ -212,6 +212,8 @@ After the script exits, the harvester compares every file with what it seeded an
 | Deleted a record with no copy, or edited its head in any other way                  | a `rejected` entry naming the reason      |
 | Changed an existing record's article                                                | a `put` the commit refuses (`claim-edit`) |
 
+An archive takes its year's first free slot. When a record archived earlier in the year already holds `archive/<YYYY>/<path>`, move the file to `archive/<YYYY>.2/<path>` instead, then `.3`, and so on. A script that moves a file onto a held slot gets an `archive` the harvest is blocked on, and its violation names the free slot.
+
 A `move` keeps the record's bytes, so its content hash and its history come with it. Every live record that links to the old path has to drop that edge in the same script: cut the old `<link>` line, and add one with the new path to keep the edge. Otherwise the harvest is blocked and names the edge to fix.
 
 The harvest is added to the log only when the script exits 0 and no harvested operation breaks a rule a rebase can't fix. `blocking` lists those violations, and `appended` is 0 when it lists any. A non-zero `exitCode` means your script failed, and `memhtml` itself still exits 0.
@@ -274,6 +276,7 @@ memhtml session commit --id s1 --message "two facts about the checkout api"
       "projects/checkout/charges-settle-within-a-day.html"
     ],
     "contradictions": [],
+    "restatements": [],
     "worktreeSynced": true,
     "recovered": false,
     "snapshot": {
@@ -302,9 +305,9 @@ The commit's subject is `memhtml(session): <message>`, and a `Memhtml-Session: s
 
 When the ref is the branch your checkout has open, the working tree moves with the commit (`worktreeSynced: true`), and uncommitted edits at other paths survive.
 
-When a new record's claim has the same frame key as an active record at another path, both stay live. The new file gets a `memhtml-contradicts` link to the old one, and `contradictions` lists the pair. Deciding which claim is right stays with a writer or a person.
+When a new record's claim has the same frame key as an active record at another path, both stay live. The new file gets a `memhtml-contradicts` link to the old one, and `contradictions` lists the pair. Deciding which claim is right stays with a writer or a person. A record that agrees with the new one (the same value and, for two verdicts, the same title, which carries the ruling), one the new record supersedes, and one the same session archives get no link, and `restatements` lists each of those pairs with its `reason`.
 
-`index.db` doesn't move with a session commit. When the session's ref is the branch the checkout has open, `memhtml head search` and a running [head server](/learn/operations/run-a-head-server/) see the new records at once. `memhtml search`, `memhtml recall`, and the MCP tools that read the index see them after the next `memhtml index update`, which is why that command stays on the [cron schedule](/learn/operations/run-the-store-day-to-day/#the-cron-schedule).
+`index.db` doesn't move with a session commit. When the session's ref is the branch the checkout has open, `memhtml head search` and a running [head server](/learn/operations/run-a-head-server/) see the new records at once. `memhtml search`, `memhtml recall`, and the MCP tools that read the index see them after the next `memhtml index update`, which is why that command stays among the [upkeep commands](/learn/operations/run-the-store-day-to-day/#the-upkeep-commands).
 
 ## When the ref moved, rebase
 
@@ -325,7 +328,7 @@ The fixed half holds in every store:
 
 - `format`: the file has to parse as a memory, with exactly one claim.
 - `duplicate`: the article already exists in an active record.
-- `claim-edit`: a put over an active record with a different article. Write the new fact under its own title with a `memhtml-supersedes` link.
+- `claim-edit`: a put over an active record with a different article. Write the new fact under its own title with a `memhtml-supersedes` link. When the same batch archives the old record, the link names its archive path, `/archive/<YYYY>/<its path>`.
 - `reserved-path`: `.memhtml/`, `memhtml.config.json`, and any `index.html` or `sitemap.xml` are never writable. `areas/arcs/` and `resources/people/` are writable only by curation.
 - `batch-cap`: one commit holds at most 200 operations.
 

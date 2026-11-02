@@ -627,7 +627,7 @@ const keyShapeOf = (value: unknown): unknown => {
  * The PARITY ORACLE for the two doors' per-op wire shape.
  *
  * `memhtml apply`'s `opPayload` (`apps/cli/src/apply.ts:360-386`) and `memory_write_batch`'s `wireReport`
- * (`apps/mcp/src/handlers.ts:240-266`) are two hand-written camel→snake mappers over one
+ * (`apps/mcp/src/handlers.ts:245-271`) are two hand-written camel→snake mappers over one
  * `BatchOpReport`, and both of their doc comments claim the payloads are byte-comparable so an agent
  * that has parsed one has parsed the other. Nothing checked it: the mappers are private, so no unit test
  * can compare them, and the fixture pair at the top of this file has no conflicts in it — every op there
