@@ -1,14 +1,33 @@
 import { layerApp } from "@memhtml/cli"
 import { layerTelemetry } from "@memhtml/telemetry"
-import { Layer, Logger } from "effect"
+import { Effect, Layer, Logger } from "effect"
 import { McpProtocol, McpServer } from "effect/ai"
 
-import { ToolHandlers } from "./handlers.js"
+import { type AppServices, ToolHandlers } from "./handlers.js"
 import { Resources } from "./resources.js"
 import { MemhtmlToolkit } from "./tools.js"
 
 export const SERVER_NAME = "memhtml"
 export const SERVER_VERSION = "0.18.0" // x-release-please-version
+
+/**
+ * Hands every tool call the app services the server was built with.
+ *
+ * Since effect 4.1.0 (Effect-TS/effect#9154) a tool's declared `dependencies` are request-level:
+ * each one becomes an `McpRequest<"Requires", S>` marker that only MCP middleware or a transport can
+ * meet, and `Layer.provide` of the service itself does not. The stdio transport meets none of
+ * memhtml's, so without this middleware `bin.ts` does not compile. Every memhtml tool depends on the
+ * same `layerApp` services for the whole life of the process, so the middleware reads them once, when
+ * the layer is built, and provides that context to each `tools/call` and `resources/read`. That is
+ * what `McpServer.toolkit` did itself on 4.0.x, where it captured the context at build and provided it
+ * to every call.
+ */
+const AppContext = McpServer.middleware<{ provides: AppServices }>()(
+  Effect.map(
+    Effect.context<AppServices>(),
+    (services) => (effect) => Effect.provideContext(effect, services)
+  )
+)
 
 /**
  * The server as one layer: fifteen tools, two resources, over the CLI's own `layerApp`.
@@ -24,9 +43,9 @@ export const SERVER_VERSION = "0.18.0" // x-release-please-version
  *
  * **There is no server-level `instructions` here yet.** MCP defines an `instructions` field on the
  * initialize response for exactly the cross-tool guidance this server wants to give (when to batch,
- * the three doors, the commit duty). effect wires it: verified against effect 4.0.6 in the
- * dependency's own source, `layerStdio` takes an `instructions` option and the initialize handler
- * returns it on `InitializeResult`. The call below passes none, so the initialize response carries
+ * the three doors, the commit duty). effect wires it: verified against effect 4.1.1 in the
+ * dependency's own source, `layerStdio` takes an `instructions` option and `InitializeResult`
+ * carries an `instructions` field. The call below passes none, so the initialize response carries
  * no `instructions`.
  *
  * **TOOL DESCRIPTIONS are this server's only guidance channel today.** That consequence is recorded
@@ -39,11 +58,12 @@ export const SERVER_VERSION = "0.18.0" // x-release-please-version
 export const layerServer = (repoOverride?: string | undefined) =>
   Layer.mergeAll(McpServer.toolkit(MemhtmlToolkit), Resources).pipe(
     Layer.provide(ToolHandlers),
+    Layer.provide(AppContext.layer),
     Layer.provide(
       McpServer.layerStdio({
         name: SERVER_NAME,
         version: SERVER_VERSION,
-        // The protocol revision is the caller's to state. effect 4.0.6 ships five adapters
+        // The protocol revision is the caller's to state. effect 4.1.1 ships five adapters
         // (`v2024_11_05`, `v2025_03_26`, `v2025_06_18`, `v2025_11_25`, `v2026_07_28`), and this
         // server names one. Naming it here keeps another revision an explicit, reviewable choice
         // rather than a default that moves the wire format under a shipped client.
