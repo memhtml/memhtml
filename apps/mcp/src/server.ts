@@ -18,9 +18,13 @@ export const SERVER_VERSION = "0.18.0" // x-release-please-version
  * meet, and `Layer.provide` of the service itself does not. The stdio transport meets none of
  * memhtml's, so without this middleware `bin.ts` does not compile. Every memhtml tool depends on the
  * same `layerApp` services for the whole life of the process, so the middleware reads them once, when
- * the layer is built, and provides that context to each `tools/call` and `resources/read`. That is
- * what `McpServer.toolkit` did itself on 4.0.x, where it captured the context at build and provided it
- * to every call.
+ * the layer is built, and provides that context to each `tools/call`. That is what
+ * `McpServer.toolkit` did itself on 4.0.x, where it captured the context at build and provided it to
+ * every call.
+ *
+ * It covers tools only. The two resource templates register through `addResourceTemplate` without
+ * its `services` option, so this middleware does not run for `resources/read`; each template captures
+ * and provides its own context in `templateLayer` (`resources.ts`), and that capture is still needed.
  */
 const AppContext = McpServer.middleware<{ provides: AppServices }>()(
   Effect.map(
