@@ -7,14 +7,14 @@ settings:
 catalogs:
   default:
     '@effect/platform-node':
-      specifier: 4.0.6
-      version: 4.0.6
+      specifier: 4.1.0
+      version: 4.1.0
     '@effect/platform-node-shared':
-      specifier: 4.0.6
-      version: 4.0.6
+      specifier: 4.1.0
+      version: 4.1.0
     '@effect/vitest':
-      specifier: 4.0.6
-      version: 4.0.6
+      specifier: 4.1.0
+      version: 4.1.0
     effect:
       specifier: 4.0.6
       version: 4.0.6
@@ -53,10 +53,10 @@ importers:
     dependencies:
       '@effect/platform-node':
         specifier: 'catalog:'
-        version: 4.0.6(effect@4.0.6)(redis@6.2.1)
+        version: 4.1.0(effect@4.0.6)(redis@6.2.1)
       '@effect/platform-node-shared':
         specifier: 'catalog:'
-        version: 4.0.6(effect@4.0.6)
+        version: 4.1.0(effect@4.0.6)
       '@memhtml/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -109,15 +109,15 @@ importers:
         specifier: 2.1.3
         version: 2.1.3
       node-html-parser:
-        specifier: 9.0.5
-        version: 9.0.5
+        specifier: 9.0.6
+        version: 9.0.6
     devDependencies:
       '@biomejs/biome':
         specifier: 2.6.4
         version: 2.6.4
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.6(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
+        version: 4.1.0(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
       '@types/ms':
         specifier: 2.1.0
         version: 2.1.0
@@ -140,8 +140,8 @@ importers:
         specifier: ^0.4.6
         version: 0.4.6
       '@astrojs/starlight':
-        specifier: ^0.42.7
-        version: 0.42.7(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)
+        specifier: ^0.42.8
+        version: 0.42.8(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)
       '@expressive-code/plugin-collapsible-sections':
         specifier: ^0.44.3
         version: 0.44.3
@@ -167,26 +167,26 @@ importers:
         specifier: ^0.42.0
         version: 0.42.0
       satteri:
-        specifier: ^0.10.5
-        version: 0.10.5
+        specifier: ^0.11.6
+        version: 0.11.6
       starlight-base-path:
         specifier: ^0.2.1
-        version: 0.2.1(@astrojs/starlight@0.42.7(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))
+        version: 0.2.1(@astrojs/starlight@0.42.8(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))
       starlight-heading-badges:
         specifier: ^0.8.0
-        version: 0.8.0(@astrojs/starlight@0.42.7(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(supports-color@10.2.2)
+        version: 0.8.0(@astrojs/starlight@0.42.8(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(supports-color@10.2.2)
       starlight-links-validator:
         specifier: ^0.27.0
-        version: 0.27.0(@astrojs/starlight@0.42.7(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)
+        version: 0.27.0(@astrojs/starlight@0.42.8(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)
       starlight-llms-txt:
         specifier: ^0.12.0
-        version: 0.12.0(@astrojs/markdown-satteri@0.4.6)(@astrojs/starlight@0.42.7(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)
+        version: 0.12.0(@astrojs/markdown-satteri@0.4.6)(@astrojs/starlight@0.42.8(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)
       starlight-md-txt:
         specifier: ^0.1.0
-        version: 0.1.1(@astrojs/starlight@0.42.7(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)
+        version: 0.1.1(@astrojs/starlight@0.42.8(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)
       starlight-scroll-to-top:
         specifier: ^2.0.0
-        version: 2.0.0(@astrojs/starlight@0.42.7(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))
+        version: 2.0.0(@astrojs/starlight@0.42.8(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))
     devDependencies:
       '@astrojs/check':
         specifier: ^0.9.12
@@ -216,8 +216,8 @@ importers:
         specifier: ^1.64.1
         version: 1.64.1
       starlight-typedoc:
-        specifier: ^0.23.1
-        version: 0.23.1(@astrojs/starlight@0.42.7(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(typedoc-plugin-markdown@4.14.1(typedoc@0.28.20(typescript@6.0.3)))(typedoc@0.28.20(typescript@6.0.3))
+        specifier: ^0.23.2
+        version: 0.23.2(@astrojs/starlight@0.42.8(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(typedoc-plugin-markdown@4.14.1(typedoc@0.28.20(typescript@6.0.3)))(typedoc@0.28.20(typescript@6.0.3))
       typedoc:
         specifier: ^0.28.20
         version: 0.28.20(typescript@6.0.3)
@@ -235,10 +235,10 @@ importers:
     dependencies:
       '@effect/platform-node':
         specifier: 'catalog:'
-        version: 4.0.6(effect@4.0.6)(redis@6.2.1)
+        version: 4.1.0(effect@4.0.6)(redis@6.2.1)
       '@effect/platform-node-shared':
         specifier: 'catalog:'
-        version: 4.0.6(effect@4.0.6)
+        version: 4.1.0(effect@4.0.6)
       '@memhtml/cli':
         specifier: workspace:*
         version: link:../cli
@@ -275,7 +275,7 @@ importers:
         version: 2.6.4
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.6(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
+        version: 4.1.0(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
       '@types/node':
         specifier: 26.6.6
         version: 26.6.6
@@ -297,7 +297,7 @@ importers:
         version: 2.6.4
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.6(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
+        version: 4.1.0(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
       '@types/node':
         specifier: 26.6.6
         version: 26.6.6
@@ -314,14 +314,14 @@ importers:
   packages/curator:
     dependencies:
       '@ai-sdk/amazon-bedrock':
-        specifier: 5.0.128
-        version: 5.0.128(zod@4.6.7)
+        specifier: 5.0.129
+        version: 5.0.129(zod@4.6.7)
       '@ai-sdk/openai-compatible':
-        specifier: 3.0.81
-        version: 3.0.81(zod@4.6.7)
+        specifier: 3.0.82
+        version: 3.0.82(zod@4.6.7)
       '@ai-sdk/provider':
-        specifier: 4.0.34
-        version: 4.0.34
+        specifier: 4.0.35
+        version: 4.0.35
       '@aws-sdk/credential-providers':
         specifier: 3.1160.0
         version: 3.1160.0
@@ -344,8 +344,8 @@ importers:
         specifier: workspace:*
         version: link:../session
       ai:
-        specifier: 7.0.157
-        version: 7.0.157(zod@4.6.7)
+        specifier: 7.0.158
+        version: 7.0.158(zod@4.6.7)
       effect:
         specifier: 'catalog:'
         version: 4.0.6
@@ -370,7 +370,7 @@ importers:
         version: 2.6.4
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.6(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
+        version: 4.1.0(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
       '@types/node':
         specifier: 26.6.6
         version: 26.6.6
@@ -395,7 +395,7 @@ importers:
         version: 2.6.4
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.6(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
+        version: 4.1.0(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
       '@types/node':
         specifier: 26.6.6
         version: 26.6.6
@@ -438,7 +438,7 @@ importers:
         version: 2.6.4
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.6(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
+        version: 4.1.0(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
       '@types/node':
         specifier: 26.6.6
         version: 26.6.6
@@ -472,7 +472,7 @@ importers:
         version: 2.6.4
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.6(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
+        version: 4.1.0(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
       '@memhtml/eval':
         specifier: workspace:*
         version: link:../eval
@@ -509,7 +509,7 @@ importers:
         version: 2.6.4
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.6(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
+        version: 4.1.0(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
       '@types/node':
         specifier: 26.6.6
         version: 26.6.6
@@ -546,7 +546,7 @@ importers:
         version: 2.6.4
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.6(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
+        version: 4.1.0(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
       '@memhtml/store':
         specifier: workspace:*
         version: link:../store
@@ -580,7 +580,7 @@ importers:
         version: 2.6.4
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.6(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
+        version: 4.1.0(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
       '@types/node':
         specifier: 26.6.6
         version: 26.6.6
@@ -611,7 +611,7 @@ importers:
         version: 2.6.4
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.6(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
+        version: 4.1.0(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
       '@types/node':
         specifier: 26.6.6
         version: 26.6.6
@@ -648,7 +648,7 @@ importers:
         version: 2.6.4
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.6(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
+        version: 4.1.0(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
       '@types/node':
         specifier: 26.6.6
         version: 26.6.6
@@ -688,7 +688,7 @@ importers:
         version: 2.6.4
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.6(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
+        version: 4.1.0(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
       '@types/node':
         specifier: 26.6.6
         version: 26.6.6
@@ -725,7 +725,7 @@ importers:
         version: 2.6.4
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.6(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
+        version: 4.1.0(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
       '@types/node':
         specifier: 26.6.6
         version: 26.6.6
@@ -750,7 +750,7 @@ importers:
         version: 2.6.4
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.6(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
+        version: 4.1.0(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
       '@types/node':
         specifier: 26.6.6
         version: 26.6.6
@@ -778,7 +778,7 @@ importers:
         version: 2.6.4
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.6(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
+        version: 4.1.0(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
       '@types/node':
         specifier: 26.6.6
         version: 26.6.6
@@ -842,7 +842,7 @@ importers:
         version: 2.6.4
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.6(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
+        version: 4.1.0(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
       '@types/node':
         specifier: 26.6.6
         version: 26.6.6
@@ -858,44 +858,44 @@ importers:
 
 packages:
 
-  '@ai-sdk/amazon-bedrock@5.0.128':
-    resolution: {integrity: sha512-0W5IxhntSgPwB83Ax+3kPJ8zNXKwhAUAaObDVyVsCyOcYc3Wyjmtj2YUEuTt0xODiPL946TXsou992jy3su8DQ==}
+  '@ai-sdk/amazon-bedrock@5.0.129':
+    resolution: {integrity: sha512-RHzLpmWADyw6sHmT/XfyjNLwmKeKI0bd5YoTHgD4k8JEeXuuirI56fjKDDFMG37VRowIK1QdO2VlHRwKP9CNIQ==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/anthropic@4.0.92':
-    resolution: {integrity: sha512-Zkg3jlGgI3G16rD389F0y7DUDGDTMOERoF2SEIg4K3qC4FeJNJKW1f0ix3Q5e2yraHdNKbC8MvHt9LVQv8qvEA==}
+  '@ai-sdk/anthropic@4.0.93':
+    resolution: {integrity: sha512-nml29YBjcYNUjeVs9fQ75Cqb9oDder/koOXarib92Y8DbqnaX5LwvL+vUMOtrmBtPx2eiJ+Zwz/RU6BGxZdW2g==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/gateway@4.0.130':
-    resolution: {integrity: sha512-TVcjwUeAUgp9HqzijFxy3skHhz4FKwjhO8TQi9SQMGEpc6k5INWntA3MYelgHWMUaK3ilQr7NX2ir2GBG/EIqg==}
+  '@ai-sdk/gateway@4.0.131':
+    resolution: {integrity: sha512-3B192DqC0d4kImRqqptKl4yxBbGzZI0niJ6joVW34FrVx+iGO9zdSAFalu+N814m8ChbLaLY8MuDgqsglhOHpQ==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/openai-compatible@3.0.81':
-    resolution: {integrity: sha512-9+TO0hcmGrOoB53WA4bSZpozeLRafGVjf3bLljYVI3+1i+WwyMpcYKgridnDNvr0YNOTk5Es5TFYfYKQyfwG4A==}
+  '@ai-sdk/openai-compatible@3.0.82':
+    resolution: {integrity: sha512-wey0CbujWRkZbbrJjw/GJHyjXpt0v44PQKaTGTVGmigqnM057G7GQHDyZQQj9O0lICY5qJxzpn4wCSftT8BSQg==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/openai@4.0.105':
-    resolution: {integrity: sha512-EMLEpsaCOri8g9tZvjV7wIWTMiV8tznorTiVTaBz5dMVZ+Ty0Pm7RaqTbooKIaMCCfQyVVhc6fP4MN7meIBEVg==}
+  '@ai-sdk/openai@4.0.106':
+    resolution: {integrity: sha512-xBhSJCrgeTMZ4kCKABX8BJFtp5ZIJSS2qxvGMALA34TMyR6OVMe93cpU0mGWPFaVwPsWy2DWKb5+x7gkJ9SJ8w==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/provider-utils@5.0.71':
-    resolution: {integrity: sha512-up6vmxeWnAGgRdNM2q8XvC43rl9N7GRX3/MltKmy3qlNFWLZMgO9SoriOi7obuv9lOYrksOmpj4TG9+TdIGI8w==}
+  '@ai-sdk/provider-utils@5.0.72':
+    resolution: {integrity: sha512-M6QAztI84jWumQSvKcGOL91DxhChsWxn3D3gYtV0/7E1TPQg9BmLdIerOolUC/jghQbMlQrHyzp0hqdIhUZ2Rw==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/provider@4.0.34':
-    resolution: {integrity: sha512-Ip7ZQBq/FiGpM1mmOVseTtX9PBjnzo0bLC41WTgBSBBRUBz6LhNFGbYaNUzI6hPm6ll1oNSPOAZc/q/z+3QZEQ==}
+  '@ai-sdk/provider@4.0.35':
+    resolution: {integrity: sha512-yBz6fmLS8MSCIzy7NiHEUAq56ZLD4ZA1GR6bpXBxgbwUacP1La7LuwAr/xy9jSzthem4F8Xu2OrhvU/JrE9fYA==}
     engines: {node: '>=22'}
 
   '@astrojs/astro2tsx@0.1.3':
@@ -1023,6 +1023,17 @@ packages:
       '@astrojs/markdown-remark':
         optional: true
 
+  '@astrojs/mdx@8.1.2':
+    resolution: {integrity: sha512-ZIUVfosVtK4SKcFrGOH+1+HwG0encjxQOxu76M9VuTqeQNZWQ//2eY2Iz+W1eq87AOT5JD4wOHyZ8xFwlcFteg==}
+    engines: {node: '>=22.23.4'}
+    peerDependencies:
+      '@astrojs/markdown-remark': ^7.3.0
+      '@astrojs/markdown-satteri': ^0.4.0
+      astro: ^7.2.10
+    peerDependenciesMeta:
+      '@astrojs/markdown-remark':
+        optional: true
+
   '@astrojs/prism@4.0.2':
     resolution: {integrity: sha512-KTivpmnz6lDsC6o9H4+DNm2SrE/GHzw8cNAvEJwAvUT+eoaEnn/4NtbDNfRRaxaJHdp15gf+tfHAWiXR4wB3BA==}
     engines: {node: '>=22.12.0'}
@@ -1034,8 +1045,8 @@ packages:
   '@astrojs/sitemap@3.7.4':
     resolution: {integrity: sha512-LbKNC24bdUWcQf/pThB6qLlSqHojxGjZDURIzFocY8rlWnAn2t74nnhnK6S5x0NHriHoAduLEpVjRykmeGiVvA==}
 
-  '@astrojs/starlight@0.42.7':
-    resolution: {integrity: sha512-mlbit5iRjLx5eIcLf84Q2CwkrrsEgZrQwKKBK+vRf+ZGiSrwy1UGdT1hUfAIaHrMfcvkDpL+gw3aua7HobiKFg==}
+  '@astrojs/starlight@0.42.8':
+    resolution: {integrity: sha512-BGP8bmTbdky4OFCV9BNWZedLuzONyUtz754q+hie+li/2TQ5XJ6nvfO8fhRhIMcCpUEsA5Ynf4qTTFf/ft/3Pg==}
     peerDependencies:
       '@astrojs/markdown-remark': ^7.3.0
       astro: ^7.2.10
@@ -1245,8 +1256,18 @@ packages:
   '@borewit/text-codec@0.2.2':
     resolution: {integrity: sha512-DDaRehssg1aNrH4+2hnj1B7vnUGEjU6OIlyRdkMd0aUdIUvKXrJfXsy8LVtXAy7DRvYVluWbMspsRhz2lcW0mQ==}
 
+  '@bruits/satteri-android-arm64@0.11.6':
+    resolution: {integrity: sha512-9Cb6ZRDn29c0kluGA9urp/So/JnJOJJSf4J40xYLAIAj3GuqTNsCyquS4A1/yLuuHE2ngYJNnCylAQnDM3L9ow==}
+    cpu: [arm64]
+    os: [android]
+
   '@bruits/satteri-darwin-arm64@0.10.5':
     resolution: {integrity: sha512-27KTVl4TJkVahMy/ohyA7qd4938G5UNneFUz/PsScYfpIhj0IVAS23mpcJXdPF44sa6nva198lmV/cKIb2YPyA==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@bruits/satteri-darwin-arm64@0.11.6':
+    resolution: {integrity: sha512-kcr7QOPGrckuyhMZmUKYcyoXgjQN4vJ/6tCWHE2866mztZPNrTuy5itTwSAbIs1tK0XpTW42tBQ+XPNnkg0XIg==}
     cpu: [arm64]
     os: [darwin]
 
@@ -1260,13 +1281,29 @@ packages:
     cpu: [x64]
     os: [darwin]
 
+  '@bruits/satteri-darwin-x64@0.11.6':
+    resolution: {integrity: sha512-nwh4Atd/Cxw2SNS6+Gs0Esf/w2i4qyHzwcECaTgoFyxse3m0dpBpu8eqkqqIPfBc1lWhfe4i9LXuk7rG+4pwQw==}
+    cpu: [x64]
+    os: [darwin]
+
   '@bruits/satteri-darwin-x64@0.9.5':
     resolution: {integrity: sha512-6T26Z5Kf3cFW2PSlk9p7zT7yVxvuBSiJvYyz9u8KjYwMTqZyIDOj2wDyNpxKV4+6yUVG7rddq2QwvG/8LJA2+Q==}
     cpu: [x64]
     os: [darwin]
 
+  '@bruits/satteri-freebsd-x64@0.11.6':
+    resolution: {integrity: sha512-qMkNZRYN3cLshfYawQYjfDS05A208QCOVh1adtEteYH+03MkuOoVVhYkzDRIKhWdfM3gFFEaUjXDOGfVqGjEJg==}
+    cpu: [x64]
+    os: [freebsd]
+
   '@bruits/satteri-linux-arm64-gnu@0.10.5':
     resolution: {integrity: sha512-glkYXZCJywjP13v67eAyAMSJdF+ncvEbYvgi/wOtffL9tQ27lr/zsyzUfgs+ovjJ9d8JNQKiXeiArJcX8PJL9w==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@bruits/satteri-linux-arm64-gnu@0.11.6':
+    resolution: {integrity: sha512-A7cHeCZQkvF3oTgQ6/5LvVriauE1dHo3u3gAME6H1X/+KMeum5Wras3Y7rYUcvPym1CxdmzjZh9WlYD62Ul1xg==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
@@ -1283,6 +1320,12 @@ packages:
     os: [linux]
     libc: [musl]
 
+  '@bruits/satteri-linux-arm64-musl@0.11.6':
+    resolution: {integrity: sha512-P/YAudp6VmUr63SFaZefwPIefsw92oZ1wQ6vqrtO/GY9qB3OxLqUVjSIcnKAtqMp4kDW8xBEdSwHz4GZU7P2+g==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
   '@bruits/satteri-linux-arm64-musl@0.9.5':
     resolution: {integrity: sha512-v39HxiwGC5Rqm01HksP6+5Y+xKLPlsuVFgIgpEAo+SiQ22c+mJVhS3u7Z6ePAKdhL5NJoK1xq70kLz3L13AhpQ==}
     cpu: [arm64]
@@ -1291,6 +1334,12 @@ packages:
 
   '@bruits/satteri-linux-x64-gnu@0.10.5':
     resolution: {integrity: sha512-FVaLoPT1fBgGl0J+AYebyyXJYBachGl8Oyyrf1lye4RTqCB4S0Gwkj1uM9RJyThUOvx5VUmAT1CnNh1SFHA+kw==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@bruits/satteri-linux-x64-gnu@0.11.6':
+    resolution: {integrity: sha512-nhj90eZFLSA+Icd6n+oYpAi/UXr/mppLGd8jdEOB/larvWAZ/ewFxpT7CLzuNCg7r75+gkdHv9JuRb5eERY1Kg==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
@@ -1307,6 +1356,12 @@ packages:
     os: [linux]
     libc: [musl]
 
+  '@bruits/satteri-linux-x64-musl@0.11.6':
+    resolution: {integrity: sha512-mkWxwHd5Q2dDs+OZK/P1tZFvSPrh2Bb69utWHcBNM0wyJCRWd61T4jU1tF21lGL1C5dy7P+LvaT0y6PQDJj89Q==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
   '@bruits/satteri-linux-x64-musl@0.9.5':
     resolution: {integrity: sha512-bicEqglLlz++mWyADaZoP0JY20s4vDfLjaPYgQqC+NI4zZLTOOg1T4GB8aqtc822Pqji8SQBmSrTb7CrP8i08Q==}
     cpu: [x64]
@@ -1315,6 +1370,11 @@ packages:
 
   '@bruits/satteri-wasm32-wasi@0.10.5':
     resolution: {integrity: sha512-ypz8c/Zmipxp4IoeDa228Gstv6TLzVmNs3yC6wKCoNSOjx1iwpgzu87Y3hTkXFdwChVGU85qeUDuOIarGUZQLw==}
+    engines: {node: '>=14.0.0'}
+    cpu: [wasm32]
+
+  '@bruits/satteri-wasm32-wasi@0.11.6':
+    resolution: {integrity: sha512-GrjNThC6BfA0u8LZwGpOeEFVKoJZsriowLtj/rBYj18fW7/UZouyzn/0Tsxg+tMaxMUgC9HFA078EmfAsdVONg==}
     engines: {node: '>=14.0.0'}
     cpu: [wasm32]
 
@@ -1328,6 +1388,11 @@ packages:
     cpu: [arm64]
     os: [win32]
 
+  '@bruits/satteri-win32-arm64-msvc@0.11.6':
+    resolution: {integrity: sha512-Plesa0QYtJoa3nlObg1Ypj9oD1VOioHMldHUUtG61T/JNU11EcN0pyj0tDsT3DW2pAxKrV0Q8xrfzGtBHuSjfg==}
+    cpu: [arm64]
+    os: [win32]
+
   '@bruits/satteri-win32-arm64-msvc@0.9.5':
     resolution: {integrity: sha512-SrfE7NEsgZjBvU3c+RR6oQRu0ToXY5uVJEbieXEF0YTctIV2zAVlbaMjWLts074QCgh3a+XHWkR/lWh2VH2LUg==}
     cpu: [arm64]
@@ -1335,6 +1400,11 @@ packages:
 
   '@bruits/satteri-win32-x64-msvc@0.10.5':
     resolution: {integrity: sha512-C3IfPvfvMXmlzBxaMPKFS1XiuV9pu2mC7YqkPk7PSvTgPZ8gbdASIpHpztDLvTTQjqZ0z1Ol8tK5X+V6XXC0wQ==}
+    cpu: [x64]
+    os: [win32]
+
+  '@bruits/satteri-win32-x64-msvc@0.11.6':
+    resolution: {integrity: sha512-fGs5d/7jBIPkYmXkhm9unoEfDuRZ5r66NLxbr+6c8bm0f7ywgPHgW3HJ9L7fKvyqhw49ePtbT4vkWREju8/U6w==}
     cpu: [x64]
     os: [win32]
 
@@ -1596,23 +1666,23 @@ packages:
   '@d2lang/d2@0.1.34':
     resolution: {integrity: sha512-35m2DaRUgeBy1cFbF9XEGIuaN/pMWrqkJtGj/tsq7OrU4N8degbY80Js7Mw7UeuE+fwGpxdZaGckEUVOPAj7CA==}
 
-  '@effect/platform-node-shared@4.0.6':
-    resolution: {integrity: sha512-0PhyC4uG30xGtsajnxjkcBWfTjNRzUh4ZKl1Kvo/MNyCTb+W2O+fBzf7wCRCoqt+nLudiq4V7vX40Q8XIBuMaQ==}
-    engines: {node: '>=18.0.0'}
+  '@effect/platform-node-shared@4.1.0':
+    resolution: {integrity: sha512-uYQfFRoxWLo8fIhiSeBcmz/R1ooOfE3HF3cWHFgxz82tZMk2Wn02BGABcdLmaAch9VpDLbtWnuhSxNyBsGMUFg==}
+    engines: {node: '>=22.19.0'}
     peerDependencies:
-      effect: ^4.0.6
+      effect: ^4.1.0
 
-  '@effect/platform-node@4.0.6':
-    resolution: {integrity: sha512-gXvGHAy0/8PZbWvMMguloDUyeSP+rzYEo3FSEqUuGduxo9ORcGioDxPI+GOLCIFfam7VuNkmSUxBOiRMIrMrBw==}
-    engines: {node: '>=18.0.0'}
+  '@effect/platform-node@4.1.0':
+    resolution: {integrity: sha512-v+X7moGVF9k5oMVvz0slA+NgtEod+W+oygeI285MDJgSlUCW3JcqElj+cD3rlijFZtpKhC7RLkU1GuCxjGHTpA==}
+    engines: {node: '>=22.19.0'}
     peerDependencies:
-      effect: ^4.0.6
+      effect: ^4.1.0
       redis: '>=5.0.0 <7.0.0'
 
-  '@effect/vitest@4.0.6':
-    resolution: {integrity: sha512-oKNbtyUHK5+0o730CXwojULEu7f3+c235pYFD4U5T//o+hHrJbYbZU4bRkcv936tPr5IOnmujeyQiC/LuJJjHw==}
+  '@effect/vitest@4.1.0':
+    resolution: {integrity: sha512-+APF69oTYgGj5WCewowk1/udepH74xz4ONyH7d+UfcK0SrF3osiSwsWEyODUpJvWd6MIk5F5PcFJiE4evMuG2A==}
     peerDependencies:
-      effect: ^4.0.6
+      effect: ^4.1.0
       vitest: '>=5.0.0 <6.0.0'
 
   '@emmetio/abbreviation@2.3.3':
@@ -2031,19 +2101,19 @@ packages:
     resolution: {integrity: sha512-mQ2s0pYYiav+tzCDR05Zptem8Ey2v8s11lri5RKGhTtL4COVCvVCk5vtyRYNT+9L8qSfyOqqefF9UtnW8mC5jA==}
     engines: {node: '>= 20.19.0'}
 
-  '@napi-rs/wasm-runtime@1.2.3':
-    resolution: {integrity: sha512-UMduMbqO5s5zF2NkNacMT/yK5Y5QiKvWr2+50bzIIxFDwVJ2h49b+oyjaCGPhJxd2/gC2x39EHv/gHVuu36x2Q==}
-    engines: {node: ^20.19.0 || ^22.13.0 || >=23.5.0}
-    peerDependencies:
-      '@emnapi/core': ^1.7.1 || ^2.0.0-alpha.4
-      '@emnapi/runtime': ^1.7.1 || ^2.0.0-alpha.4
-
   '@napi-rs/wasm-runtime@1.2.4':
     resolution: {integrity: sha512-AJxoUD2/15ESHbvpcyjU274nsAPLuOtPHCk0vKJM5pj//Fg/B1FXNWjPnXTT9PymCYYiHo4zPj0ZomXBKhoy7g==}
     engines: {node: ^20.19.0 || ^22.13.0 || >=23.5.0}
     peerDependencies:
       '@emnapi/core': ^1.7.1 || ^2.0.0-alpha.4
       '@emnapi/runtime': ^1.7.1 || ^2.0.0-alpha.4
+
+  '@napi-rs/wasm-runtime@1.2.6':
+    resolution: {integrity: sha512-mRyDmEw9/fCDXCGfL1sbgIw/GUK0PVxRW4YwgPN61F3LQ+fSyoBFarJVzgGyhF6kRzEQZ0FejDqm4WLXSeqQmw==}
+    engines: {node: ^20.19.0 || ^22.13.0 || >=23.5.0}
+    peerDependencies:
+      '@emnapi/core': ^1.7.1 || 2.0.0-beta.2
+      '@emnapi/runtime': ^1.7.1 || 2.0.0-beta.2
 
   '@nodable/entities@3.0.0':
     resolution: {integrity: sha512-8L9xFeTYKhm49xfIypoe2W5wV1m/3Z58kT+7kR9A8OyFxcPduI4VmxaUMQyKYrRjUoLLSXv6EKKID5Tvj9cUVw==}
@@ -2425,8 +2495,8 @@ packages:
   '@types/nlcst@2.0.3':
     resolution: {integrity: sha512-vSYNSDe6Ix3q+6Z7ri9lyWqgGhJTmzRjZRqyq15N0Z/1/UnVsno9G/N40NBijoYx2seFDIl0+B2mgAb9mezUCA==}
 
-  '@types/node@24.13.3':
-    resolution: {integrity: sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q==}
+  '@types/node@24.19.2':
+    resolution: {integrity: sha512-93d49wCWJkCyN87MxLpNN6KXPCwFw7bVUg79mGUV1OS40JGWwVCr8n61DXCSqz7CV6/VfPkb7xec7uP2M+QHWQ==}
 
   '@types/node@25.9.9':
     resolution: {integrity: sha512-b4e2xxj/yMeT2hNlD6x7zNFiQK2Dlmkb9CQ6v3/1G2RezKN4YS2lcEv8lzGm1mhs4f2lM4yNAMI/zUDBZBBt7w==}
@@ -2725,8 +2795,8 @@ packages:
     engines: {node: '>=0.4.0'}
     hasBin: true
 
-  ai@7.0.157:
-    resolution: {integrity: sha512-yvEkoRtVgmJ9cxdy6UWg67haYzJT0r/khe74L0BnFtZhyQUSmiovuvzHiYWqSroMYT8pedsZrP4vB3+6nCeHYg==}
+  ai@7.0.158:
+    resolution: {integrity: sha512-aG0m6KTU39e9dWoaepnWcuYhngc/9z8rEjI3rLV+UnzsYMS3F3BzKw/gOKuHNet2GiqdYyG5wrJauAu88b6Nuw==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -2847,8 +2917,8 @@ packages:
   bcp-47-match@2.0.3:
     resolution: {integrity: sha512-JtTezzbAibu8G0R9op9zb3vcWZd9JF6M0xOYGPn0fNCd7wOpRB1mU2mH9T8gaBGbAAyIIVgB2G7xG0GP98zMAQ==}
 
-  bcp-47@2.1.1:
-    resolution: {integrity: sha512-KLw+H/gd2p4zly1X7Yh/qziuyae5/w/QFnvTng9eZL5fvszL7Whl3MBoWF8yxL7ksUjBfOD+OxkytiqbBpG+Fw==}
+  bcp-47@2.1.2:
+    resolution: {integrity: sha512-wsv86UuNFuPnVieKLyECTT+CP1WSAHeoIg5P3xu2kA9Z+7fVPoKt7dxzSeEhtJel0AI+NW3fIW3KtTKQKUCngg==}
 
   bl@4.1.0:
     resolution: {integrity: sha512-1W07cM9gS6DcLperZfFSj+bWLtaPGSOHWhPiGzXmvVJbRLdG82sH/Kn8EtW1VqWVA54AKf2h5k5BbnIbwF3h6w==}
@@ -3199,6 +3269,9 @@ packages:
   es-module-lexer@3.0.3:
     resolution: {integrity: sha512-yWGe1O/j+almnV4hOYrmZo8u58JdnmXEMneRQAYkWtqSiT86yoMIEKF4rpqEDj52tbYl3xceBD3DQIBwcsC9Pw==}
 
+  es-module-lexer@3.0.4:
+    resolution: {integrity: sha512-BldNY5mwkVu+cQ5Ymn3e6hB9Sx8XHx4ZevWbiUyZbfKxJxYO27Hf0wfzkxIaD5CAJMaGl3YspKELj0ff/7nCMA==}
+
   esbuild@0.28.2:
     resolution: {integrity: sha512-HKVLS8dvII+xoKW9kmqxbRKrnWEXfJJr/FZhhJmiqIB0e053QNYFqOBouTMO/k5sID4MvCiUCvv8b9M4h32wIA==}
     engines: {node: '>=18'}
@@ -3434,6 +3507,9 @@ packages:
   hast-util-to-html@9.0.5:
     resolution: {integrity: sha512-OguPdidb+fbHQSU4Q4ZiLKnzWo8Wwsf5bZfbvu7//a9oTYoqD/fWpe96NuHkoS9h0ccGOTe0C4NGXdtS0iObOw==}
 
+  hast-util-to-html@9.0.6:
+    resolution: {integrity: sha512-1SZUxCN3TtJAE7e2BQN2MBHsoZ1gnmi9GoCP5Di59CSWptIezSAW09yDZyVbanb78V9eCwrKqdQsjtfVTxYHWA==}
+
   hast-util-to-mdast@10.1.2:
     resolution: {integrity: sha512-FiCRI7NmOvM4y+f5w32jPRzcxDIz+PUqDwEqn1A+1q2cdp3B8Gx7aVrXORdOKjMNDQsD1ogOr896+0jJHW1EFQ==}
 
@@ -3451,6 +3527,9 @@ packages:
 
   hastscript@9.0.1:
     resolution: {integrity: sha512-g7df9rMFX/SPi34tyGCyUBREQoKkapwdY/T04Qn9TDWfHhAYt4/I0gMVirzK5wEzeUqIjEB+LXC/ypb7Aqno5w==}
+
+  hastscript@9.0.3:
+    resolution: {integrity: sha512-1ALZXSmCGmW3h8AMz4R4+QKSKFi7sNgXLVwmwB8FYVtl1CwQ3WDkSAEY/d5tp1g/vbQgq2s1WlHgfO3jbw1TsA==}
 
   highlight.js@11.11.2:
     resolution: {integrity: sha512-oaXMACAU0kzOMXBjWpNcX+vlwSBCIAiZ9BHa7gA15NOTtT2L/l8OSZDuqS2XppOhZBPJ7hm4o8ep2kyuip2uEQ==}
@@ -3471,8 +3550,8 @@ packages:
   http-cache-semantics@4.3.0:
     resolution: {integrity: sha512-M5t5LlJpS1UHMjvwRQVdFHvPISGeLAxNcrWuJkeGh0KxsqCHZ1O3NXZU/8x7cD0BDcGW8kapxMKTvwlqrNkHkA==}
 
-  i18next@26.4.1:
-    resolution: {integrity: sha512-9YbX5E6gd1H+yaOSX3izCsPj5iWXyH7X4oC+iuHHJJw8AeHglzOK5SJf+1CHxaYKYigcea+8jvzSxqYx46YvyA==}
+  i18next@26.5.12:
+    resolution: {integrity: sha512-vTt8tc3y5axoU7wwTYg8vjpILLyP33a5GyGJAVI7FDRx1XueYxZVIkcVeStoftrVnAM/o28hKvK0sslucDI9aQ==}
     peerDependencies:
       typescript: ^5 || ^6 || ^7
     peerDependenciesMeta:
@@ -3668,6 +3747,9 @@ packages:
   magic-string@1.4.3:
     resolution: {integrity: sha512-z12OxmaPGE0F4xlpGdjuAUckipLpQlTAuAmyGhNoD7ODpYUzvDfvtxUbjM/jwznyP178oju/KDdyi220wNJ0RQ==}
 
+  magic-string@1.4.5:
+    resolution: {integrity: sha512-oLLC2+YvQUfAa+vxoufE/yc1icb87M9iXIRqAoR/2EhE/8cb3SF/+Gi0c2By1B+5Vz2e2vQtUvHiu1+63Znh+w==}
+
   magicast@0.5.5:
     resolution: {integrity: sha512-UicdXN8zQ3JHlxVq+28afMXPr1z7WNY6+7EJnzTdQWkTAlMLF5fNCCKxJHBQwGaNGR11581EiQmQzx73+MvszA==}
 
@@ -3684,11 +3766,17 @@ packages:
   mdast-util-directive@3.1.0:
     resolution: {integrity: sha512-I3fNFt+DHmpWCYAT7quoM6lHf9wuqtI+oCOfvILnoicNIqjh5E3dEJWiXuYME2gNe8vl1iMQwyUHa7bgFmak6Q==}
 
+  mdast-util-directive@3.2.0:
+    resolution: {integrity: sha512-Yxq+hH4pBEmtaLIJyMVcNbtBiCIKzdOK3HvDeM+JAqC8XVAT1e5PUYbHBpwFvQLIJuJfO2zCu7aNUXWoyZLmhw==}
+
   mdast-util-find-and-replace@3.0.2:
     resolution: {integrity: sha512-Tmd1Vg/m3Xz43afeNxDIhWRtFZgM2VLyaf4vSTYwudTyeuTneoL3qtWMA5jeLyz/O1vDJmmV4QuScFCA2tBPwg==}
 
   mdast-util-from-markdown@2.0.3:
     resolution: {integrity: sha512-W4mAWTvSlKvf8L6J+VN9yLSqQ9AOAAvHuoDAmPkz4dHf553m5gVj2ejadHJhoJmcmxEnOv6Pa8XJhpxE93kb8Q==}
+
+  mdast-util-from-markdown@2.1.0:
+    resolution: {integrity: sha512-KRLgmPaP2H1ul2bpoJkOS+9pAcDAAj9Nu1mqLnh8NLeJG5tlvj42TH80PIGBpROWlRXLk0lDrWNuZCFy/tsB4A==}
 
   mdast-util-gfm-autolink-literal@2.0.1:
     resolution: {integrity: sha512-5HVP2MKaP6L+G6YaxPNjuL0BPrq9orG3TsrZ9YXbA3vDw/ACI4MEsnoDpn6ZNm7GnZgtAcONJyPhOP8tNJQavQ==}
@@ -3729,6 +3817,9 @@ packages:
   mdast-util-to-markdown@2.1.2:
     resolution: {integrity: sha512-xj68wMTvGXVOKonmog6LwyJKrYXZPvlwabaryTjLh9LuvovB/KAH+kvi8Gjj+7rJjsFi23nkUxRQv1KqSroMqA==}
 
+  mdast-util-to-markdown@2.2.1:
+    resolution: {integrity: sha512-ThatlCBxG2GE+mljhNSfZPv56d3QrGiRh97jjYgIk80IzS4uU6d7cHAaexCYSAmUCCcOs3grJ07kX3oTGsFUOw==}
+
   mdast-util-to-string@4.0.0:
     resolution: {integrity: sha512-0H44vDimn51F0YwvxSJSm0eCDOJTRlmN0R1yBh4HLj9wiV1Dn0QoXGbvFAWj2hSItVTlCmBF1hqKlIyUBVFLPg==}
 
@@ -3743,6 +3834,9 @@ packages:
 
   micromark-core-commonmark@2.0.3:
     resolution: {integrity: sha512-RDBrHEMSxVFLg6xvnXmb1Ayr2WzLAWjeSATAoxwKYJV94TeNavgoIdA0a9ytzDSVzBy2YKFK+emCPOEibLeCrg==}
+
+  micromark-core-commonmark@2.0.4:
+    resolution: {integrity: sha512-wxEeE8v8XVvOrxn1TZj74qYhAtTQsSqufHVS3uNVyT1MupXxhyaHk8/9xDNPh9BmL77QNDgWTkZ3RsYHB2ry7w==}
 
   micromark-extension-directive@4.0.0:
     resolution: {integrity: sha512-/C2nqVmXXmiseSSuCdItCMho7ybwwop6RrrRPk0KbOHW21JKoCldC+8rFOaundDoRBUWBnJJcxeA/Kvi34WQXg==}
@@ -3795,6 +3889,9 @@ packages:
   micromark-factory-space@2.0.1:
     resolution: {integrity: sha512-zRkxjtBxxLd2Sc0d+fbnEunsTj46SWXgXciZmHq0kDYGnck/ZSGj9/wULTV95uoeYiK5hRXP2mJ98Uo4cq/LQg==}
 
+  micromark-factory-space@2.1.0:
+    resolution: {integrity: sha512-fS8hnLIjnjvdQIj39Geug8wWsR0HrYZ43KShKxNfwT7t2LOHo/LbWZEzEaSOjwtjdCsjoE6syHhonEzW0zv0+Q==}
+
   micromark-factory-title@2.0.1:
     resolution: {integrity: sha512-5bZ+3CjhAd9eChYTHsjy6TGxpOFSKgKKJPJxr293jTbfry2KDoWkhBb6TcPVB4NmzaPhMs1Frm9AZH7OD4Cjzw==}
 
@@ -3818,6 +3915,9 @@ packages:
 
   micromark-util-decode-string@2.0.1:
     resolution: {integrity: sha512-nDV/77Fj6eH1ynwscYTOsbK7rR//Uj0bZXBwJZRfaLEJ1iGBR6kIfNmlNqaqJf649EP0F3NWNdeJi03elllNUQ==}
+
+  micromark-util-edit-map@1.0.0:
+    resolution: {integrity: sha512-Pa2ljlsEL6sVwFaYeyrOLSYbQt73JvGbPOYFq+9AElXiSnfI5Q4465RRZ1sHv7lDjDOnGRDDaqPXqClqWK/q1Q==}
 
   micromark-util-encode@2.0.1:
     resolution: {integrity: sha512-c3cVx2y4KqUnwopcO9b/SCdo2O67LwJJ/UyqGfbigahfegL9myoEFoDYZgkT7f36T0bLrM9hZTAaAyH+PCAXjw==}
@@ -3846,8 +3946,14 @@ packages:
   micromark-util-types@2.0.2:
     resolution: {integrity: sha512-Yw0ECSpJoViF1qTU4DC6NwtC4aWGt1EkzaQB8KPPyCRR8z9TWeV0HbEFGTO+ZY1wB22zmxnJqhPyTpOVCpeHTA==}
 
+  micromark-util-types@2.0.3:
+    resolution: {integrity: sha512-oxB2Ik03hI0gv+VNn9tnh1t1YEe9MDPptViAEgfdf3YQHsn0pzGTgCdlSCJXcwhqm8phaEuM7zeEu3QQzVBrPg==}
+
   micromark@4.0.2:
     resolution: {integrity: sha512-zpe98Q6kvavpCr1NPVSCMebCKfD7CA2NqZ+rykeNhONIJBpc1tFKt9hucLGwha3jNTNI8lHpctWJWoimVF4PfA==}
+
+  micromark@4.0.3:
+    resolution: {integrity: sha512-oGYfQzHSG5dOMovQcJ3fyTmZlWAWpi0XA0sJwJs+i6OT88o1+Jtw/8z0CmdowSLxGhhFK89rQ/oXph/wN02PNw==}
 
   micromatch@4.0.8:
     resolution: {integrity: sha512-PXwfBhYu0hBCPw8Dn0E+WDYb7af3dSLVWKi3HGv84IdF4TyFoC0ysxFd0Goxw7nSv4T/PzEJQxsYsEiFCKo2BA==}
@@ -3918,8 +4024,8 @@ packages:
     resolution: {integrity: sha512-LA4ZjwlnUblHVgq0oBF3Jl/6h/Nvs5fzBLwdEF4nuxnFdsfajde4WfxtJr3CaiH+F6ewcIB/q4jQ4UzPyid+CQ==}
     hasBin: true
 
-  node-html-parser@9.0.5:
-    resolution: {integrity: sha512-LpUc74Ax3L6AsxTEqoep0GDqCBbsPjtn74sYaiazxGXfwhe6iqD4E5sHTJFCU+wBxVMX+Dd7mvLim0QM1vsvpw==}
+  node-html-parser@9.0.6:
+    resolution: {integrity: sha512-q3ETJ2gU+VlERyYbiJ5JQ6+mMVV1Bc6mZQ7MdJ30moq+h3oN0kQGj3rWDORaSX1SOLSkPbY/bN+sBzDlliVOBA==}
 
   node-liblzma@2.2.0:
     resolution: {integrity: sha512-s0KzNOWwOJJgPG6wxg6cKohnAl9Wk/oW1KrQaVzJBjQwVcUGPQCzpR46Ximygjqj/3KhOrtJXnYMp/xYAXp75g==}
@@ -4243,6 +4349,9 @@ packages:
   satteri@0.10.5:
     resolution: {integrity: sha512-Ao1LKpAEa9Wdg0otgbVKViZHEq9ebdXe4DMrp3s9vQAU0HNIuHnFEuMuOcm0ZIXyV0Yzxj91NvhLpvXZJO/5ZQ==}
 
+  satteri@0.11.6:
+    resolution: {integrity: sha512-ddGCTqSfwL+A+odhdjj8E+ZMu1h0QEnG3VTmu7fPJL2+80GdjxDh1AeCw8mn2aa95eQSosG4e2QBYYfCc5nyiA==}
+
   satteri@0.9.5:
     resolution: {integrity: sha512-ZuWVl+vnM64y+/TtX8Kosv2c00W+hLQiiwnEL6H0UKVVrxFqMw4D2CJHHQaouVd89OAhtBBfjWLqhKi3TVUV4w==}
 
@@ -4357,9 +4466,8 @@ packages:
     peerDependencies:
       '@astrojs/starlight': '>=0.41.0'
 
-  starlight-typedoc@0.23.1:
-    resolution: {integrity: sha512-H45Mxv4mZ1xUMhUNjTR4CwKDgKKHZboQA5v5+vTVMdjlCX02Xo7veTB7+F/ivmMHPmQ7SV5auF2BTlU/EpQIoQ==}
-    engines: {node: '>=22.12.0'}
+  starlight-typedoc@0.23.2:
+    resolution: {integrity: sha512-aErehRvL12eAhRAL8n68A6HgEOTd1+loT+tRfeq5UxECzMsThvqdFZaKyCam8b01uhMUDcOcEnqJGh5VnPzxyA==}
     peerDependencies:
       '@astrojs/starlight': '>=0.39.0'
       astro: '>=6.0.0'
@@ -4560,9 +4668,6 @@ packages:
   uncrypto@0.1.3:
     resolution: {integrity: sha512-Ql87qFHB3s/De2ClA9e0gsnS6zXG27SkTiSJwjCc9MebbfapQfuPzumMIUMi38ezPZVNFcHI9sUIepeQfw8J8Q==}
 
-  undici-types@7.18.2:
-    resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
-
   undici-types@7.24.6:
     resolution: {integrity: sha512-WRNW+sJgj5OBN4/0JpHFqtqzhpbnV0GuB+OozA9gCL7a993SmU+1JBZCzLNxYsbMfIeDL+lTsphD5jN5N+n0zg==}
 
@@ -4613,8 +4718,14 @@ packages:
   unist-util-visit-parents@6.0.2:
     resolution: {integrity: sha512-goh1s1TBrqSqukSc8wrjwWhL0hiJxgA8m4kFxGlQ+8FYQ3C/m11FcTs4YYem7V664AhHVvgoQLk890Ssdsr2IQ==}
 
+  unist-util-visit-parents@6.1.0:
+    resolution: {integrity: sha512-vKXxz6O38sKDj1mtx/k2cWvkkFBuYGx6uGrlzBkVeWCRF/F8sdI0j3Wbkz/5rVNRRuVc8UrgRdbCxNhmYXgP3w==}
+
   unist-util-visit@5.1.0:
     resolution: {integrity: sha512-m+vIdyeCOpdr/QeQCu2EzxX/ohgS8KbnPDgFni4dQsfSCtpz8UqDyY5GjRru8PDKuYn7Fq19j1CQ+nJSsGKOzg==}
+
+  unist-util-visit@5.2.0:
+    resolution: {integrity: sha512-fpsYs/VVoZxfGY9/j3FQpZmN8wdLJaV1Pt38AaJNZu9uKIHcFU3halCdBveEq1HGKO1OEfJY65w1zvoFV1b3qQ==}
 
   unstorage@1.17.5:
     resolution: {integrity: sha512-0i3iqvRfx29hkNntHyQvJTpf5W9dQ9ZadSoRU8+xVlhVtT7jAX57fazYO9EHvcRCfBCyi5YRya7XCDOsbTgkPg==}
@@ -4999,52 +5110,52 @@ packages:
 
 snapshots:
 
-  '@ai-sdk/amazon-bedrock@5.0.128(zod@4.6.7)':
+  '@ai-sdk/amazon-bedrock@5.0.129(zod@4.6.7)':
     dependencies:
-      '@ai-sdk/anthropic': 4.0.92(zod@4.6.7)
-      '@ai-sdk/openai': 4.0.105(zod@4.6.7)
-      '@ai-sdk/provider': 4.0.34
-      '@ai-sdk/provider-utils': 5.0.71(zod@4.6.7)
+      '@ai-sdk/anthropic': 4.0.93(zod@4.6.7)
+      '@ai-sdk/openai': 4.0.106(zod@4.6.7)
+      '@ai-sdk/provider': 4.0.35
+      '@ai-sdk/provider-utils': 5.0.72(zod@4.6.7)
       '@smithy/eventstream-codec': 4.4.16
       '@smithy/util-utf8': 4.4.16
       aws4fetch: 1.0.20
       zod: 4.6.7
 
-  '@ai-sdk/anthropic@4.0.92(zod@4.6.7)':
+  '@ai-sdk/anthropic@4.0.93(zod@4.6.7)':
     dependencies:
-      '@ai-sdk/provider': 4.0.34
-      '@ai-sdk/provider-utils': 5.0.71(zod@4.6.7)
+      '@ai-sdk/provider': 4.0.35
+      '@ai-sdk/provider-utils': 5.0.72(zod@4.6.7)
       zod: 4.6.7
 
-  '@ai-sdk/gateway@4.0.130(zod@4.6.7)':
+  '@ai-sdk/gateway@4.0.131(zod@4.6.7)':
     dependencies:
-      '@ai-sdk/provider': 4.0.34
-      '@ai-sdk/provider-utils': 5.0.71(zod@4.6.7)
+      '@ai-sdk/provider': 4.0.35
+      '@ai-sdk/provider-utils': 5.0.72(zod@4.6.7)
       '@vercel/oidc': 3.2.0
       zod: 4.6.7
 
-  '@ai-sdk/openai-compatible@3.0.81(zod@4.6.7)':
+  '@ai-sdk/openai-compatible@3.0.82(zod@4.6.7)':
     dependencies:
-      '@ai-sdk/provider': 4.0.34
-      '@ai-sdk/provider-utils': 5.0.71(zod@4.6.7)
+      '@ai-sdk/provider': 4.0.35
+      '@ai-sdk/provider-utils': 5.0.72(zod@4.6.7)
       zod: 4.6.7
 
-  '@ai-sdk/openai@4.0.105(zod@4.6.7)':
+  '@ai-sdk/openai@4.0.106(zod@4.6.7)':
     dependencies:
-      '@ai-sdk/provider': 4.0.34
-      '@ai-sdk/provider-utils': 5.0.71(zod@4.6.7)
+      '@ai-sdk/provider': 4.0.35
+      '@ai-sdk/provider-utils': 5.0.72(zod@4.6.7)
       zod: 4.6.7
 
-  '@ai-sdk/provider-utils@5.0.71(zod@4.6.7)':
+  '@ai-sdk/provider-utils@5.0.72(zod@4.6.7)':
     dependencies:
-      '@ai-sdk/provider': 4.0.34
+      '@ai-sdk/provider': 4.0.35
       '@standard-schema/spec': 1.1.0
       '@workflow/serde': 4.1.0
       eventsource-parser: 3.1.1
       undici: 7.30.1
       zod: 4.6.7
 
-  '@ai-sdk/provider@4.0.34':
+  '@ai-sdk/provider@4.0.35':
     dependencies:
       json-schema: 0.4.0
 
@@ -5230,6 +5341,13 @@ snapshots:
       astro: 7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1)
       es-module-lexer: 2.3.2
 
+  '@astrojs/mdx@8.1.2(@astrojs/markdown-satteri@0.4.6)(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))':
+    dependencies:
+      '@astrojs/internal-helpers': 0.13.0
+      '@astrojs/markdown-satteri': 0.4.6
+      astro: 7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1)
+      es-module-lexer: 3.0.4
+
   '@astrojs/prism@4.0.2':
     dependencies:
       prismjs: 1.30.0
@@ -5243,10 +5361,10 @@ snapshots:
       sitemap: 9.0.1
       zod: 4.6.7
 
-  '@astrojs/starlight@0.42.7(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)':
+  '@astrojs/starlight@0.42.8(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)':
     dependencies:
       '@astrojs/markdown-satteri': 0.4.6
-      '@astrojs/mdx': 8.0.1(@astrojs/markdown-satteri@0.4.6)(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))
+      '@astrojs/mdx': 8.1.2(@astrojs/markdown-satteri@0.4.6)(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))
       '@astrojs/sitemap': 3.7.4
       '@pagefind/default-ui': 1.5.2
       '@types/hast': 3.0.5
@@ -5254,25 +5372,25 @@ snapshots:
       '@types/mdast': 4.0.4
       astro: 7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1)
       astro-expressive-code: 0.44.3(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))
-      bcp-47: 2.1.1
+      bcp-47: 2.1.2
       hast-util-format: 1.1.0
       hast-util-select: 6.0.4
-      hast-util-to-html: 9.0.5
+      hast-util-to-html: 9.0.6
       hast-util-to-string: 3.0.1
-      hastscript: 9.0.1
-      i18next: 26.4.1(typescript@6.0.3)
+      hastscript: 9.0.3
+      i18next: 26.5.12(typescript@6.0.3)
       js-yaml: 4.3.2
       klona: 2.0.6
-      magic-string: 1.4.3
-      mdast-util-directive: 3.1.0(supports-color@10.2.2)
-      mdast-util-to-markdown: 2.1.2
+      magic-string: 1.4.5
+      mdast-util-directive: 3.2.0(supports-color@10.2.2)
+      mdast-util-to-markdown: 2.2.1
       mdast-util-to-string: 4.0.0
       pagefind: 1.5.2
       remark-directive: 4.0.0(supports-color@10.2.2)
       satteri: 0.10.5
       ultrahtml: 1.7.0
       unified: 11.0.5
-      unist-util-visit: 5.1.0
+      unist-util-visit: 5.2.0
       vfile: 6.0.3
     transitivePeerDependencies:
       - supports-color
@@ -5585,7 +5703,13 @@ snapshots:
 
   '@borewit/text-codec@0.2.2': {}
 
+  '@bruits/satteri-android-arm64@0.11.6':
+    optional: true
+
   '@bruits/satteri-darwin-arm64@0.10.5':
+    optional: true
+
+  '@bruits/satteri-darwin-arm64@0.11.6':
     optional: true
 
   '@bruits/satteri-darwin-arm64@0.9.5':
@@ -5594,10 +5718,19 @@ snapshots:
   '@bruits/satteri-darwin-x64@0.10.5':
     optional: true
 
+  '@bruits/satteri-darwin-x64@0.11.6':
+    optional: true
+
   '@bruits/satteri-darwin-x64@0.9.5':
     optional: true
 
+  '@bruits/satteri-freebsd-x64@0.11.6':
+    optional: true
+
   '@bruits/satteri-linux-arm64-gnu@0.10.5':
+    optional: true
+
+  '@bruits/satteri-linux-arm64-gnu@0.11.6':
     optional: true
 
   '@bruits/satteri-linux-arm64-gnu@0.9.5':
@@ -5606,16 +5739,25 @@ snapshots:
   '@bruits/satteri-linux-arm64-musl@0.10.5':
     optional: true
 
+  '@bruits/satteri-linux-arm64-musl@0.11.6':
+    optional: true
+
   '@bruits/satteri-linux-arm64-musl@0.9.5':
     optional: true
 
   '@bruits/satteri-linux-x64-gnu@0.10.5':
     optional: true
 
+  '@bruits/satteri-linux-x64-gnu@0.11.6':
+    optional: true
+
   '@bruits/satteri-linux-x64-gnu@0.9.5':
     optional: true
 
   '@bruits/satteri-linux-x64-musl@0.10.5':
+    optional: true
+
+  '@bruits/satteri-linux-x64-musl@0.11.6':
     optional: true
 
   '@bruits/satteri-linux-x64-musl@0.9.5':
@@ -5625,23 +5767,36 @@ snapshots:
     dependencies:
       '@emnapi/core': 1.11.1
       '@emnapi/runtime': 1.11.1
-      '@napi-rs/wasm-runtime': 1.2.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)
+      '@napi-rs/wasm-runtime': 1.2.4(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)
+    optional: true
+
+  '@bruits/satteri-wasm32-wasi@0.11.6':
+    dependencies:
+      '@emnapi/core': 1.11.1
+      '@emnapi/runtime': 1.11.1
+      '@napi-rs/wasm-runtime': 1.2.6(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)
     optional: true
 
   '@bruits/satteri-wasm32-wasi@0.9.5':
     dependencies:
       '@emnapi/core': 1.11.1
       '@emnapi/runtime': 1.11.1
-      '@napi-rs/wasm-runtime': 1.2.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)
+      '@napi-rs/wasm-runtime': 1.2.4(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)
     optional: true
 
   '@bruits/satteri-win32-arm64-msvc@0.10.5':
+    optional: true
+
+  '@bruits/satteri-win32-arm64-msvc@0.11.6':
     optional: true
 
   '@bruits/satteri-win32-arm64-msvc@0.9.5':
     optional: true
 
   '@bruits/satteri-win32-x64-msvc@0.10.5':
+    optional: true
+
+  '@bruits/satteri-win32-x64-msvc@0.11.6':
     optional: true
 
   '@bruits/satteri-win32-x64-msvc@0.9.5':
@@ -5889,7 +6044,7 @@ snapshots:
 
   '@d2lang/d2@0.1.34': {}
 
-  '@effect/platform-node-shared@4.0.6(effect@4.0.6)':
+  '@effect/platform-node-shared@4.1.0(effect@4.0.6)':
     dependencies:
       '@types/ws': 8.18.2
       effect: 4.0.6
@@ -5898,9 +6053,9 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node@4.0.6(effect@4.0.6)(redis@6.2.1)':
+  '@effect/platform-node@4.1.0(effect@4.0.6)(redis@6.2.1)':
     dependencies:
-      '@effect/platform-node-shared': 4.0.6(effect@4.0.6)
+      '@effect/platform-node-shared': 4.1.0(effect@4.0.6)
       effect: 4.0.6
       redis: 6.2.1
       undici: 8.12.3
@@ -5908,7 +6063,7 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@effect/vitest@4.0.6(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))':
+  '@effect/vitest@4.1.0(effect@4.0.6)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))':
     dependencies:
       effect: 4.0.6
       vitest: 5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1))
@@ -6231,7 +6386,7 @@ snapshots:
       prebuild-install: 7.1.3
     optional: true
 
-  '@napi-rs/wasm-runtime@1.2.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)':
+  '@napi-rs/wasm-runtime@1.2.4(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)':
     dependencies:
       '@emnapi/core': 1.11.1
       '@emnapi/runtime': 1.11.1
@@ -6243,6 +6398,13 @@ snapshots:
       '@emnapi/core': 1.11.3
       '@emnapi/runtime': 1.11.3
       '@tybys/wasm-util': 0.10.3
+
+  '@napi-rs/wasm-runtime@1.2.6(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)':
+    dependencies:
+      '@emnapi/core': 1.11.1
+      '@emnapi/runtime': 1.11.1
+      '@tybys/wasm-util': 0.10.3
+    optional: true
 
   '@nodable/entities@3.0.0': {}
 
@@ -6563,9 +6725,9 @@ snapshots:
     dependencies:
       '@types/unist': 3.0.3
 
-  '@types/node@24.13.3':
+  '@types/node@24.19.2':
     dependencies:
-      undici-types: 7.18.2
+      undici-types: 7.24.6
 
   '@types/node@25.9.9':
     dependencies:
@@ -6787,11 +6949,11 @@ snapshots:
 
   acorn@8.18.0: {}
 
-  ai@7.0.157(zod@4.6.7):
+  ai@7.0.158(zod@4.6.7):
     dependencies:
-      '@ai-sdk/gateway': 4.0.130(zod@4.6.7)
-      '@ai-sdk/provider': 4.0.34
-      '@ai-sdk/provider-utils': 5.0.71(zod@4.6.7)
+      '@ai-sdk/gateway': 4.0.131(zod@4.6.7)
+      '@ai-sdk/provider': 4.0.35
+      '@ai-sdk/provider-utils': 5.0.72(zod@4.6.7)
       zod: 4.6.7
 
   ajv-draft-04@1.0.0(ajv@8.20.0):
@@ -6975,7 +7137,7 @@ snapshots:
 
   bcp-47-match@2.0.3: {}
 
-  bcp-47@2.1.1:
+  bcp-47@2.1.2:
     dependencies:
       is-alphabetical: 2.0.1
       is-alphanumerical: 2.0.1
@@ -7308,6 +7470,8 @@ snapshots:
 
   es-module-lexer@3.0.3: {}
 
+  es-module-lexer@3.0.4: {}
+
   esbuild@0.28.2:
     optionalDependencies:
       '@esbuild/aix-ppc64': 0.28.2
@@ -7538,7 +7702,7 @@ snapshots:
       hast-util-phrasing: 3.0.1
       hast-util-whitespace: 3.0.0
       html-whitespace-sensitive-tag-names: 3.0.1
-      unist-util-visit-parents: 6.0.2
+      unist-util-visit-parents: 6.1.0
 
   hast-util-from-html@2.0.3:
     dependencies:
@@ -7623,10 +7787,24 @@ snapshots:
       nth-check: 2.1.1
       property-information: 7.2.0
       space-separated-tokens: 2.0.2
-      unist-util-visit: 5.1.0
+      unist-util-visit: 5.2.0
       zwitch: 2.0.4
 
   hast-util-to-html@9.0.5:
+    dependencies:
+      '@types/hast': 3.0.5
+      '@types/unist': 3.0.3
+      ccount: 2.0.1
+      comma-separated-tokens: 2.0.3
+      hast-util-whitespace: 3.0.0
+      html-void-elements: 3.0.0
+      mdast-util-to-hast: 13.2.1
+      property-information: 7.2.0
+      space-separated-tokens: 2.0.2
+      stringify-entities: 4.0.4
+      zwitch: 2.0.4
+
+  hast-util-to-html@9.0.6:
     dependencies:
       '@types/hast': 3.0.5
       '@types/unist': 3.0.3
@@ -7690,6 +7868,14 @@ snapshots:
       property-information: 7.2.0
       space-separated-tokens: 2.0.2
 
+  hastscript@9.0.3:
+    dependencies:
+      '@types/hast': 3.0.5
+      comma-separated-tokens: 2.0.3
+      hast-util-parse-selector: 4.0.0
+      property-information: 7.2.0
+      space-separated-tokens: 2.0.2
+
   highlight.js@11.11.2: {}
 
   hookable@6.1.2: {}
@@ -7702,7 +7888,7 @@ snapshots:
 
   http-cache-semantics@4.3.0: {}
 
-  i18next@26.4.1(typescript@6.0.3):
+  i18next@26.5.12(typescript@6.0.3):
     optionalDependencies:
       typescript: 6.0.3
 
@@ -7865,6 +8051,10 @@ snapshots:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.6.0
 
+  magic-string@1.4.5:
+    dependencies:
+      '@jridgewell/sourcemap-codec': 1.6.0
+
   magicast@0.5.5:
     dependencies:
       '@babel/parser': 7.29.8
@@ -7902,6 +8092,20 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  mdast-util-directive@3.2.0(supports-color@10.2.2):
+    dependencies:
+      '@types/mdast': 4.0.4
+      '@types/unist': 3.0.3
+      ccount: 2.0.1
+      devlop: 1.1.0
+      mdast-util-from-markdown: 2.1.0(supports-color@10.2.2)
+      mdast-util-to-markdown: 2.2.1
+      micromark-util-character: 2.1.1
+      parse-entities: 4.0.2
+      stringify-entities: 4.0.4
+    transitivePeerDependencies:
+      - supports-color
+
   mdast-util-find-and-replace@3.0.2:
     dependencies:
       '@types/mdast': 4.0.4
@@ -7922,6 +8126,23 @@ snapshots:
       micromark-util-normalize-identifier: 2.0.1
       micromark-util-symbol: 2.0.1
       micromark-util-types: 2.0.2
+      unist-util-stringify-position: 4.0.0
+    transitivePeerDependencies:
+      - supports-color
+
+  mdast-util-from-markdown@2.1.0(supports-color@10.2.2):
+    dependencies:
+      '@types/mdast': 4.0.4
+      '@types/unist': 3.0.3
+      decode-named-character-reference: 1.3.0
+      devlop: 1.1.0
+      mdast-util-to-string: 4.0.0
+      micromark: 4.0.3(supports-color@10.2.2)
+      micromark-util-decode-numeric-character-reference: 2.0.2
+      micromark-util-decode-string: 2.0.1
+      micromark-util-normalize-identifier: 2.0.1
+      micromark-util-symbol: 2.0.1
+      micromark-util-types: 2.0.3
       unist-util-stringify-position: 4.0.0
     transitivePeerDependencies:
       - supports-color
@@ -8061,6 +8282,20 @@ snapshots:
       unist-util-visit: 5.1.0
       zwitch: 2.0.4
 
+  mdast-util-to-markdown@2.2.1:
+    dependencies:
+      '@types/mdast': 4.0.4
+      '@types/unist': 3.0.3
+      longest-streak: 3.1.0
+      mdast-util-phrasing: 4.1.0
+      mdast-util-to-string: 4.0.0
+      micromark-util-character: 2.1.1
+      micromark-util-classify-character: 2.0.1
+      micromark-util-decode-string: 2.0.1
+      micromark-util-html-tag-name: 2.0.1
+      unist-util-visit: 5.2.0
+      zwitch: 2.0.4
+
   mdast-util-to-string@4.0.0:
     dependencies:
       '@types/mdast': 4.0.4
@@ -8090,14 +8325,34 @@ snapshots:
       micromark-util-symbol: 2.0.1
       micromark-util-types: 2.0.2
 
+  micromark-core-commonmark@2.0.4:
+    dependencies:
+      decode-named-character-reference: 1.3.0
+      devlop: 1.1.0
+      micromark-factory-destination: 2.0.1
+      micromark-factory-label: 2.0.1
+      micromark-factory-space: 2.1.0
+      micromark-factory-title: 2.0.1
+      micromark-factory-whitespace: 2.0.1
+      micromark-util-character: 2.1.1
+      micromark-util-chunked: 2.0.1
+      micromark-util-classify-character: 2.0.1
+      micromark-util-edit-map: 1.0.0
+      micromark-util-html-tag-name: 2.0.1
+      micromark-util-normalize-identifier: 2.0.1
+      micromark-util-resolve-all: 2.0.1
+      micromark-util-subtokenize: 2.1.0
+      micromark-util-symbol: 2.0.1
+      micromark-util-types: 2.0.3
+
   micromark-extension-directive@4.0.0:
     dependencies:
       devlop: 1.1.0
-      micromark-factory-space: 2.0.1
+      micromark-factory-space: 2.1.0
       micromark-factory-whitespace: 2.0.1
       micromark-util-character: 2.1.1
       micromark-util-symbol: 2.0.1
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
       parse-entities: 4.0.2
 
   micromark-extension-gfm-autolink-literal@2.1.0:
@@ -8213,14 +8468,14 @@ snapshots:
     dependencies:
       micromark-util-character: 2.1.1
       micromark-util-symbol: 2.0.1
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
 
   micromark-factory-label@2.0.1:
     dependencies:
       devlop: 1.1.0
       micromark-util-character: 2.1.1
       micromark-util-symbol: 2.0.1
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
 
   micromark-factory-mdx-expression@2.0.3:
     dependencies:
@@ -8239,24 +8494,29 @@ snapshots:
       micromark-util-character: 2.1.1
       micromark-util-types: 2.0.2
 
+  micromark-factory-space@2.1.0:
+    dependencies:
+      micromark-util-character: 2.1.1
+      micromark-util-types: 2.0.3
+
   micromark-factory-title@2.0.1:
     dependencies:
-      micromark-factory-space: 2.0.1
+      micromark-factory-space: 2.1.0
       micromark-util-character: 2.1.1
       micromark-util-symbol: 2.0.1
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
 
   micromark-factory-whitespace@2.0.1:
     dependencies:
-      micromark-factory-space: 2.0.1
+      micromark-factory-space: 2.1.0
       micromark-util-character: 2.1.1
       micromark-util-symbol: 2.0.1
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
 
   micromark-util-character@2.1.1:
     dependencies:
       micromark-util-symbol: 2.0.1
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
 
   micromark-util-chunked@2.0.1:
     dependencies:
@@ -8266,7 +8526,7 @@ snapshots:
     dependencies:
       micromark-util-character: 2.1.1
       micromark-util-symbol: 2.0.1
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
 
   micromark-util-combine-extensions@2.0.1:
     dependencies:
@@ -8283,6 +8543,10 @@ snapshots:
       micromark-util-character: 2.1.1
       micromark-util-decode-numeric-character-reference: 2.0.2
       micromark-util-symbol: 2.0.1
+
+  micromark-util-edit-map@1.0.0:
+    dependencies:
+      micromark-util-types: 2.0.3
 
   micromark-util-encode@2.0.1: {}
 
@@ -8304,7 +8568,7 @@ snapshots:
 
   micromark-util-resolve-all@2.0.1:
     dependencies:
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
 
   micromark-util-sanitize-uri@2.0.1:
     dependencies:
@@ -8317,11 +8581,13 @@ snapshots:
       devlop: 1.1.0
       micromark-util-chunked: 2.0.1
       micromark-util-symbol: 2.0.1
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
 
   micromark-util-symbol@2.0.1: {}
 
   micromark-util-types@2.0.2: {}
+
+  micromark-util-types@2.0.3: {}
 
   micromark@4.0.2(supports-color@10.2.2):
     dependencies:
@@ -8342,6 +8608,29 @@ snapshots:
       micromark-util-subtokenize: 2.1.0
       micromark-util-symbol: 2.0.1
       micromark-util-types: 2.0.2
+    transitivePeerDependencies:
+      - supports-color
+
+  micromark@4.0.3(supports-color@10.2.2):
+    dependencies:
+      '@types/debug': 4.1.13
+      debug: 4.4.3(supports-color@10.2.2)
+      decode-named-character-reference: 1.3.0
+      devlop: 1.1.0
+      micromark-core-commonmark: 2.0.4
+      micromark-factory-space: 2.1.0
+      micromark-util-character: 2.1.1
+      micromark-util-chunked: 2.0.1
+      micromark-util-combine-extensions: 2.0.1
+      micromark-util-decode-numeric-character-reference: 2.0.2
+      micromark-util-edit-map: 1.0.0
+      micromark-util-encode: 2.0.1
+      micromark-util-normalize-identifier: 2.0.1
+      micromark-util-resolve-all: 2.0.1
+      micromark-util-sanitize-uri: 2.0.1
+      micromark-util-subtokenize: 2.1.0
+      micromark-util-symbol: 2.0.1
+      micromark-util-types: 2.0.3
     transitivePeerDependencies:
       - supports-color
 
@@ -8401,7 +8690,7 @@ snapshots:
   node-gyp-build@4.8.4:
     optional: true
 
-  node-html-parser@9.0.5:
+  node-html-parser@9.0.6:
     dependencies:
       css-select: 5.2.2
       entities: 8.1.0
@@ -8690,7 +8979,7 @@ snapshots:
   remark-directive@4.0.0(supports-color@10.2.2):
     dependencies:
       '@types/mdast': 4.0.4
-      mdast-util-directive: 3.1.0(supports-color@10.2.2)
+      mdast-util-directive: 3.2.0(supports-color@10.2.2)
       micromark-extension-directive: 4.0.0
       unified: 11.0.5
     transitivePeerDependencies:
@@ -8841,6 +9130,25 @@ snapshots:
       '@bruits/satteri-win32-arm64-msvc': 0.10.5
       '@bruits/satteri-win32-x64-msvc': 0.10.5
 
+  satteri@0.11.6:
+    dependencies:
+      '@types/estree-jsx': 1.0.5
+      '@types/hast': 3.0.5
+      '@types/mdast': 4.0.4
+      '@types/unist': 3.0.3
+    optionalDependencies:
+      '@bruits/satteri-android-arm64': 0.11.6
+      '@bruits/satteri-darwin-arm64': 0.11.6
+      '@bruits/satteri-darwin-x64': 0.11.6
+      '@bruits/satteri-freebsd-x64': 0.11.6
+      '@bruits/satteri-linux-arm64-gnu': 0.11.6
+      '@bruits/satteri-linux-arm64-musl': 0.11.6
+      '@bruits/satteri-linux-x64-gnu': 0.11.6
+      '@bruits/satteri-linux-x64-musl': 0.11.6
+      '@bruits/satteri-wasm32-wasi': 0.11.6
+      '@bruits/satteri-win32-arm64-msvc': 0.11.6
+      '@bruits/satteri-win32-x64-msvc': 0.11.6
+
   satteri@0.9.5:
     dependencies:
       '@types/estree-jsx': 1.0.5
@@ -8929,7 +9237,7 @@ snapshots:
 
   sitemap@9.0.1:
     dependencies:
-      '@types/node': 24.13.3
+      '@types/node': 24.19.2
       '@types/sax': 1.2.7
       arg: 5.0.2
       sax: 1.6.1
@@ -8949,17 +9257,17 @@ snapshots:
   standard-as-callback@2.1.0:
     optional: true
 
-  starlight-base-path@0.2.1(@astrojs/starlight@0.42.7(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1)):
+  starlight-base-path@0.2.1(@astrojs/starlight@0.42.8(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1)):
     dependencies:
-      '@astrojs/starlight': 0.42.7(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)
+      '@astrojs/starlight': 0.42.8(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)
       astro: 7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1)
       unist-util-visit: 5.1.0
 
-  starlight-heading-badges@0.8.0(@astrojs/starlight@0.42.7(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(supports-color@10.2.2):
+  starlight-heading-badges@0.8.0(@astrojs/starlight@0.42.8(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(supports-color@10.2.2):
     dependencies:
       '@astrojs/markdown-remark': 7.2.2(supports-color@10.2.2)
       '@astrojs/markdown-satteri': 0.3.7
-      '@astrojs/starlight': 0.42.7(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)
+      '@astrojs/starlight': 0.42.8(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)
       github-slugger: 2.0.0
       mdast-util-directive: 3.1.0(supports-color@10.2.2)
       satteri: 0.9.5
@@ -8967,10 +9275,10 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  starlight-links-validator@0.27.0(@astrojs/starlight@0.42.7(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2):
+  starlight-links-validator@0.27.0(@astrojs/starlight@0.42.8(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2):
     dependencies:
       '@astrojs/markdown-satteri': 0.4.6
-      '@astrojs/starlight': 0.42.7(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)
+      '@astrojs/starlight': 0.42.8(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)
       astro: 7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1)
       github-slugger: 2.0.0
       hast-util-from-html: 2.0.3
@@ -8985,10 +9293,10 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  starlight-llms-txt@0.12.0(@astrojs/markdown-satteri@0.4.6)(@astrojs/starlight@0.42.7(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2):
+  starlight-llms-txt@0.12.0(@astrojs/markdown-satteri@0.4.6)(@astrojs/starlight@0.42.8(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2):
     dependencies:
       '@astrojs/mdx': 8.0.1(@astrojs/markdown-satteri@0.4.6)(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))
-      '@astrojs/starlight': 0.42.7(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)
+      '@astrojs/starlight': 0.42.8(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)
       '@types/hast': 3.0.5
       '@types/micromatch': 4.0.10
       astro: 7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1)
@@ -9006,9 +9314,9 @@ snapshots:
       - '@astrojs/markdown-satteri'
       - supports-color
 
-  starlight-md-txt@0.1.1(@astrojs/starlight@0.42.7(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2):
+  starlight-md-txt@0.1.1(@astrojs/starlight@0.42.8(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2):
     dependencies:
-      '@astrojs/starlight': 0.42.7(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)
+      '@astrojs/starlight': 0.42.8(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)
       astro: 7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1)
       remark-mdx: 3.1.1(supports-color@10.2.2)
       remark-parse: 11.0.0(supports-color@10.2.2)
@@ -9018,13 +9326,13 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  starlight-scroll-to-top@2.0.0(@astrojs/starlight@0.42.7(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)):
+  starlight-scroll-to-top@2.0.0(@astrojs/starlight@0.42.8(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)):
     dependencies:
-      '@astrojs/starlight': 0.42.7(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)
+      '@astrojs/starlight': 0.42.8(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)
 
-  starlight-typedoc@0.23.1(@astrojs/starlight@0.42.7(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(typedoc-plugin-markdown@4.14.1(typedoc@0.28.20(typescript@6.0.3)))(typedoc@0.28.20(typescript@6.0.3)):
+  starlight-typedoc@0.23.2(@astrojs/starlight@0.42.8(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(typedoc-plugin-markdown@4.14.1(typedoc@0.28.20(typescript@6.0.3)))(typedoc@0.28.20(typescript@6.0.3)):
     dependencies:
-      '@astrojs/starlight': 0.42.7(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)
+      '@astrojs/starlight': 0.42.8(astro@7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)
       astro: 7.4.4(@types/node@26.6.6)(aws4fetch@1.0.20)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1(supports-color@10.2.2))(yaml@2.9.1)
       github-slugger: 2.0.0
       typedoc: 0.28.20(typescript@6.0.3)
@@ -9245,8 +9553,6 @@ snapshots:
 
   uncrypto@0.1.3: {}
 
-  undici-types@7.18.2: {}
-
   undici-types@7.24.6: {}
 
   undici-types@8.9.0: {}
@@ -9318,11 +9624,22 @@ snapshots:
       '@types/unist': 3.0.3
       unist-util-is: 6.0.1
 
+  unist-util-visit-parents@6.1.0:
+    dependencies:
+      '@types/unist': 3.0.3
+      unist-util-is: 6.0.1
+
   unist-util-visit@5.1.0:
     dependencies:
       '@types/unist': 3.0.3
       unist-util-is: 6.0.1
       unist-util-visit-parents: 6.0.2
+
+  unist-util-visit@5.2.0:
+    dependencies:
+      '@types/unist': 3.0.3
+      unist-util-is: 6.0.1
+      unist-util-visit-parents: 6.1.0
 
   unstorage@1.17.5(aws4fetch@1.0.20)(db0@0.3.4)(ioredis@5.11.1(supports-color@10.2.2)):
     dependencies:
