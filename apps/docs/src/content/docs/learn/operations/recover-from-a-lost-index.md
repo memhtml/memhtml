@@ -27,7 +27,7 @@ Run `memhtml state import` right after `memhtml init`, before any export. An exp
 
 Run the rebuild last, because it is the only step that spends Bedrock calls and the one you re-run if it gets interrupted.
 
-None of the three destroys anything on a fresh clone, so a recovery interrupted anywhere is finished by running the sequence again. Once the clone has recorded reinforcements, a second `memhtml state import` rolls their outcome scores back to the file's values.
+None of the three destroys anything on a fresh clone, so a recovery interrupted anywhere is finished by running the sequence again. Once the clone has recorded reinforcements, a second `memhtml state import` keeps each row's higher counts but sets its outcome EWMA back to the file's value.
 
 ## What survives, and what it survives as
 
@@ -35,7 +35,7 @@ The git tree is the system of record. It holds every memory, every authored `<li
 
 | Artifact                                                                                                                  | Rebuilds from                 | Cost                                                                                                              |
 | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `index.db`: embeddings, mined edges, chunks, full-text search                                                             | The tree                      | `memhtml index rebuild --embed`. The Bedrock calls are the only real expense.                                     |
+| `index.db`: embeddings, authored edges, chunks, full-text search                                                          | The tree                      | `memhtml index rebuild --embed`. The Bedrock calls are the only real expense.                                     |
 | `state.db`: access counts, reinforcement counts, and the outcome EWMA, a running average of positive and negative signals | The sidecar only              | `memhtml state import`. Anything since the last export is gone.                                                   |
 | The trace tables                                                                                                          | `$MEMHTML_TRACE_ROOT`         | `memhtml trace index` from a zero watermark: slow, and it loses nothing.                                          |
 | An unmerged `curate/<date>` branch                                                                                        | Nothing, unless it was pushed | Run `memhtml curate run` again. A run never moved `main`, so it's safe to repeat.                                 |

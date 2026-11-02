@@ -63,10 +63,10 @@ memories behind.
 
 Two SQLite databases sit under `.memhtml/`, opened through Node's built-in `node:sqlite` driver, and
 they differ in what a rebuild can recover. `index.db` holds the projected rows, the full-text index,
-the embedding vectors, and the mined edges, all of which the indexer regenerates from the tree.
-`state.db` holds facts the tree cannot reproduce: access counts, reinforcement counts, and
-outcome scores. A committed file, `.memhtml/state/access.jsonl`, keeps a copy of those; the
-corroboration counts `state.db` also holds have none.
+the embedding vectors, and the edges read from each file's `<link>` elements, all of which the
+indexer regenerates from the tree. `state.db` holds facts the tree cannot reproduce: access counts,
+reinforcement counts, and the outcome EWMA. `memhtml state export` copies those into a committed
+file, `.memhtml/state/access.jsonl`.
 
 Retrieval runs four independent ranking arms over one query and then combines their orderings.
 Full-text search ranks on title, claim, and body text. Vector similarity ranks on the embeddings.
@@ -89,7 +89,7 @@ it.
 
 Curation runs as a session on a `curate/<date>` branch, never in the write path. `memhtml curate
 run` lets a model work on that branch within a budget, and `memhtml curate merge` lands the branch on
-`main` only after a gate checks that retrieval didn't get worse. The write path detects a
+`main` only after a gate checks that retrieval didn't get worse. A session commit detects a
 contradiction and keeps both claims live with a `contradicts` edge; choosing a winner is a one-way
 door that stays with a writer or a human.
 
