@@ -2,11 +2,18 @@ import { execFileSync } from "node:child_process"
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
-import { checkMemory, contentHash, parseMemory } from "@memhtml/html"
+import type { OverlayOp } from "@memhtml/contracts"
+import { addLink, checkMemory, contentHash, parseMemory } from "@memhtml/html"
 import { Effect, Result } from "effect"
 import { afterEach, describe, expect, it } from "vitest"
 
-import { commitMessage, commitSession, commitSubject, type PlumbingFactory } from "../src/commit.js"
+import {
+  archiveBody,
+  commitMessage,
+  commitSession,
+  commitSubject,
+  type PlumbingFactory
+} from "../src/commit.js"
 import { makePlumbing } from "../src/plumbing.js"
 import {
   appendOps,
@@ -24,6 +31,7 @@ import {
   loadHead,
   type MapHead,
   makeRepo,
+  mapHead,
   memory,
   type Repo,
   treePaths
@@ -43,6 +51,18 @@ import {
  * - step 2: `mainSha !== head.sha` -> `overlapping.length > 0` (the path-disjoint fast path) ->
  *   "a disjoint advance ... is rebase-needed" and "duplicate hash ... never lands without a rebase".
  * - step 3: drop the `addLink(linked, "contradicts", ...)` call -> "frame-key conflict ...".
+ * - step 3: the agreement check answers false -> "a restatement that archives its rival ..." and
+ *   "a rival stating the same value ..."; it compares the raw claims (`record.claim ===
+ *   doc.article.gist`) -> "a claim that differs only in case, spacing, and the final period ...";
+ *   it compares frame values alone, without `frameGroupAgrees` -> "two verdicts with one claim and
+ *   two titles contradict ...". The supersedes check answers false -> "a put that supersedes its
+ *   live rival ..." and "... the archived copy its batch makes ..." (`archived`, not
+ *   `superseded`); the batch's archive destination left out of it -> "... the archived copy its
+ *   batch makes ..."; the rival where the commit leaves it left out of it
+ *   (`superseded.has(against)`) -> "a put that supersedes its live rival ..." and "a put that
+ *   supersedes its rival at the path the batch moves it to ..."; any archive path read as the path
+ *   it was archived from -> "a put that supersedes an earlier record archived from its rival's
+ *   path ...". The archive check answers false -> "a rival the batch archives ...".
  * - step 4: drop `updateIndexRemove` -> "archives through the index ..." (source still in tree).
  * - step 4: `archiveBody` returns `html` unchanged -> same test (stamps missing).
  * - stage: archive body from `op.html` instead of the head's copy -> "an archive carries a link ...".
@@ -51,6 +71,12 @@ import {
  * - stage label: the `label` case left out of `stage` -> "a label and an unlabel edit the head's
  *   copy, and an archive after them carries both" (alpha on main lacks the new entity); the
  *   `unlabel` case left out -> the same test (the dropped entity is still on the archived copy).
+ * - stage guard: `staged.unchanged` not returned as `refused` -> "refuses a head op the validator
+ *   accepts but whose editor leaves the file unchanged" (an empty commit lands); the `link` case's
+ *   `readLinks` check dropped, so every unchanged link refuses -> "a link of an edge the file
+ *   carries in the underscored spelling ... is not refused"; the `link` case's whole check dropped,
+ *   so no link refuses -> "refuses a head op the validator accepts ..." (the delta link is missing
+ *   from the violations).
  * - step 6 (`landOnRef`): drop the `dirtyPaths` check -> "refuses to move a checked-out ref over ...".
  * - step 6 (`landOnRef`): drop `readTreeIntoWorktree` -> "a checked-out ref follows ..." and "a
  *   v1-style commit from the shared index keeps ...".
@@ -74,6 +100,22 @@ afterEach(async () => {
 const CAPITAL = memory("Capital of India", "The capital of India is New Delhi.")
 const ALPHA = memory("Alpha", "Alpha is the first letter of the Greek alphabet.")
 
+/** CAPITAL's claim over more prose: a different article and hash, and the same frame value. */
+const RESTATED = memory("Capital of India, restated", "The capital of India is New Delhi.", {
+  body: ["This record restates the claim with a second sentence."]
+})
+
+/** A claim in CAPITAL's frame with another value. */
+const CORRECTED = memory("Capital of India, corrected", "The capital of India is Mumbai.")
+
+/** CAPITAL's archive op, into the slot an eviction in 2031 gives it. */
+const ARCHIVE_CAPITAL = {
+  kind: "archive",
+  path: "areas/inbox/capital.html",
+  to: "archive/2031/areas/inbox/capital.html",
+  html: CAPITAL
+} as const
+
 /** A repo with two memories on main, and the head view over that commit. */
 const seeded = async () => {
   const repo = await makeRepo()
@@ -88,12 +130,8 @@ const seeded = async () => {
 
 const putOp = (path: string, html: string) => ({ kind: "put" as const, path, html })
 
-const start = async (
-  root: string,
-  id: string,
-  head: MapHead,
-  ops: ReadonlyArray<ReturnType<typeof putOp>>
-) => run(startSession({ root, id, base: head }).pipe(Effect.flatMap((s) => appendOps(s, ops))))
+const start = async (root: string, id: string, head: MapHead, ops: ReadonlyArray<OverlayOp>) =>
+  run(startSession({ root, id, base: head }).pipe(Effect.flatMap((s) => appendOps(s, ops))))
 
 const commitOf = (root: string, ref: string) => git(root, ["rev-parse", ref])
 
@@ -391,6 +429,219 @@ describe("commitSession", () => {
     const committed = await fileAt(root, outcome.sha, "areas/inbox/capital-2.html")
     expect(committed).toContain('<link rel="memhtml-contradicts" href="/areas/inbox/capital.html">')
     expect(await fileAt(root, outcome.sha, "areas/inbox/capital.html")).toBe(CAPITAL)
+    expect(outcome.restatements).toEqual([])
+  })
+
+  it("a restatement that archives its rival lands no contradicts edge to the path it empties", async () => {
+    const { root, head } = await seeded()
+    const session = await start(root, "restate", head, [
+      putOp("areas/inbox/capital-restated.html", RESTATED),
+      ARCHIVE_CAPITAL
+    ])
+    const outcome = await run(commitSession({ session, head, message: "restate the capital" }))
+    if (outcome.kind !== "committed") throw new Error(JSON.stringify(outcome))
+    expect(outcome.contradictions).toEqual([])
+    expect(outcome.restatements).toEqual([
+      {
+        path: "areas/inbox/capital-restated.html",
+        against: "areas/inbox/capital.html",
+        reason: "same-value"
+      }
+    ])
+    expect(await treePaths(root, outcome.sha)).not.toContain("areas/inbox/capital.html")
+    expect(await fileAt(root, outcome.sha, "areas/inbox/capital-restated.html")).not.toContain(
+      "memhtml-contradicts"
+    )
+  })
+
+  it("a rival stating the same value stays live and unlinked, reported as a restatement", async () => {
+    const { root, head } = await seeded()
+    const session = await start(root, "same", head, [
+      putOp("areas/inbox/capital-restated.html", RESTATED)
+    ])
+    const outcome = await run(commitSession({ session, head, message: "restate" }))
+    if (outcome.kind !== "committed") throw new Error(JSON.stringify(outcome))
+    expect(outcome.contradictions).toEqual([])
+    expect(outcome.restatements).toEqual([
+      {
+        path: "areas/inbox/capital-restated.html",
+        against: "areas/inbox/capital.html",
+        reason: "same-value"
+      }
+    ])
+    expect(await treePaths(root, outcome.sha)).toContain("areas/inbox/capital.html")
+    expect(await fileAt(root, outcome.sha, "areas/inbox/capital-restated.html")).not.toContain(
+      "memhtml-contradicts"
+    )
+  })
+
+  it("a put that supersedes its live rival through a later link op gets no contradicts edge", async () => {
+    const { root, head } = await seeded()
+    const session = await start(root, "sup-live", head, [
+      putOp("areas/inbox/capital-corrected.html", CORRECTED),
+      {
+        kind: "link",
+        path: "areas/inbox/capital-corrected.html",
+        rel: "supersedes",
+        href: "/areas/inbox/capital.html"
+      }
+    ])
+    const outcome = await run(commitSession({ session, head, message: "correct" }))
+    if (outcome.kind !== "committed") throw new Error(JSON.stringify(outcome))
+    expect(outcome.contradictions).toEqual([])
+    expect(outcome.restatements).toEqual([
+      {
+        path: "areas/inbox/capital-corrected.html",
+        against: "areas/inbox/capital.html",
+        reason: "superseded"
+      }
+    ])
+    const committed = await fileAt(root, outcome.sha, "areas/inbox/capital-corrected.html")
+    expect(committed).toContain('<link rel="memhtml-supersedes" href="/areas/inbox/capital.html">')
+    expect(committed).not.toContain("memhtml-contradicts")
+  })
+
+  it("a put that supersedes the archived copy its batch makes of the rival gets no contradicts edge", async () => {
+    const { root, head } = await seeded()
+    const successor = addLink(CORRECTED, "supersedes", `/${ARCHIVE_CAPITAL.to}`)
+    const session = await start(root, "sup-slot", head, [
+      putOp("areas/inbox/capital-corrected.html", successor),
+      ARCHIVE_CAPITAL
+    ])
+    const outcome = await run(commitSession({ session, head, message: "correct" }))
+    if (outcome.kind !== "committed") throw new Error(JSON.stringify(outcome))
+    expect(outcome.contradictions).toEqual([])
+    // The supersedes edge is checked before the archive, so it is the reason given.
+    expect(outcome.restatements).toEqual([
+      {
+        path: "areas/inbox/capital-corrected.html",
+        against: "areas/inbox/capital.html",
+        reason: "superseded"
+      }
+    ])
+    expect(await fileAt(root, outcome.sha, "areas/inbox/capital-corrected.html")).not.toContain(
+      "memhtml-contradicts"
+    )
+  })
+
+  it("a put that supersedes its rival at the path the batch moves it to gets no contradicts edge", async () => {
+    const { root, head } = await seeded()
+    const successor = addLink(CORRECTED, "supersedes", "/resources/geo/capital.html")
+    const session = await start(root, "sup-moved", head, [
+      {
+        kind: "move",
+        path: "areas/inbox/capital.html",
+        to: "resources/geo/capital.html",
+        html: CAPITAL
+      },
+      putOp("areas/inbox/capital-corrected.html", successor)
+    ])
+    const outcome = await run(commitSession({ session, head, message: "correct the filed one" }))
+    if (outcome.kind !== "committed") throw new Error(JSON.stringify(outcome))
+    expect(outcome.contradictions).toEqual([])
+    expect(outcome.restatements).toEqual([
+      {
+        path: "areas/inbox/capital-corrected.html",
+        against: "resources/geo/capital.html",
+        reason: "superseded"
+      }
+    ])
+    expect(await fileAt(root, outcome.sha, "areas/inbox/capital-corrected.html")).not.toContain(
+      "memhtml-contradicts"
+    )
+  })
+
+  it("a rival the batch archives gets no contradicts edge, though its value differs", async () => {
+    const { root, head } = await seeded()
+    const session = await start(root, "replace", head, [
+      putOp("areas/inbox/capital-corrected.html", CORRECTED),
+      ARCHIVE_CAPITAL
+    ])
+    const outcome = await run(commitSession({ session, head, message: "replace" }))
+    if (outcome.kind !== "committed") throw new Error(JSON.stringify(outcome))
+    expect(outcome.contradictions).toEqual([])
+    expect(outcome.restatements).toEqual([
+      {
+        path: "areas/inbox/capital-corrected.html",
+        against: "areas/inbox/capital.html",
+        reason: "archived"
+      }
+    ])
+    expect(await treePaths(root, outcome.sha)).not.toContain("areas/inbox/capital.html")
+    expect(await fileAt(root, outcome.sha, "areas/inbox/capital-corrected.html")).not.toContain(
+      "memhtml-contradicts"
+    )
+  })
+
+  it("a claim that differs only in case, spacing, and the final period states the same value", async () => {
+    const { root, head } = await seeded()
+    const respelled = memory("Capital of India, respelled", "the capital of  INDIA is new delhi")
+    const session = await start(root, "respell", head, [
+      putOp("areas/inbox/capital-respelled.html", respelled)
+    ])
+    const outcome = await run(commitSession({ session, head, message: "respell" }))
+    if (outcome.kind !== "committed") throw new Error(JSON.stringify(outcome))
+    expect(outcome.contradictions).toEqual([])
+    expect(outcome.restatements).toEqual([
+      {
+        path: "areas/inbox/capital-respelled.html",
+        against: "areas/inbox/capital.html",
+        reason: "same-value"
+      }
+    ])
+  })
+
+  it("two verdicts with one claim and two titles contradict, because the title carries the ruling", async () => {
+    const repo = await makeRepo()
+    repos.push(repo)
+    const objective = "Review verdict for objective: retries stay bounded in the widget."
+    const approved = memory("verdict: approved", objective, {
+      memoryType: "verdict",
+      body: ["Every run kept to the retry cap."]
+    })
+    const rejected = memory("verdict: rejected", objective, {
+      memoryType: "verdict",
+      body: ["One run retried past the cap."]
+    })
+    await commitFiles(repo.root, { "areas/inbox/verdict-approved.html": approved })
+    const head = await loadHead(repo.root)
+    const session = await start(repo.root, "verdicts", head, [
+      putOp("areas/inbox/verdict-rejected.html", rejected)
+    ])
+    const outcome = await run(commitSession({ session, head, message: "second ruling" }))
+    if (outcome.kind !== "committed") throw new Error(JSON.stringify(outcome))
+    expect(outcome.contradictions).toEqual([
+      { path: "areas/inbox/verdict-rejected.html", against: "areas/inbox/verdict-approved.html" }
+    ])
+    expect(outcome.restatements).toEqual([])
+    expect(await fileAt(repo.root, outcome.sha, "areas/inbox/verdict-rejected.html")).toContain(
+      '<link rel="memhtml-contradicts" href="/areas/inbox/verdict-approved.html">'
+    )
+  })
+
+  it("a put that supersedes an earlier record archived from its rival's path still contradicts the rival", async () => {
+    const repo = await makeRepo()
+    repos.push(repo)
+    // The path was archived once and then holds a different record, which is the live rival.
+    const earlier = archiveBody(
+      memory("Capital of India, earlier", "The capital of India is Calcutta."),
+      "2030-06-01T00:00:00Z"
+    )
+    await commitFiles(repo.root, {
+      "areas/inbox/capital.html": CAPITAL,
+      "archive/2030/areas/inbox/capital.html": earlier
+    })
+    const head = await loadHead(repo.root)
+    const successor = addLink(CORRECTED, "supersedes", "/archive/2030/areas/inbox/capital.html")
+    const session = await start(repo.root, "older-slot", head, [
+      putOp("areas/inbox/capital-corrected.html", successor)
+    ])
+    const outcome = await run(commitSession({ session, head, message: "correct the earlier" }))
+    if (outcome.kind !== "committed") throw new Error(JSON.stringify(outcome))
+    expect(outcome.contradictions).toEqual([
+      { path: "areas/inbox/capital-corrected.html", against: "areas/inbox/capital.html" }
+    ])
+    expect(outcome.restatements).toEqual([])
   })
 
   it("archives through the index with the archive stamps, never through the working tree", async () => {
@@ -613,6 +864,207 @@ describe("commitSession", () => {
     expect(await readFile(join(root, "areas/inbox/alpha.html"), "utf8")).toBe(alpha)
   })
 
+  it("an unlink cuts an edge spelled with the rel's underscores, so the commit changes the file", async () => {
+    const repo = await makeRepo()
+    repos.push(repo)
+    const root = repo.root
+    // The reader takes `memhtml-part_of` as `part_of`, so the head lists the edge and the validator
+    // passes an unlink of it; the commit has to cut that same line.
+    const underscored = '<link rel="memhtml-part_of" href="/areas/inbox/capital.html">'
+    await commitFiles(root, {
+      "areas/inbox/capital.html": CAPITAL,
+      "areas/inbox/alpha.html": ALPHA.replace("</head>", `${underscored}\n</head>`)
+    })
+    const head = await loadHead(root)
+    expect(head.get("areas/inbox/alpha.html")?.links).toEqual([
+      { rel: "part_of", href: "/areas/inbox/capital.html" }
+    ])
+    const session = await run(
+      startSession({ root, id: "unlink-underscored", base: head }).pipe(
+        Effect.flatMap((s) =>
+          appendOps(s, [
+            {
+              kind: "unlink",
+              path: "areas/inbox/alpha.html",
+              rel: "part_of",
+              href: "/areas/inbox/capital.html"
+            }
+          ])
+        )
+      )
+    )
+    const outcome = await run(commitSession({ session, head, message: "drop part_of" }))
+    if (outcome.kind !== "committed") throw new Error(JSON.stringify(outcome))
+    expect(await fileAt(root, outcome.sha, "areas/inbox/alpha.html")).toBe(ALPHA)
+    expect(await git(root, ["rev-parse", `${outcome.sha}^{tree}`])).not.toBe(
+      await git(root, ["rev-parse", `${outcome.sha}^^{tree}`])
+    )
+  })
+
+  it("a link of an edge the file carries in the underscored spelling adds no second line and is not refused", async () => {
+    const repo = await makeRepo()
+    repos.push(repo)
+    const root = repo.root
+    const alpha = ALPHA.replace(
+      "</head>",
+      '<link rel="memhtml-part_of" href="/areas/inbox/capital.html">\n</head>'
+    )
+    await commitFiles(root, {
+      "areas/inbox/capital.html": CAPITAL,
+      "areas/inbox/alpha.html": alpha
+    })
+    const head = await loadHead(root)
+    const beta = memory("Beta", "Beta is the second letter of the Greek alphabet.")
+    const session = await run(
+      startSession({ root, id: "link-carried", base: head }).pipe(
+        Effect.flatMap((s) =>
+          appendOps(s, [
+            // The edge is already there, so the link stages the file unchanged, which is what an
+            // idempotent link is for: the commit guard leaves it alone.
+            {
+              kind: "link",
+              path: "areas/inbox/alpha.html",
+              rel: "part_of",
+              href: "/areas/inbox/capital.html"
+            },
+            putOp("areas/inbox/beta.html", beta)
+          ])
+        )
+      )
+    )
+    const outcome = await run(commitSession({ session, head, message: "relink" }))
+    if (outcome.kind !== "committed") throw new Error(JSON.stringify(outcome))
+    expect(await fileAt(root, outcome.sha, "areas/inbox/alpha.html")).toBe(alpha)
+    expect(await fileAt(root, outcome.sha, "areas/inbox/beta.html")).toBe(beta)
+  })
+
+  it("a link and an unlink of one edge in one batch are not refused, though the file ends as it began", async () => {
+    const { root, head } = await seeded()
+    const beta = memory("Beta", "Beta is the second letter of the Greek alphabet.")
+    const edge = {
+      path: "areas/inbox/alpha.html",
+      rel: "relates_to",
+      href: "/areas/inbox/capital.html"
+    } as const
+    const session = await run(
+      startSession({ root, id: "link-unlink", base: head }).pipe(
+        Effect.flatMap((s) =>
+          appendOps(s, [
+            { kind: "link", ...edge },
+            { kind: "unlink", ...edge },
+            putOp("areas/inbox/beta.html", beta)
+          ])
+        )
+      )
+    )
+    const outcome = await run(commitSession({ session, head, message: "net nothing on alpha" }))
+    if (outcome.kind !== "committed") throw new Error(JSON.stringify(outcome))
+    expect(await fileAt(root, outcome.sha, "areas/inbox/alpha.html")).toBe(ALPHA)
+  })
+
+  it("refuses a head op the validator accepts but whose editor leaves the file unchanged, and writes nothing", async () => {
+    const repo = await makeRepo()
+    repos.push(repo)
+    const root = repo.root
+    const base = await commitFiles(root, {
+      "areas/inbox/capital.html": CAPITAL,
+      "areas/inbox/alpha.html": ALPHA,
+      "areas/inbox/beta.html": memory("Beta", "Beta is the second letter of the Greek alphabet."),
+      "areas/inbox/gamma.html": memory("Gamma", "Gamma is the third letter of the Greek alphabet.")
+    })
+    const loaded = await loadHead(root)
+    // A record whose head is implicit (no `<head>` tag and no memhtml line in it): `addLink` finds
+    // no offset to write at and hands the file back, while `readLinks` finds no edge on it. It does
+    // not parse as a memory, so a head loaded from git skips it; a hand-built view can hold it.
+    const delta = "areas/inbox/delta.html"
+    const deltaClaim = "Delta is the fourth letter of the Greek alphabet."
+    const implicitHead = [
+      "<!doctype html>",
+      '<html lang="en">',
+      "<title>Delta</title>",
+      `<article><p><mark>${deltaClaim}</mark></p></article>`,
+      "</html>",
+      ""
+    ].join("\n")
+    const capital = loaded.get("areas/inbox/capital.html")
+    if (capital === undefined) throw new Error("capital.html is not in the head")
+    // A view whose reading of four records disagrees with their bytes, the shape a reader and an
+    // editor that disagree on a spelling leave: the validator judges each op against the view, and
+    // the editor, run over the bytes, finds nothing to change.
+    const head = mapHead(loaded.sha, [
+      ...[...loaded.records()].map((record) => {
+        switch (record.path) {
+          case "areas/inbox/alpha.html":
+            return { ...record, links: [{ rel: "supports", href: "/areas/inbox/capital.html" }] }
+          case "areas/inbox/beta.html":
+            return { ...record, entities: [] }
+          case "areas/inbox/gamma.html":
+            return { ...record, entities: [...record.entities, "topic:greek"] }
+          default:
+            return record
+        }
+      }),
+      {
+        ...capital,
+        path: delta,
+        html: implicitHead,
+        contentHash: contentHash(implicitHead),
+        frameKey: null,
+        title: "Delta",
+        claim: deltaClaim,
+        links: [],
+        entities: []
+      }
+    ])
+    const session = await run(
+      startSession({ root, id: "unchanged", base: head }).pipe(
+        Effect.flatMap((s) =>
+          appendOps(s, [
+            {
+              kind: "unlink",
+              path: "areas/inbox/alpha.html",
+              rel: "supports",
+              href: "/areas/inbox/capital.html"
+            },
+            { kind: "label", path: "areas/inbox/beta.html", entity: "system:fixture" },
+            { kind: "unlabel", path: "areas/inbox/gamma.html", entity: "topic:greek" },
+            { kind: "link", path: delta, rel: "relates_to", href: "/areas/inbox/capital.html" }
+          ])
+        )
+      )
+    )
+    const outcome = await run(commitSession({ session, head, message: "nothing changes" }))
+    const unchanged = (what: string) =>
+      `${what} changed nothing in the file, so the commit would not make the change its log describes`
+    expect(outcome).toEqual({
+      kind: "refused",
+      violations: [
+        {
+          kind: "format",
+          path: "areas/inbox/alpha.html",
+          reasons: [unchanged("unlink supports -> /areas/inbox/capital.html")]
+        },
+        {
+          kind: "format",
+          path: "areas/inbox/beta.html",
+          reasons: [unchanged("label system:fixture")]
+        },
+        {
+          kind: "format",
+          path: "areas/inbox/gamma.html",
+          reasons: [unchanged("unlabel topic:greek")]
+        },
+        {
+          kind: "format",
+          path: delta,
+          reasons: [unchanged("link relates_to -> /areas/inbox/capital.html")]
+        }
+      ]
+    })
+    expect(await commitOf(root, "refs/heads/main")).toBe(base)
+    expect((await run(resumeSession({ root, id: "unchanged" }))).ops).toHaveLength(4)
+  })
+
   it("a label and an unlabel edit the head's copy, and an archive after them carries both", async () => {
     const repo = await makeRepo()
     repos.push(repo)
@@ -712,6 +1164,7 @@ describe("commitSession", () => {
       sha: first.sha,
       paths: ["areas/inbox/killed.html"],
       contradictions: [],
+      restatements: [],
       worktreeSynced: true,
       recovered: true
     })
@@ -839,6 +1292,29 @@ describe("commitSession", () => {
     const resumed = await run(resumeSession({ root, id: "clash" }))
     expect(resumed.ops).toHaveLength(2)
     expect(resumed.pending).toBeUndefined()
+  })
+
+  it("lands a put whose name is a glob pattern beside an untracked file the pattern matches", async () => {
+    /**
+     * The dirty check hands git the paths the commit changes. Read as a pattern,
+     * `areas/inbox/a[b].html` also matches an untracked `areas/inbox/ab.html` the commit never
+     * touches, and the commit refused as `worktree-dirty` over it. Each path is read as itself.
+     */
+    const { root, base, head } = await seeded()
+    const draft = "<!-- a draft -->\n"
+    await writeFile(join(root, "areas/inbox/ab.html"), draft, "utf8")
+    const html = memory("Bracket", "A fact filed under a bracketed name.")
+    const session = await start(root, "glob", head, [putOp("areas/inbox/a[b].html", html)])
+
+    const outcome = await run(commitSession({ session, head, message: "add a bracketed name" }))
+
+    expect(outcome.kind).toBe("committed")
+    if (outcome.kind !== "committed") return
+    expect(outcome.paths).toEqual(["areas/inbox/a[b].html"])
+    expect(await git(root, ["rev-parse", `${outcome.sha}^`])).toBe(base)
+    expect(await readFile(join(root, "areas/inbox/a[b].html"), "utf8")).toBe(html)
+    expect(await readFile(join(root, "areas/inbox/ab.html"), "utf8")).toBe(draft)
+    expect(await git(root, ["status", "--porcelain"])).toBe("?? areas/inbox/ab.html")
   })
 
   it("creates a curator ref that does not exist yet", async () => {

@@ -142,7 +142,7 @@ for (const m of memhtmls.values()) byType.set(m.type, (byType.get(m.type) ?? 0) 
 //   user_preference, verdict, agent_insight, error_pattern, arc
 ```
 
-**2. Live contradiction pairs** — a session commit adds a `contradicts` edge between two live claims that share a frame key, and keeps both live. The curator's briefing groups them, and no command lists the open set on demand.
+**2. Live contradiction pairs** — a session commit adds a `contradicts` edge between two live claims that share a frame key and disagree, and keeps both live. The curator's briefing groups them, and no command lists the open set on demand.
 
 ```ts
 const live = [...memhtmls.values()]

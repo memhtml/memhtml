@@ -114,7 +114,10 @@ export const scriptedModel = (
 }
 
 export interface FakeToolOptions {
+  /** The one record the fake view holds: `read` answers it at its own path and nowhere else. */
   readonly record?: CuratorRecordView | null | undefined
+  /** Archive slots the fake view also holds, each answered as an archived copy of `record`. */
+  readonly held?: ReadonlyArray<string> | undefined
   readonly exec?: Partial<CuratorExecResult> | undefined
   readonly propose?: ((ops: ReadonlyArray<OverlayOp>) => CuratorProposeResult) | undefined
   /** A delay every tool waits before answering, for the wall-clock case. */
@@ -143,7 +146,10 @@ export const fakeTools = (options: FakeToolOptions = {}): FakeTools => {
     read: async (path) => {
       calls.push({ name: "read", input: path })
       await delay()
-      return options.record === undefined ? null : options.record
+      const record = options.record ?? null
+      if (record === null) return null
+      if (path === record.path) return record
+      return (options.held ?? []).includes(path) ? { ...record, path, archived: true } : null
     },
     exec: async (script) => {
       calls.push({ name: "exec", input: script })
@@ -206,6 +212,8 @@ export const emptyBriefing: Briefing = {
   supersededActiveTotal: 0,
   danglingEdges: [],
   danglingEdgesTotal: 0,
+  mootDetectedTasks: [],
+  mootDetectedTasksTotal: 0,
   placementQuota: 60,
   inbox: [],
   inboxTotal: 0,

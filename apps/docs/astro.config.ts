@@ -480,6 +480,31 @@ export default defineConfig({
             entryFileName: "index",
             disableSources: true
           }
+        }),
+        /*
+         * `@memhtml/index`: one import path, one entry point and one page, with the settled options
+         * and no source change. Its directory is `api/index-package` because Starlight drops a
+         * trailing `/index` from a route, so a page at `api/index/` would resolve to `/api/`, the
+         * authored tier index's route, and a build then serves the generated page there instead.
+         * TypeDoc renders it with no warning and no MDX brace outside code. The shapes it needed
+         * came before it: the index type exports and `IndexStateRow` as an interface, and
+         * `@memhtml/html`'s document shapes as interfaces, since `project.ts` takes a `MemoryDoc`
+         * in its signatures and would otherwise expand the alias inline.
+         */
+        starlightTypeDoc({
+          entryPoints: [join(REPO_ROOT, "packages", "index", "src", "index.ts")],
+          tsconfig: join(REPO_ROOT, "packages", "index", "tsconfig.json"),
+          output: "api/index-package",
+          typeDoc: {
+            outputFileStrategy: "modules",
+            useCodeBlocks: true,
+            parametersFormat: "list",
+            excludeExternals: true,
+            readme: join(REPO_ROOT, "packages", "index", "README.md"),
+            mergeReadme: true,
+            entryFileName: "index",
+            disableSources: true
+          }
         })
       ],
       /*
@@ -552,6 +577,11 @@ export default defineConfig({
               label: "@memhtml/html",
               collapsed: true,
               items: [{ autogenerate: { directory: "api/html" } }]
+            },
+            {
+              label: "@memhtml/index",
+              collapsed: true,
+              items: [{ autogenerate: { directory: "api/index-package" } }]
             }
           ]
         },

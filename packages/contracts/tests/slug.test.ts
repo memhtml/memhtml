@@ -9,7 +9,9 @@ import {
   isSlug,
   SLUG_FALLBACK,
   SLUG_MAX_LENGTH,
+  SLUG_MIN_WORD_CUT,
   slugify,
+  slugifyStem,
   withCollisionOrdinal
 } from "../src/slug.js"
 
@@ -89,6 +91,86 @@ describe("slugify", () => {
         const slug = slugify(title)
         expect(slug.endsWith("-")).toBe(false)
         expect(slug.startsWith("-")).toBe(false)
+      }),
+      { numRuns: 1000 }
+    )
+  })
+})
+
+/**
+ * The filename stem of a new record: `slugify`'s kebab-case, cut at a word boundary. Folder names
+ * keep `slugify`'s plain cut, because they are recomputed on every write; a stem is computed once.
+ */
+describe("slugifyStem", () => {
+  const long =
+    "The acme-widget release checklist covers signing, packaging, smoke tests, staged rollout and rollback drills for every region"
+
+  /**
+   * A long title is cut at the last word boundary that keeps {@link SLUG_MIN_WORD_CUT} characters,
+   * so the stem ends on a whole word. The plain 80-character cut leaves `staged-ro`, a fragment a
+   * reader cannot tell from a word and a tool that cuts at words would not reproduce.
+   */
+  it("cuts a long title at the last word boundary inside the budget", () => {
+    const stem = slugifyStem(long)
+    expect(stem).toBe(
+      "the-acme-widget-release-checklist-covers-signing-packaging-smoke-tests-staged"
+    )
+    expect(isSlug(stem)).toBe(true)
+    expect(isSlug(withCollisionOrdinal(stem, 2))).toBe(true)
+  })
+
+  it("leaves slugify's plain cut alone, so a folder name keeps its spelling", () => {
+    expect(slugify(long)).toBe(
+      "the-acme-widget-release-checklist-covers-signing-packaging-smoke-tests-staged-ro"
+    )
+  })
+
+  it("keeps a boundary at exactly the budget and at exactly the floor", () => {
+    // A hyphen at index 80 ends the 80 characters before it on a whole word.
+    const atBudget = `${"w".repeat(70)} ${"x".repeat(9)} tail`
+    expect(slugifyStem(atBudget)).toBe(`${"w".repeat(70)}-${"x".repeat(9)}`)
+    // A boundary that leaves exactly the floor is taken.
+    const atFloor = `${"a".repeat(SLUG_MIN_WORD_CUT)} ${"b".repeat(30)}`
+    expect(slugifyStem(atFloor)).toBe("a".repeat(SLUG_MIN_WORD_CUT))
+  })
+
+  /** A guard: the fallback below the floor is the plain cut, under either rule. */
+  it("cuts at the budget when the last boundary would leave fewer than the floor", () => {
+    // One character short of the floor: the word cut would give up too much of the title.
+    const belowFloor = `${"a".repeat(SLUG_MIN_WORD_CUT - 1)} ${"b".repeat(30)}`
+    expect(slugifyStem(belowFloor)).toBe(
+      `${"a".repeat(SLUG_MIN_WORD_CUT - 1)}-${"b".repeat(SLUG_MAX_LENGTH - SLUG_MIN_WORD_CUT)}`
+    )
+    expect(slugifyStem(belowFloor)).toBe(slugify(belowFloor))
+  })
+
+  it("ends a cut stem on a whole word when a boundary keeps the floor, else at the budget", () => {
+    fc.assert(
+      fc.property(wordyTitle, (title) => {
+        // A word-shaped title kebabs to its lowercased words joined by hyphens.
+        const kebab = title.toLowerCase().split(" ").join("-")
+        const stem = slugifyStem(title)
+        if (kebab.length <= SLUG_MAX_LENGTH) {
+          expect(stem).toBe(kebab)
+          return
+        }
+        expect(kebab.startsWith(stem)).toBe(true)
+        const boundary = kebab.lastIndexOf("-", SLUG_MAX_LENGTH)
+        expect(stem).toHaveLength(boundary >= SLUG_MIN_WORD_CUT ? boundary : SLUG_MAX_LENGTH)
+      }),
+      { numRuns: 1000 }
+    )
+  })
+
+  it("is a valid slug, its own fixed point, and slugify's answer whenever that is uncut", () => {
+    fc.assert(
+      fc.property(anyTitle, (title) => {
+        const stem = slugifyStem(title)
+        expect(isSlug(stem)).toBe(true)
+        expect(slugifyStem(stem)).toBe(stem)
+        const plain = slugify(title)
+        if (plain.length < SLUG_MAX_LENGTH - 1) expect(stem).toBe(plain)
+        expect(slugify(title).startsWith(stem) || stem === SLUG_FALLBACK).toBe(true)
       }),
       { numRuns: 1000 }
     )
@@ -189,6 +271,37 @@ describe("withCollisionOrdinal", () => {
         expect(outputs.size, `len ${length} tail ${tail}`).toBe(12)
       }
     }
+  })
+
+  /**
+   * The stem gives up whole words to make room for the suffix, by the rule `slugify` cuts with, so a
+   * `-N` twin reads as its first claimant's title minus its last words rather than minus a few
+   * letters (`…-smoke-tests-100`, not `…-tests-stage-100`).
+   */
+  it("cuts its stem at a word boundary when the suffix needs room", () => {
+    const slug = "the-acme-widget-release-checklist-covers-signing-packaging-smoke-tests-staged"
+    expect(withCollisionOrdinal(slug, 2)).toBe(`${slug}-2`)
+    expect(withCollisionOrdinal(slug, 100)).toBe(
+      "the-acme-widget-release-checklist-covers-signing-packaging-smoke-tests-100"
+    )
+    expect(withCollisionOrdinal(slug, 1000)).toBe(
+      "the-acme-widget-release-checklist-covers-signing-packaging-smoke-tests-1000"
+    )
+    // A boundary that would leave fewer than the floor is not taken: the stem is cut at the room.
+    const longWord = `${"a".repeat(50)}-${"b".repeat(29)}`
+    expect(withCollisionOrdinal(longWord, 2)).toBe(`${"a".repeat(50)}-${"b".repeat(27)}-2`)
+  })
+
+  it("keeps every suffixed name's stem a prefix of the slug", () => {
+    fc.assert(
+      fc.property(anyTitle, fc.integer({ min: 2, max: 1000 }), (title, ordinal) => {
+        const slug = slugify(title)
+        const suffix = `-${ordinal}`
+        const stem = withCollisionOrdinal(slug, ordinal).slice(0, -suffix.length)
+        expect(stem === SLUG_FALLBACK || slug.startsWith(stem)).toBe(true)
+      }),
+      { numRuns: 1000 }
+    )
   })
 
   it("produces 12 distinct names for any slugified title, whatever its length", () => {

@@ -1,6 +1,6 @@
 {
   "name": "@memhtml/eval",
-  "version": "0.16.0",
+  "version": "0.18.0",
   "private": true,
   "description": "Fixture corpus generator and the refusable retrieval discrimination gate.",
   "type": "module",
@@ -40,9 +40,9 @@
     "effect": "catalog:"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.15",
+    "@biomejs/biome": "2.6.4",
     "@effect/vitest": "catalog:",
-    "@types/node": "26.6.5",
+    "@types/node": "26.6.6",
     "typescript": "7.0.2",
     "vitest": "5.0.5"
   }

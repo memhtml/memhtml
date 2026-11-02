@@ -59,10 +59,10 @@ export { Embeddings, ModelClient } from "@memhtml/llm"
 export { Git, Store } from "@memhtml/store"
 
 /**
- * `AppLive`: the one place every service is wired to every other.
+ * `layerApp`: the one place every service is wired to every other.
  *
- * Built bottom-up with `Layer.provideMerge`, so each level both consumes what is below it and
- * stays visible to what is above. Every command handler and every MCP tool then reads the same
+ * Built top-down with `Layer.provideMerge` (see `layerCore`), so each level both consumes what is
+ * below it and stays visible to what is above. Every command handler and every MCP tool then reads the same
  * tags, which keeps a handler down to decode, call, envelope, with no composition logic
  * of its own to drift from its sibling in the other app.
  *
@@ -180,8 +180,10 @@ export const layerRecorder: Layer.Layer<IndexRecorderShape, never, DatabaseShape
  * The store, with the recorder's dedupe hook attached.
  *
  * `onMove` mirrors `state.access.path` across an archive. Cross-database foreign keys do not
- * exist, so the mirror is an explicit call at the one place a path can change; without it every
- * eviction leaves an orphan access row and the salience arm stops finding the memory it describes.
+ * exist, so the mirror is an explicit call, made where the store moves a path; without it every
+ * store archive leaves an orphan access row and the salience arm stops finding the memory it
+ * describes. A session commit moves and archives paths without the store, so it leaves those orphans,
+ * and `memhtml doctor` reports them.
  */
 export const layerStore: Layer.Layer<
   StoreShape,
@@ -196,9 +198,10 @@ export const layerStore: Layer.Layer<
       dedupeLookup: recorder.activePathForHash,
       onMove: (from, to) =>
         db.run("UPDATE state.access SET path = ? WHERE path = ?", [to, from]).pipe(
-          // A move whose mirror fails must not fail the move. The archive commit has already
-          // landed, and the orphan row is what `memhtml doctor` reports. Losing the commit to a
-          // bookkeeping error would be worse than an orphan.
+          // A move whose mirror fails must not fail the move. The hook runs before the archive's
+          // commit, so a failure here would roll the archive back, and the orphan row it leaves
+          // instead is what `memhtml doctor` reports. Losing the commit to a bookkeeping error would
+          // be worse than an orphan.
           Effect.catch((error) =>
             Effect.logWarning(`state.access mirror missed ${from} -> ${to}: ${error.operation}`)
           )

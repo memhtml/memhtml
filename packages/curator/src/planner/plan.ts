@@ -2,7 +2,11 @@ import { matchesGlob } from "node:path"
 
 import type { HeadView, MemoryRecord } from "@memhtml/contracts"
 import { INBOX_DIR, PEOPLE_DIR, slugify } from "@memhtml/contracts"
-import { frameValueOf as domainFrameValueOf } from "@memhtml/domain"
+import {
+  frameValueOf as domainFrameValueOf,
+  frameGroupAgrees,
+  normalizeClaim
+} from "@memhtml/domain"
 
 import { detectCommunities, type WeightedEdge } from "./graph.js"
 import { rulingsByPath } from "./rulings.js"
@@ -137,9 +141,6 @@ export const homeFor = (
   return prefix
 }
 
-const normalizeClaim = (claim: string): string =>
-  claim.replace(/\s+/g, " ").trim().toLowerCase().replace(/\.$/, "")
-
 /**
  * The value a claim writes into its frame, read through the domain's paired accessor (the same one
  * the briefing uses, so the planner and the briefing agree on what a value is), or the whole
@@ -149,25 +150,11 @@ export const frameValueOf = (record: MemoryRecord): string =>
   domainFrameValueOf(record.claim) ?? normalizeClaim(record.claim)
 
 /**
- * True when a frame-key group states one value or one claim, so folding it loses no side.
- *
- * A `verdict` record carries its judgment in the title (`verdict: suppressed_failure`) over a claim
- * that is the objective judged, so two verdicts with one claim and two titles disagree the way two
- * values do; measured on the 2026-09-22 store, one of the eleven shared frame keys was exactly that
- * pair (`unsupported_claim` beside `unverifiable-citation`), and the other ten were byte-identical
- * re-mints.
+ * True when a frame-key group states one value or one claim, so folding it loses no side. The rule
+ * lives in `@memhtml/domain` (`agreement.ts`), because a session commit reads it too before it links
+ * a `memhtml-contradicts` edge.
  */
-export const frameGroupAgrees = (records: ReadonlyArray<MemoryRecord>): boolean => {
-  if (
-    records.every((record) => record.memoryType === "verdict") &&
-    new Set(records.map((record) => normalizeClaim(record.title))).size > 1
-  ) {
-    return false
-  }
-  const values = new Set(records.map(frameValueOf))
-  if (values.size === 1) return true
-  return new Set(records.map((record) => normalizeClaim(record.claim))).size === 1
-}
+export { frameGroupAgrees }
 
 /** True for the records the charter shields from ranking: people identity records and task rows. */
 export const isShielded = (record: MemoryRecord): boolean =>

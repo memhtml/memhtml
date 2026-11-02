@@ -30,10 +30,11 @@ import {
 /**
  * The retrieval surface: `search` returns ranked hits, `recall` returns a pack under a budget.
  *
- * Both sit on the same fused SQL and the same MMR pass, so a ranking change cannot apply to one and
- * not the other. Neither ever names `traces` or `trace_prompts`. A test greps every statement this
- * module can assemble to prove it, which is how the trace firewall is enforced without a second
- * database.
+ * Both sit on the same fused SQL and the same polarity step, so a fusion change cannot apply to one
+ * and not the other. Only `search` runs the MMR pass; `recall` folds the polarity-ordered pool into
+ * its disclosure budget. Neither ever names `traces` or `trace_prompts`. `retrieval-sql.test.ts`
+ * greps the fused statement, each arm's template, and the snippet statement for those names, which
+ * is how the trace firewall is enforced without a second database.
  */
 
 /**
@@ -322,10 +323,11 @@ export const makeRetrieval = (deps: RetrievalDeps): RetrievalShape => {
   /**
    * Run the fold and return fused paths, best first.
    *
-   * The parameter tuple is always four values wide with `null` at `?4` when there is no query
-   * vector, even though the assembled SQL then references no `?4` at all. Binding the same prefix
-   * either way is what keeps the scope values at `?5` onward in fixed positions. A tuple that
-   * shrank would silently shift every scope placeholder onto the wrong value.
+   * The tuple is built four slots wide with `null` at `?4` when there is no query vector, and
+   * `rrfParams` then trims it to the highest `?N` the assembled SQL names. With no vector and no
+   * scope that is `?3`, so three values are bound; with scope values the `null` stays bound at
+   * `?4`, which is what keeps the scope values at `?5` onward in fixed positions. A tuple that
+   * dropped the slot instead would silently shift every scope placeholder onto the wrong value.
    */
   const fuse = (input: {
     readonly query: string

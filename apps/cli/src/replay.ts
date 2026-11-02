@@ -243,19 +243,7 @@ export const mergeBase = (
   root: string,
   a: string,
   b: string
-): Effect.Effect<string | null, GitFailure> =>
-  makeGit(root)
-    .run(["merge-base", a, b])
-    .pipe(
-      Effect.map((out) => {
-        const sha = out.trim()
-        return /^[0-9a-f]{40}$/.test(sha) ? sha : null
-      }),
-      // Exit 1 is "no common ancestor", an answer rather than a failure.
-      Effect.catchTag("GitFailure", (failure) =>
-        failure.exitCode === 1 ? Effect.succeed(null) : Effect.fail(failure)
-      )
-    )
+): Effect.Effect<string | null, GitFailure> => makeGit(root).mergeBase(a, b)
 
 /** A commit's subject line, with the `memhtml(<scope>): ` prefix taken off when it carries one. */
 export const commitSubjectOf = (root: string, sha: string): Effect.Effect<string, GitFailure> =>

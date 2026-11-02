@@ -7,6 +7,8 @@
  * markup it came from.
  */
 
+export type { BlockTagInArticle, BlockTagInRun } from "./block-tags.js"
+export { blockTagInArticle, blockTagInRun } from "./block-tags.js"
 export type { CheckResult } from "./constraints.js"
 export {
   checkDocument,
@@ -52,11 +54,13 @@ export {
 export { escapeAttribute, escapeText, writeChildren, writeOuter } from "./markup.js"
 export { checkMemory, parseMemory } from "./parse.js"
 export { metaPairs, serializeMemory } from "./serialize.js"
-export type { NewMemoryInput } from "./template.js"
+export type { NewMemoryInput, ProseParagraph } from "./template.js"
 export {
   articleHtmlFor,
   DEFAULT_TASK_STATUS,
   newMemoryDoc,
+  proseParagraphs,
+  proseParagraphText,
   renderTemplate
 } from "./template.js"
 export type { MemoryMetaName, RepeatableMeta } from "./vocabulary.js"

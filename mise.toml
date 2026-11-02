@@ -60,6 +60,8 @@ dprint = "0.56.0"                        # markdown formatter (textWrap: never)
 # not in `check` and must not be: an outbound 404 appears when somebody else edits their site, so
 # gating on it would fail whichever commit happened to be pushed that day.
 lychee = "latest"
+# Per-check security ratchet, run separately from the offline check task.
+"aqua:ossf/scorecard" = "5.6.0"
 
 [env]
 # Puts the workspace's own binaries on PATH so a lefthook job reaching for `biome` gets
@@ -112,6 +114,10 @@ description = "The definition of done: lint, typecheck, tests, integration, eval
 raw_args = true
 run = "pnpm check"
 
+[tasks."gate:scorecard"]
+description = "Ratchet local Scorecard checks against the committed HEAD export"
+run = "node scripts/scorecard-gate.mjs"
+
 [tasks.build]
 description = "tsc -b across the project-reference graph"
 raw_args = true
@@ -147,6 +153,15 @@ run = "pnpm format:md"
 description = "Fail if any Markdown file is not dprint-formatted (also runs inside `check`)"
 raw_args = true
 run = "pnpm lint:md"
+
+[tasks."docs:citations"]
+description = "Fail on a line citation, an undeclared symbol, or a missing path in the hand-written docs"
+# Also reached by `mise run check`, which names the root `//#docs:citations` turbo task. Hand docs cite
+# code as `path::Symbol`, never `path:N`, because a line number goes stale at the next edit above it
+# and still reads as a citation. `docs/codebase/` is held to a different rule: each page names the
+# commit it was generated against, and that commit has to exist in the clone.
+raw_args = true
+run = "pnpm docs:citations"
 
 [tasks.typecheck]
 description = "Strict tsc --noEmit per package, tests included"
@@ -192,6 +207,12 @@ description = "Regenerate AGENTS.md from the BUILT CLI's own command table"
 # The build must precede the invocation: agents-doc reads the compiled COMMANDS array,
 # so regenerating against stale dist reproduces the old doc and hides the drift.
 run = "pnpm --filter @memhtml/cli build && node apps/cli/dist/bin.js agents-doc"
+
+[tasks.mcp-doc]
+description = "Regenerate docs/reference/mcp-tools.md from the BUILT MCP server's own toolkit"
+# The build must precede the invocation, for agents-doc's reason: the page is rendered from the
+# compiled toolkit and resources, so rendering against stale dist reproduces the old page.
+run = "pnpm --filter @memhtml/mcp build && node apps/mcp/dist/mcp-doc.js"
 
 # --- the published artifact ----------------------------------------------------------
 

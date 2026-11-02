@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url"
 import { claimFromProse, NEIGHBORS_LIMIT, proseTail } from "@memhtml/cli"
 import { MEMORY_RELS } from "@memhtml/contracts/edges"
 import { WRITABLE_MEMORY_TYPES } from "@memhtml/contracts/types"
@@ -118,6 +119,16 @@ describe("tool surface", () => {
     }
   })
 
+  it("names the archived-source refusal in the description of every tool that archives", () => {
+    // The refusal is decided before anything moves, and the description is the only text an agent
+    // reads before it calls, so a caller holding an archived path learns not to send it.
+    for (const name of ["memory_archive", "memory_correct"] as const) {
+      const description = MemhtmlToolkit.tools[name].description ?? ""
+      expect(description, name).toContain("already under archive/")
+      expect(description, name).toContain("ERR_INVALID_MEMORY")
+    }
+  })
+
   it("states the whole article_html contract in every authoring tool's description", () => {
     /**
      * `tools/list` publishes `description`, and it is the ONLY place an agent reads before it fills
@@ -234,9 +245,9 @@ describe("tool surface", () => {
 
   it("states the conflict assist's PROPOSE-ONLY contract and its reason, in the batch only", () => {
     /**
-     * Tool descriptions are this server's only guidance channel — effect 4.0.0-rc.109 never emits MCP's
-     * server-level `instructions` (see the note in `server.ts`) — so a semantics not stated in one is a
-     * semantics no agent reads. That makes each clause below a behavior lock, not documentation polish.
+     * Tool descriptions are this server's only guidance channel, because it passes no MCP server-level
+     * `instructions` (see the note in `server.ts`), so a semantics not stated in one is a semantics no
+     * agent reads. That makes each clause below a behavior lock, not documentation polish.
      *
      * The propose-only clause is the one that matters most, WITH its reason. An agent told only "this
      * does not block" concludes it is a v1 gap and hand-rolls the archiving the design deliberately
@@ -691,6 +702,40 @@ describe("the derived JSON Schema", () => {
     }
   })
 
+  it("publishes memory_reinforce's singular path beside paths, and decodes either", () => {
+    /**
+     * `memory_read` and `memory_archive` name one memory as `path`, so an agent reinforcing the one
+     * memory it just read sends `path` here too. The published schema has to say that works, or a
+     * client that validates refuses the call before it is sent. Neither key can be `required` while
+     * the other may stand in for it, so `signal` is the only one, and a call naming no path is the
+     * handler's refusal (see `tests/roundtrip.test.ts`).
+     */
+    const reinforce = schemaFor("memory_reinforce")
+    expect(reinforce.required).toEqual(["signal"])
+    const properties = reinforce.properties ?? {}
+    expect((properties.path as JsonSchemaObject).anyOf).toEqual([
+      { type: "string" },
+      { type: "null" }
+    ])
+    expect(Object.keys(properties).sort()).toEqual(["path", "paths", "signal"])
+
+    const parameters = MemhtmlToolkit.tools.memory_reinforce.parametersSchema
+    for (const input of [
+      { paths: ["areas/inbox/a-fact.html"], signal: "positive" },
+      { path: "areas/inbox/a-fact.html", signal: "positive" },
+      { paths: ["areas/inbox/a-fact.html"], path: "areas/inbox/b-fact.html", signal: "negative" },
+      { paths: null, path: "areas/inbox/a-fact.html", signal: "neutral" }
+    ]) {
+      const decoded = Effect.runSync(Effect.result(Schema.decodeUnknownEffect(parameters)(input)))
+      expect(decoded._tag, JSON.stringify(input)).toBe("Success")
+    }
+
+    // The description is what an agent fills the call from, so the singular is named there too.
+    const description = MemhtmlToolkit.tools.memory_reinforce.description ?? ""
+    expect(description).toContain("`paths`")
+    expect(description).toContain("`path`")
+  })
+
   it("publishes the hop chain's two halves on memory_search's SUCCESS schema", () => {
     /**
      * The roundtrip contract, at the published response. A hit's `entities` is what the next call's
@@ -915,7 +960,7 @@ describe("the body-to-claim split", () => {
     const { join } = await import("node:path")
     /** `claimFromProse`'s first-sentence pattern and `proseTail`'s blank-line pattern, as emitted. */
     const SIGNATURES = ["(.*?[.!?])(\\s|$)", "\\n\\s*\\n"]
-    const dist = new URL("../dist", import.meta.url).pathname
+    const dist = fileURLToPath(new URL("../dist", import.meta.url))
     const entries = await readdir(dist, { recursive: true, withFileTypes: true })
     const files = entries
       .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))

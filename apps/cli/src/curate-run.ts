@@ -31,6 +31,7 @@ import {
   appendOps,
   type CommitScope,
   commitSession,
+  missingRepoints,
   rebaseSession,
   resumeSession,
   type Session,
@@ -274,15 +275,7 @@ const lastCurateRef = (
 
 /** The branch `HEAD` points at as a full ref, or `null` when detached. Shared with `curate collapse`. */
 export const headRefOf = (root: string): Effect.Effect<string | null, GitFailure> =>
-  makeGit(root)
-    .run(["symbolic-ref", "-q", "HEAD"])
-    .pipe(
-      Effect.map((out) => (out.trim() === "" ? null : out.trim())),
-      // `-q` exits 1 for a detached HEAD; that is "no branch", not a failure.
-      Effect.catchTag("GitFailure", (failure) =>
-        failure.exitCode === 1 ? Effect.succeed(null) : Effect.fail(failure)
-      )
-    )
+  makeGit(root).headRef()
 
 /**
  * A record as `read` shows it: every parsed field plus the bytes, minus the index-only ones. Shared
@@ -421,7 +414,7 @@ export const bindTools = (input: {
           const report = yield* runSessionExec({ view, script, lang: "js", scope: CURATE_SCOPE })
           // A file the script moved is a `move`; the edges to its old path it did not repoint
           // itself are completed here, exactly as a proposed move's are.
-          const ops = withRepoints(view, report.ops)
+          const ops = withRepoints(view, report.ops, CURATE_SCOPE)
           const { violations, blocking } = judge(ops)
           const clean = report.exitCode === 0 && blocking.length === 0
           if (clean && ops.length > 0) yield* input.overlay.append(ops)
@@ -448,7 +441,7 @@ export const bindTools = (input: {
           // A proposed `move` names its source and destination only; the `unlink` and `link` pairs
           // that repoint every edge to the old path are the view's to compute (`withRepoints`), so
           // a placement never strands an edge and the model never lists them.
-          const completed = withRepoints(yield* current(), ops)
+          const completed = withRepoints(yield* current(), ops, CURATE_SCOPE)
           // The same refusal `exec` applies: any violation the new ops are answerable for refuses
           // the proposal, and the model is the party that can change it.
           const violations = judge(completed).blocking
@@ -492,6 +485,24 @@ export const land = (input: {
     let session = input.session
     let head = input.head
     const reload = input.reload ?? ((sha: string) => loadHeadAt(input.root, sha))
+    // The repoints the log's archives and moves lack against the version it is about to commit
+    // over, appended before each attempt: a resumed log may predate the completion, and a rebase
+    // can bring a record that gained an edge to a path the log vacates. `session commit` does the
+    // same (`commitOverHead`).
+    const complete = () =>
+      Effect.gen(function* () {
+        if (session.pending !== undefined) return
+        const completion = missingRepoints(head.view, session.ops, CURATE_SCOPE)
+        if (completion.overflow.length > 0) {
+          return yield* Effect.fail(
+            InvalidMemory.make({
+              reason: `curate run: the session's ops were refused at commit, so nothing landed and the log stays for --resume: ${completion.overflow.map(describeViolation).join(" | ")}`
+            })
+          )
+        }
+        if (completion.ops.length > 0) session = yield* appendOps(session, completion.ops)
+      })
+    yield* complete()
     for (let attempt = 1; attempt <= COMMIT_ATTEMPTS; attempt += 1) {
       const outcome = yield* commitSession({
         session,
@@ -507,6 +518,7 @@ export const land = (input: {
           head = yield* reload(outcome.mainSha)
           session = rebaseSession(session, head.view)
           yield* saveSession(session)
+          yield* complete()
           break
         }
         case "refused":

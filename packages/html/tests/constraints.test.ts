@@ -218,6 +218,125 @@ describe("constraint 3 — no presentation, no execution", () => {
       "<style> is forbidden"
     )
   })
+
+  /**
+   * The corpus is published as a static site, so an element that embeds a browsing context,
+   * rewrites the document's URL space, or submits data to a target executes under the corpus's
+   * own origin in every reader's browser. Each of these was only a constraint-6 warning before:
+   * an `<iframe src="https://evil.test">` committed cleanly through every write door.
+   *
+   * `<frame>`/`<frameset>` are on the forbidden list too but cannot be asserted here: the HTML
+   * tree builder drops them in a body context, so they never reach the checker at all.
+   */
+  it.each(["iframe", "object", "embed", "base", "form"])(
+    "rejects an embedding or navigating <%s>",
+    (tag) => {
+      const inner = tag === "iframe" || tag === "object" || tag === "embed" ? ' src="x"' : ""
+      expect(
+        parseErr(fileWith(`<p><mark>A claim.</mark></p><${tag}${inner}>x</${tag}>`)),
+        tag
+      ).toContain(`<${tag}> is forbidden`)
+    }
+  )
+
+  it("rejects a javascript: link target on an article anchor", () => {
+    expect(
+      parseErr(fileWith('<p><mark>A claim.</mark> <a href="javascript:alert(1)">x</a></p>'))
+    ).toContain('uses the "javascript:" scheme')
+  })
+
+  it("rejects a data: link target, which navigates to a document", () => {
+    expect(
+      parseErr(
+        fileWith('<p><mark>A claim.</mark> <a href="data:text/html,<script>x</script>">x</a></p>')
+      )
+    ).toContain('uses the "data:" scheme')
+  })
+
+  it("rejects a scheme the browser would find behind leading controls", () => {
+    expect(
+      parseErr(fileWith('<p><mark>A claim.</mark> <a href=" \tjavascript:alert(1)">x</a></p>'))
+    ).toContain('uses the "javascript:" scheme')
+  })
+
+  it("rejects a scheme assembled across a tab, LF, or CR, which the URL parser deletes before reading it", () => {
+    for (const href of [
+      "java&#9;script:alert(1)",
+      "java\tscript:alert(1)",
+      "java\nscript:alert(1)",
+      "j\ravascript:alert(1)"
+    ]) {
+      expect(
+        parseErr(fileWith(`<p><mark>A claim.</mark> <a href="${href}">x</a></p>`)),
+        href
+      ).toContain('uses the "javascript:" scheme')
+    }
+  })
+
+  it("rejects a javascript: scheme on a <q cite> URI, which lands in file_citations", () => {
+    expect(
+      parseErr(fileWith('<p><mark>A claim.</mark> <q cite="javascript:alert(1)">q</q></p>'))
+    ).toContain('uses the "javascript:" scheme')
+  })
+
+  it("rejects a javascript: scheme on a head link href", () => {
+    expect(
+      parseErr(fileWith(MINIMAL_ARTICLE, '<link rel="stylesheet" href="javascript:alert(1)">'))
+    ).toContain('uses the "javascript:" scheme')
+  })
+
+  it("rejects a vbscript: link target, which executes in the browsers that still read it", () => {
+    expect(
+      parseErr(fileWith('<p><mark>A claim.</mark> <a href="vbscript:msgbox(1)">x</a></p>'))
+    ).toContain('uses the "vbscript:" scheme')
+  })
+
+  /**
+   * A scheme outside both sets names an app, not a document: stores already carry `wiki://` and
+   * `slack://` links, so the file still parses and indexes, and the warning names the scheme once.
+   */
+  it("warns on an app scheme and still parses the file", () => {
+    const doc = parseOk(
+      fileWith(
+        '<p><mark>A claim.</mark> <a href="wiki://notes/page-1">a</a> <a href="wiki://notes/page-2">b</a> <q cite="slack://channel?id=C1">q</q></p>'
+      )
+    )
+    expect(doc.warnings).toEqual([
+      '<a href> uses the "wiki:" scheme, which a browser hands to whatever app registered for it',
+      '<q cite> uses the "slack:" scheme, which a browser hands to whatever app registered for it'
+    ])
+  })
+
+  it("leaves a document scheme or a schemeless target without a warning", () => {
+    const doc = parseOk(
+      fileWith(
+        '<p><mark>A claim.</mark> <a href="https://example.test/a">a</a> <a href="/areas/x.html">b</a> <a href="mailto:someone@example.test">c</a></p>'
+      )
+    )
+    expect(doc.warnings).toEqual([])
+  })
+
+  it("accepts an http, https, or mailto scheme on an article anchor", () => {
+    for (const href of [
+      "https://example.test/a",
+      "http://example.test/a",
+      "mailto:someone@example.test"
+    ]) {
+      expect(parseOk(fileWith(`<p><mark>A claim.</mark> <a href="${href}">x</a></p>`)), href)
+    }
+  })
+
+  it("accepts a schemeless target: root-relative, relative, or in-page fragment", () => {
+    for (const href of ["/areas/x.html", "../up-one.html", "#footnote"]) {
+      expect(parseOk(fileWith(`<p><mark>A claim.</mark> <a href="${href}">x</a></p>`)), href)
+    }
+  })
+
+  it("rejects an http-equiv refresh, which navigates on load", () => {
+    expect(
+      parseErr(fileWith(MINIMAL_ARTICLE, '<meta http-equiv="refresh" content="0;url=/x">'))
+    ).toContain("http-equiv on <meta>")
+  })
 })
 
 describe("constraint 4 — link rels and hrefs", () => {

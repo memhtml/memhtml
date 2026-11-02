@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { promisify } from "node:util"
 
+import { archivePathFor, archiveYearOf } from "@memhtml/contracts/paths"
 import { renderTemplate } from "@memhtml/html"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
@@ -355,6 +356,125 @@ describe("the task lifecycle, end to end", () => {
     expect(open.tasks.map((task) => task.path)).not.toContain(first.path)
     const all = await cli.json<TaskList>(["task", "list", "--include-archived"])
     expect(all.tasks.map((task) => task.path)).toContain(done.archivePath)
+  })
+})
+
+describe("a status change on a task that is already under archive/", () => {
+  let cli: Cli
+  let evicted: string
+  let finished: string
+
+  /** A task's file and the tree's state, which every refusal below must leave as they were. */
+  const snapshot = async (path: string) => ({
+    bytes: await readFile(join(cli.root, path), "utf8"),
+    dirty: (await cli.json<{ readonly dirty: boolean }>(["status"])).dirty
+  })
+
+  const expectRefused = async (argv: ReadonlyArray<string>, reason: string): Promise<void> => {
+    const result = await cli.run(argv)
+    expect(result.exitCode).toBe(EXIT_RUNTIME)
+    const body = JSON.parse(result.stdout) as Record<string, unknown>
+    expect(body.code).toBe("ERR_INVALID_MEMORY")
+    expect(body.error).toContain(reason)
+  }
+
+  beforeAll(async () => {
+    cli = await makeCli()
+    // `memhtml archive` evicts a task without finishing it, so it reaches the archive still `todo`.
+    const open = await cli.json<TaskWritten>([
+      "task",
+      "add",
+      "--title",
+      "Replace the widget queue",
+      "--workspace",
+      "acme-widget"
+    ])
+    evicted = (
+      await cli.json<{ readonly archivePath: string }>([
+        "archive",
+        open.path,
+        "--reason",
+        "evicted"
+      ])
+    ).archivePath
+    // `done` archives a task with its status, so this one reaches the archive already `done`.
+    const closing = await cli.json<TaskWritten>([
+      "task",
+      "add",
+      "--title",
+      "Drain the widget queue",
+      "--workspace",
+      "acme-widget"
+    ])
+    finished = (await cli.json<TaskUpdated>(["task", "status", closing.path, "done"]))
+      .archivePath as string
+  })
+
+  afterAll(async () => {
+    await cli.cleanup()
+  })
+
+  it("refuses `done` before the stamp is written, in every path spelling", async () => {
+    const before = await snapshot(evicted)
+    // `done` stamps the file before it archives it, so a refusal raised only by the archive move
+    // would leave `memhtml-task-status: done` on disk, uncommitted.
+    await expectRefused(["task", "status", evicted, "done"], `already archived at ${evicted}`)
+    for (const path of [`./${evicted}`, `areas/../${evicted}`]) {
+      await expectRefused(
+        ["task", "status", path, "done"],
+        `path \`${path}\` is not a usable memory path`
+      )
+    }
+    expect(await snapshot(evicted)).toEqual(before)
+    expect(before.dirty).toBe(false)
+  })
+
+  it("refuses reopening one too, naming the move that reopens it", async () => {
+    // Restamped in place, a reopened task would stay under archive/, out of `task list`, with no
+    // status change able to finish it.
+    const before = await snapshot(evicted)
+    await expectRefused(["task", "status", evicted, "doing"], `already archived at ${evicted}`)
+    await expectRefused(["task", "status", evicted, "doing"], "git mv")
+    expect(await snapshot(evicted)).toEqual(before)
+  })
+
+  it("answers a repeat of the status the task already has as unchanged", async () => {
+    const before = await snapshot(finished)
+    const repeat = await cli.json<TaskUpdated>(["task", "status", finished, "done"])
+    expect(repeat.unchanged).toBe(true)
+    expect(repeat.commitSha).toBeNull()
+    expect(await snapshot(finished)).toEqual(before)
+  })
+
+  it("gives no git mv advice for a task archived twice, whose way back is another archive path", async () => {
+    // `originalPathFor` strips a single prefix, so for a nested task it names a path that is itself
+    // under archive/, and moving the file there would reopen nothing.
+    const task = await cli.json<TaskWritten>([
+      "task",
+      "add",
+      "--title",
+      "Retire the widget queue",
+      "--workspace",
+      "acme-widget"
+    ])
+    const once = (
+      await cli.json<{ readonly archivePath: string }>([
+        "archive",
+        task.path,
+        "--reason",
+        "evicted"
+      ])
+    ).archivePath
+    const twice = archivePathFor(once, archiveYearOf(once) ?? new Date().getUTCFullYear())
+    await mkdir(dirname(join(cli.root, twice)), { recursive: true })
+    await runProcess("git", ["mv", once, twice], { cwd: cli.root })
+    await runProcess("git", ["commit", "-m", "archive an archived task"], { cwd: cli.root })
+
+    const result = await cli.run(["task", "status", twice, "doing"])
+    expect(result.exitCode).toBe(EXIT_RUNTIME)
+    const body = JSON.parse(result.stdout) as Record<string, unknown>
+    expect(body.error).toContain(`already archived at ${twice}`)
+    expect(body.error).not.toContain("git mv")
   })
 })
 

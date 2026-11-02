@@ -1,6 +1,6 @@
 {
   "name": "@memhtml/integrations",
-  "version": "0.16.0",
+  "version": "0.18.0",
   "private": true,
   "description": "Wire a coding agent (Claude Code, Codex, Cursor, OpenCode) to a memhtml store: MCP entry, hooks, instruction block, skill, receipt.",
   "type": "module",
@@ -35,9 +35,9 @@
     "jsonc-parser": "3.3.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.15",
+    "@biomejs/biome": "2.6.4",
     "@effect/vitest": "catalog:",
-    "@types/node": "26.6.5",
+    "@types/node": "26.6.6",
     "typescript": "7.0.2",
     "vitest": "5.0.5"
   }

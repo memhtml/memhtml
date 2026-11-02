@@ -15,7 +15,7 @@ import { Effect } from "effect"
  *
  * `stdio: "inherit"` hands the child the very descriptors the MCP client opened, so the client talks
  * to `memhtml-mcp` directly and this process is only a supervisor. The child inherits the environment
- * too, which is what makes it build a byte-identical `AppLive`: same region, same credentials.
+ * too, which is what makes it build the same app layer: same region, same credentials.
  * `MEMHTML_ROOT` is passed explicitly on top so a `--repo` override reaches the server, which an
  * inherited environment alone would not carry.
  */

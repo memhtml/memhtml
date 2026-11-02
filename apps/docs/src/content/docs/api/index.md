@@ -3,7 +3,7 @@ title: API
 description: The generated reference for the workspace packages, one directory per package and one page per module, built from the TSDoc in the source on every site build.
 ---
 
-Every page below this one is generated from the TSDoc on a package's exported surface; this index is the tier's one authored page. The generated pages are not committed: `starlight-typedoc` writes them into `api/<package>/` on every `astro check` and `astro build`, those directories are gitignored, and so a page always describes the source at the commit the site was built from. When a signature on a page and a signature in the source disagree, the source is newer and the site is behind.
+Every page below this one is generated from the TSDoc on a package's exported surface; this index is the tier's one authored page. The generated pages are not committed: `starlight-typedoc` writes them into one directory per package under `api/` on every `astro check` and `astro build`, those directories are gitignored, and so a page always describes the source at the commit the site was built from. When a signature on a page and a signature in the source disagree, the source is newer and the site is behind.
 
 ## What is covered
 
@@ -17,8 +17,9 @@ Every page below this one is generated from the TSDoc on a package's exported su
 | `@memhtml/head`      | [One page](/api/head/): the corpus as one immutable version per commit, its lexical and vector search, and the head gate, one import path.                                                                                |
 | `@memhtml/telemetry` | [One page](/api/telemetry/): the opt-in OTLP trace exporter, active only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, one import path.                                                                                      |
 | `@memhtml/html`      | [One page](/api/html/): the memory file format, its parser, serializer, hash, head editors, template, fence-language detector and closed vocabulary, one import path.                                                     |
+| `@memhtml/index`     | [One page](/api/index-package/): the SQLite schema and migrations, the indexer that projects the git tree into `index.db`, four-arm retrieval, the state plane and the trace tables, one import path.                     |
 
-Each package's overview page is its `README.md` from the repository, with the module list appended by the generator. The remaining workspace packages are added one per maintenance run, smallest exported surface first, once their generated pages pass the same gates as the authored ones.
+Each package's overview page is its `README.md` from the repository, with the module list appended by the generator. The remaining workspace packages are added one per maintenance run, once their generated pages pass the same gates as the authored ones.
 
 ## How to read a page
 

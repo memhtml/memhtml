@@ -321,6 +321,19 @@ describe("projectFile", () => {
     expect(insert?.params[originAt]).toBe("areas/a.html")
   })
 
+  it("projects a generation slot exactly as a bare-year one: archived, para archive, its origin", () => {
+    // `archive/<YYYY>.<n>/` is where a path archived again while its year slot was held lands; the
+    // origin is what `resolve` follows from the old path to the archived copy.
+    const slot = project(
+      "archive/2031.2/areas/inbox/a-fact.html",
+      memoryHtml({ title: "T", claim: "C.", status: "archived" })
+    )
+    const insert = slot.writes.find((write) => write.sql.includes("INSERT INTO files"))
+    expect(insert?.params[FILE_COLUMNS.indexOf("archived")]).toBe(1)
+    expect(insert?.params[FILE_COLUMNS.indexOf("para")]).toBe("archive")
+    expect(insert?.params[FILE_COLUMNS.indexOf("origin_path")]).toBe("areas/inbox/a-fact.html")
+  })
+
   it("leaves origin_path null for an active file", () => {
     const active = project("areas/a.html", memoryHtml({ title: "T", claim: "C." }))
     const insert = active.writes.find((write) => write.sql.includes("INSERT INTO files"))
