@@ -34,14 +34,14 @@ Every other transition is one head line plus the `memhtml-updated` stamp — `se
 
 ## Edges: `blocks` and `subtask_of`
 
-The task rel vocabulary is exactly two (`packages/contracts/src/edges.ts::TASK_RELS`), forming their own `edge_class` — the fourth (`packages/contracts/src/edges.ts::EDGE_CLASSES`). The class is a firewall: every memory-graph query filters `edge_class = 'memory'` (`packages/index/src/retrieval.ts::makeRetrieval::hydrate`, `apps/cli/src/operations.ts::neighborsQuery`), so task topology cannot enter PageRank, label propagation, MMR's lateral arm, or the retention bridge count.
+The task rel vocabulary is exactly two (`packages/contracts/src/edges.ts::TASK_RELS`), forming their own `edge_class`, the fourth (`packages/contracts/src/edges.ts::EDGE_CLASSES`). The class is a firewall: every memory-graph query filters `edge_class = 'memory'` (`packages/index/src/retrieval.ts::makeRetrieval::hydrate`, `apps/cli/src/operations.ts::neighborsQuery`), so a task edge cannot enter a `memhtml neighbors` walk or retrieval's `superseded_by` lookup.
 
 ```
 memhtml link <blocker> blocks <blocked>          # blocker must finish first
 memhtml link <child> subtask_of <parent>         # decomposition
 ```
 
-Both endpoints must be tasks. `requireEndpointClasses` refuses the mismatch in both directions — a memory rel with a task endpoint, and a task rel with a non-task endpoint — because the store is the only layer that reads both files' `memhtml-type` (`packages/store/src/store.ts::makeStore::requireEndpointClasses`). The SQL CHECK pairs a rel with its class only and cannot reach the endpoints (`packages/index/migrations/0008_tasks.sql`). Provenance is unaffected: a task legitimately came from a session.
+Both endpoints must be tasks. `requireEndpointClasses` refuses the mismatch in both directions, a memory rel with a task endpoint and a task rel with a non-task endpoint, on the path `memhtml link` and the MCP `memory_link` tool take through the store (`packages/store/src/store.ts::makeStore::requireEndpointClasses`); a `link` operation in a session skips it. The SQL CHECK pairs a rel with its class only and cannot reach the endpoints (`packages/index/migrations/0008_tasks.sql`). Provenance is unaffected: a task legitimately came from a session.
 
 `blocks` has two readers — `memhtml task list`'s `blockedBy`, every task asserting `blocks` toward this one (`apps/cli/src/operations.ts::listTasks`), and `memhtml doctor`'s `staleBlockers` (`apps/cli/src/doctor.ts::staleBlockers`). **`subtask_of` has none**: no surface reports it and `memhtml neighbors` filters to the memory class, so a decomposition is stored but read back only from the file's `<link>` or the `edges` table.
 

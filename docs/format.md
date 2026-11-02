@@ -161,7 +161,7 @@ The parser enforces **both directions of the coupling** (`taskViolations`, `pack
 </html>
 ```
 
-**A `<link rel="memhtml-blocks">` may only name another task.** The two task rels (`blocks`, `subtask_of`) are their own edge class (`packages/contracts/src/edges.ts::TASK_RELS`), and `@memhtml/store` refuses a link whose endpoints disagree with its class in either direction (`packages/store/src/store.ts::makeStore::requireEndpointClasses`) — a task rel needs two tasks, and a memory rel refuses a task at either end. That is what keeps a to-do list out of PageRank, MMR, and the retention bridge count.
+**A `<link rel="memhtml-blocks">` may only name another task.** The two task rels (`blocks`, `subtask_of`) are their own edge class (`packages/contracts/src/edges.ts::TASK_RELS`), and `memhtml link` and the MCP `memory_link` tool refuse a link whose endpoints disagree with its class in either direction (`packages/store/src/store.ts::makeStore::requireEndpointClasses`): a task rel needs two tasks, and a memory rel refuses a task at either end. A `link` operation in a session does not run that check. Where it runs, it keeps a to-do item out of the memory graph that `memhtml neighbors` walks.
 
 **Two open tasks with identical bodies are two real work items**, so content-hash dedup carves tasks out (`packages/store/src/store.ts::DEDUPE_EXEMPT_TYPE`): the `files_content_hash_active` partial unique index and the write path's dedupe lookup both filter `memory_type <> 'task'` (`packages/index/migrations/0008_tasks.sql`, `packages/index/src/traces-persist.ts::makeIndexRecorder::activePathForHash`), and a memory whose article matches an open task's is not deduped onto it either.
 
