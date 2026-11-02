@@ -11,7 +11,7 @@ The terms are alphabetical, and each entry names the page that develops it. Seve
 
 ### Archive path
 
-`archive/<YYYY>/<original-path>`, the destination of an eviction. It mirrors the original path whole, so the mapping is injective and `originalPathFor` recovers the source path exactly. A path archived again while its year's slot is held goes to `archive/<YYYY>.<n>/<original-path>`, the year's first free generation, so an archive never writes over an earlier one. See [Store layout and path algebra](/internals/store-layout-and-path-algebra/).
+`archive/<YYYY>/<original-path>`, the destination of every archived memory, evicted or superseded. It mirrors the original path whole, so the mapping is injective and `originalPathFor` recovers the source path exactly. A path archived again while its year's slot is held goes to `archive/<YYYY>.<n>/<original-path>`, the year's first free generation, so an archive never writes over an earlier one. See [Store layout and path algebra](/internals/store-layout-and-path-algebra/).
 
 ### Checkout lock
 
@@ -27,7 +27,7 @@ Reading the corpus with an HTML parser and a script instead of a chain of tool c
 
 ### Committed sidecar
 
-`.memhtml/state/access.jsonl`, the state plane's only durable copy. It is byte-stable, path-ordered, and four-decimal, and `memhtml state export` writes it, so an unchanged plane commits nothing. See [The index plane and the state plane](/internals/index-plane-and-state-plane/).
+`.memhtml/state/access.jsonl`, the only durable copy of the state plane's access rows. It is byte-stable, path-ordered, and four-decimal, and `memhtml state export` rewrites and commits it, so an unchanged plane commits nothing. See [The index plane and the state plane](/internals/index-plane-and-state-plane/).
 
 ### Conflict assist and frame key
 
@@ -43,11 +43,11 @@ The model-driven loop `memhtml curate run` starts on a `curate/<date>` branch. I
 
 ### Degraded retrieval
 
-The state in which memhtml dropped one or more arms because a precondition was unmet: no query vector, no state plane, or no indexable query term. The search is narrower and the response carries `degraded`. See [Four-arm retrieval](/internals/four-arm-retrieval/).
+The state in which memhtml ran a search or a recall without the vector arm, for example because no embedder is bound, the embedder failed, or vector coverage is below `MEMHTML_VECTOR_COVERAGE_FLOOR`. The result is narrower and the response carries `degraded: true`. A query with no indexable term drops the lexical arm, which by itself does not set `degraded`. See [Four-arm retrieval](/internals/four-arm-retrieval/).
 
 ### Disclosure fold
 
-`recall`'s budgeted pack, whose three tiers map onto the HTML structure rather than onto a truncation of prose. It spends a character budget in rank order, continues past a candidate that does not fit, and caps full quotes at two per entity name. See [Four-arm retrieval](/internals/four-arm-retrieval/).
+`recall`'s budgeted pack, which quotes along the HTML structure rather than truncating prose: each memory appears either as a full quote of its claim, `<summary>` headlines, facets, and citations, or as an index line with its path, title, and claim. It spends a character budget in rank order, continues past a candidate that does not fit, and caps full quotes at two per entity name. See [Four-arm retrieval](/internals/four-arm-retrieval/).
 
 ### Discrimination gate
 
@@ -55,7 +55,7 @@ The refusable quality gate. It asks whether the retrieval stack ranks a memory a
 
 ### Eviction
 
-Retiring a memory by `git mv` into the archive path, plus the stamps that record it. No file is deleted, so `git log --follow` reads through a memory's whole life and `diff -M` reports the move as `R100`. See [The write path](/internals/the-write-path/).
+Archiving a memory that no live memory supersedes, by moving it into its archive slot, `archive/<YYYY>/` or `archive/<YYYY>.<n>/` with the original path mirrored beneath, plus the stamps that record it. A correction or a fold moves the memory it replaces the same way, but the new memory's `supersedes` link makes that file superseded rather than evicted. The file is not deleted, so `git log --follow` reads through a memory's whole life and `diff -M` reports the move as a rename. See [The write path](/internals/the-write-path/).
 
 ### Four-arm RRF
 
@@ -63,7 +63,7 @@ The fusion of the four arms in one SQL statement: weighted `1/(rank + 60)` contr
 
 ### The git tree as system of record
 
-The invariant that the repository of HTML files is authoritative and everything else is derived from it: anything that has to survive `rm index.db` lives in a file. See [Internals](/internals/).
+The invariant that the repository of HTML files is authoritative and the index's memory rows are derived from it: anything that has to survive `rm index.db` lives in a file. See [Internals](/internals/).
 
 ### Head
 
@@ -79,7 +79,7 @@ The check `memhtml curate merge` runs before it moves anything. It searches a se
 
 ### Index plane
 
-`.memhtml/index.db`: gitignored, rebuildable from `git ls-tree`, and holding the projected rows, the full-text index, the vectors, and the derived edges. See [The index](/internals/the-index/).
+`.memhtml/index.db`: gitignored, and holding the projected rows, the full-text index, the vectors, the edges, and the trace tables. Its memory rows are rebuildable from `git ls-tree`; the trace tables are not. See [The index](/internals/the-index/).
 
 ### Last-wins resolution
 
@@ -107,7 +107,7 @@ The four fixed top-level buckets: `projects`, `areas`, `resources`, and `archive
 
 ### Projection
 
-A derived, disposable representation of the tree. The index is one, and `projectFile` is the pure function that produces its rows, which is what makes a fresh rebuild reproduce the incremental row set. See [The index](/internals/the-index/).
+A derived, disposable representation of the tree. The index is one, and `projectFile` is the pure function that produces its rows, so a rebuild and an incremental update write the same rows from the same bytes. See [The index](/internals/the-index/).
 
 ### Replay
 
@@ -135,7 +135,7 @@ A pointer to one version of the corpus plus an ordered log of its own operations
 
 ### State plane
 
-`.memhtml/state.db`: gitignored like the index, and the one plane a rebuild cannot reproduce. It holds access counts, reinforcement counts, the outcome EWMA, and edge and entity corroboration. See [The index plane and the state plane](/internals/index-plane-and-state-plane/).
+`.memhtml/state.db`: gitignored like the index, and not rebuildable from the tree. It holds access counts, reinforcement counts, the outcome EWMA, and edge and entity corroboration tables that nothing has written since 0.16, and only its access rows have a committed copy. See [The index plane and the state plane](/internals/index-plane-and-state-plane/).
 
 ### Store policy
 

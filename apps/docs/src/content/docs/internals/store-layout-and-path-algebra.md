@@ -39,7 +39,7 @@ A workspace is a directory and nothing else. There is no workspaces table, so cr
 4. a named workspace goes to `projects/<slug>`;
 5. a `semantic`, `procedural`, or `precedent` memory with a primary tag goes to `resources/<tag>`, unless that tag slugs to `people`.
 
-Anything remaining goes to `areas/inbox`. No rule routes into `resources/people`. A `person:` entity says who a record is about, and the record still files by its workspace or topic. A person record is at `resources/people/<person>.html` only because curation wrote it at that explicit path; in a session outside the `curate` scope that path is reserved. Until 2026-09-28 a `person:` entity on a `semantic` memory routed it there, so an agent's fact that mentioned a colleague was refused as a reserved path. The function always returns a directory rooted in a bucket, so the write path never guesses twice and never fails to place a memory.
+Anything remaining goes to `areas/inbox`. No rule routes into `resources/people`. A `person:` entity says who a record is about, and the record still files by its workspace or topic. A person record is at `resources/people/<person>.html` only because its writer named that explicit path; in a session outside the `curate` scope that path is reserved (`packages/session/src/validate.ts::isReservedPath`). Until 2026-09-28 a `person:` entity on a `semantic` memory routed it there, so an agent's fact that mentioned a colleague was refused as a reserved path. The function always returns a directory rooted in a bucket, so the write path never guesses twice and never fails to place a memory.
 
 Rule 1 reads "an explicit **valid** path", and the validity clause is where a caller gets a choice. An explicit path that is not a usable memory path — not rooted in a bucket, not ending in `.html`, or carrying a `.` or `..` segment — is re-derived through the rules below it, so the write succeeds at a path the caller did not name and the response reports that other path as the outcome. `memoryPathViolation` (`packages/contracts/src/paths.ts`) is the rule and its explanation in one function, and `isValidMemoryPath` is the same question asked as a boolean, so a refusal's reason cannot name a clause the predicate does not check.
 
@@ -51,7 +51,7 @@ Rule 1 reads "an explicit **valid** path", and the validity clause is where a ca
 
 ## 3. The archive mapping can be inverted
 
-`archivePathFor` (`packages/contracts/src/paths.ts::archivePathFor`) mirrors the whole original path beneath `archive/<YYYY>/`, and `originalPathFor` (`packages/contracts/src/paths.ts::originalPathFor`) strips exactly one such prefix. Stripping one rather than all of them keeps it a left inverse even for a memory archived twice. `git log --follow` reads through the move, and `diff -M` reports `R100` instead of a delete plus an add. No memory is removed from the repository.
+`archivePathFor` (`packages/contracts/src/paths.ts::archivePathFor`) mirrors the whole original path beneath `archive/<YYYY>/`, and `originalPathFor` (`packages/contracts/src/paths.ts::originalPathFor`) strips exactly one such prefix. Stripping one rather than all of them keeps it a left inverse for every path, a nested archive path included. `git log --follow` reads through the move, and `diff -M` reports a rename instead of a delete plus an add, below 100 percent similarity because the archive stamps edit the file's head. No memory is removed from the repository.
 
 A test pins the property: `originalPathFor(archivePathFor(p, y)) === p` for every generated path. That invertibility is what lets `memhtml doctor --fix` derive an archived target's new href rather than searching for it, and no rename-similarity score is consulted anywhere in the system.
 
@@ -62,7 +62,7 @@ Figure 1 draws the mapping as a ladder rather than as a round trip. From a twice
 ```d2 pad=20 src="_figures/archive-mapping.d2" title="Three paths stacked vertically as the rungs of a ladder: notes/x.html, then archive/2026/notes/x.html, then archive/2027/archive/2026/notes/x.html. A solid arrow labelled archivePathFor descends one rung at a time. A dashed arrow labelled originalPathFor ascends one rung at a time and never more than one, so from the bottom rung it reaches the middle one rather than the top."
 ```
 
-**Figure 1: `archivePathFor` descends one rung and `originalPathFor` climbs exactly one.** Descending is a `git mv` inside a commit, which `diff -M` reports as `R100`. Ascending is a pure function of the path, which is why those edges are dashed. Because each application moves one rung, the inverse stays a left inverse for a memory evicted twice, and a single return edge to the live path would describe that wrongly.
+**Figure 1: `archivePathFor` descends one rung and `originalPathFor` climbs exactly one.** An archive descends once, as a move inside a commit that `diff -M` reports as a rename, and no writer archives a path already under `archive/`. Ascending is a pure function of the path, which is why those edges are dashed. Because each application moves one rung, the inverse stays a left inverse even on a nested path, and a single return edge to the live path would describe that wrongly.
 
 ## 4. A path is an id
 

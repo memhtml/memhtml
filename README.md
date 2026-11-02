@@ -55,7 +55,7 @@ Re-running is idempotent, `--project <path>` installs at repository scope instea
 
 ## The design in three sentences
 
-The git tree is the system of record, and `.memhtml/index.db` is a projection of it that can be deleted and rebuilt without loss. Anything that must survive `rm index.db` lives in the files, where authored links are `<link>` elements and metadata is `<meta>` elements, while re-derivable artifacts such as embeddings and mined edges live only in the index. Every removal is a `git mv` into `archive/<YYYY>/` that mirrors the original path, so the file stays in the tree and `git log --follow` reads straight through a memory's whole life.
+The git tree is the system of record, and `.memhtml/index.db` is a projection of it whose memory rows `memhtml index rebuild` recomputes from the files. Anything that must survive `rm index.db` lives in the files, where authored links are `<link>` elements and metadata is `<meta>` elements, while re-derivable artifacts such as embeddings stay in gitignored files. Every archive moves a memory file to `archive/<YYYY>/`, or `archive/<YYYY>.<n>/` when an earlier archiving holds that slot, mirroring the original path, so the file stays in the tree and `git log --follow` reads straight through a memory's whole life.
 
 Figure 1 draws that. It is built from monospace box characters, which a screen reader reads as noise, so skip to the paragraph below the figure: it says the same thing in words.
 
@@ -77,41 +77,41 @@ Figure 1 draws that. It is built from monospace box characters, which a screen r
               |             |
               +-------------+
                    |     |
-          +--------+     |
-          |              |
-       git mv         indexer
-          |              |
-          v              |        .------.
-   +--------------+      v       |\-____-/|
-   |archive/YYYY/ | +---------+  |        |
-   |              | |index.db |  |        |
-   +--------------+ |         |  |state.db|
-                    +---------+  |        |
-                         |        \-____-/
+            +------+     |
+            |            |
+         archive      indexer
+            |            |
+            v            |       .------.
+       +---------+       v      |\-____-/|
+       |archive/ | +---------+  |        |
+       |         | |index.db |  |        |
+       +---------+ |         |  |state.db|
+                   +---------+  |        |
+                         |       \-____-/
                          |
-                         |           |
-                      3 arms         |
-                         |           |
-                         |       salience
-                         |           |
-                         +------+    |
-                                |    |
-                                v    v
-                           +-------------+
-                           |RRF then MMR |
-                           |             |
-                           +-------------+
-                                   |
-                                   v
-                            +------------+
-                            |ranked hits |
-                            |            |
-                            +------------+
+                         |          |
+                      3 arms        |
+                         |          |
+                         |      salience
+                         |          |
+                         +-----+    |
+                               |    |
+                               v    v
+                          +-------------+
+                          |RRF then MMR |
+                          |             |
+                          +-------------+
+                                  |
+                                  v
+                           +------------+
+                           |ranked hits |
+                           |            |
+                           +------------+
 ```
 <!-- /figure:system-topology -->
 <!-- dprint-ignore-end -->
 
-**Figure 1: every write door lands in the git tree, and every read is served from projections of it.** Three doors reach in from outside: `memhtml write` and `memhtml apply`, the MCP server's 15 tools, and your own file tools. All three commit into one git tree, and they differ only in who owns the commit. Eviction moves a file to `archive/YYYY/` and leaves it in the tree. From the tree, a git-driven indexer derives `index.db`, which supplies three of the four ranking arms. The fourth, salience, comes from `state.db`, the one plane git cannot reproduce. A query enters the ranker at the bottom, RRF fuses the four arms, MMR diversifies the result, and ranked hits come out. On the docs site the same drawing puts into its borders what this caption has to spell out: a heavy border is a door, a double border is the system of record, a dashed border is a projection that can be deleted and rebuilt, and a cylinder is a database on disk.
+**Figure 1: every write door lands in the git tree, and the index that ranks a search is derived from it.** Three doors reach in from outside: `memhtml write` and `memhtml apply`, the MCP server's 15 tools, and your own file tools. All three commit into one git tree, and they differ only in who owns the commit. Every archive moves a file to `archive/<YYYY>/` or `archive/<YYYY>.<n>/` and leaves it in the tree. From the tree, a git-driven indexer derives `index.db`, which supplies three of the four ranking arms. The fourth, salience, comes from `state.db`, the one plane git cannot reproduce. A `memhtml search` query enters the ranker at the bottom, RRF fuses the four arms, MMR diversifies the result, and ranked hits come out. On the docs site the same drawing puts into its borders what this caption has to spell out: a heavy border is a door, a double border is the system of record, a dashed border is a projection that can be deleted and rebuilt, and a cylinder is a database on disk.
 
 ## Why files
 
@@ -208,39 +208,38 @@ Dedup is enforced by the schema: a partial unique index over active files makes 
 
 A memory's whole life is commits in one tree.
 
-Figure 3 draws that life. A screen reader sounds out its box characters, so read the paragraph beneath the figure, which states the same four transitions in words.
+Figure 3 draws that life. A screen reader sounds out its box characters, so read the paragraph beneath the figure, which states the same transitions in words.
 
 <!-- dprint-ignore-start -->
 <!-- figure:memory-lifecycle -->
 ```text
-                  +--------+
-                  | write  |
-                  |        |
-                  +--------+
-                      |
-                   commit
-                      |
-                      v
-                +-----------+
-                |  active   |
-                |           |
-                +-----------+
-                   |  |  |
-        +----------+  |  +----------+
-        |             |             |
-        |           evict           |
-     correct          |         compress
-        |             |             |
-        v             v             v
- +-----------+  +---------+  +-----------+
- |superseded |  |archived |  |compressed |
- |           |  |         |  |           |
- +-----------+  +---------+  +-----------+
+          +--------+
+          | write  |
+          |        |
+          +--------+
+               |
+            commit
+               |
+               v
+          +-------+
+          |active |
+          |       |
+          +-------+
+             |  |
+        +----+  +----+
+        |            |
+ correct or fold   evict
+        |            |
+        v            v
+ +-----------+  +--------+
+ |superseded |  |evicted |
+ |           |  |        |
+ +-----------+  +--------+
 ```
 <!-- /figure:memory-lifecycle -->
 <!-- dprint-ignore-end -->
 
-**Figure 3: a memory has one entry and three exits, and every one of them is a commit.** A write enters the corpus as a single dedup-checked commit, and the file is then active. It stays active while agents read and reinforce it. Three things can end that state. `memhtml correct` writes a replacement and archives the original in one commit, which makes it superseded. A curator archives it on a `curate/<date>` branch, which makes it archived once the branch lands. Or `memhtml curate collapse` folds it with its near-duplicates into one canonical memory and archives it with a `supersedes` link, which makes it compressed. Each of the three exits is a `git mv` into `archive/YYYY/` mirroring the original path, so the file survives all of them and `git log --follow` reads straight through the whole life.
+**Figure 3: a memory has one entry and two exits, and every one of them is a commit.** A write enters the corpus as a single dedup-checked commit, and the file is then active. It stays active while agents read and reinforce it. `memhtml correct` writes a replacement and archives the original in one commit. A `memhtml curate collapse` fold writes one canonical memory and archives each near-duplicate it replaces. Either way a `supersedes` link from the new memory makes the old one superseded. An eviction archives the memory with no successor: `memhtml archive`, `memhtml task status <path> done`, or an `archive` operation a session commits. A curator's folds and archives land on its `curate/` branch and reach the target branch once `memhtml curate merge` lands it. Each exit moves the file to `archive/<YYYY>/`, or `archive/<YYYY>.<n>/` when an earlier archiving holds that slot, with the original path mirrored beneath, so the file survives all of them and `git log --follow` reads straight through the whole life.
 
 ## Sessions, the head server, and curation
 

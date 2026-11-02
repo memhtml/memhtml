@@ -29,9 +29,9 @@
     "write-file-atomic": "8.0.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.2",
+    "@biomejs/biome": "2.6.4",
     "@effect/vitest": "catalog:",
-    "@types/node": "26.6.5",
+    "@types/node": "26.6.6",
     "@types/write-file-atomic": "4.0.3",
     "fast-check": "catalog:",
     "typescript": "7.0.2",

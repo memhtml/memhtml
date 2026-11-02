@@ -63,20 +63,22 @@ memories behind.
 
 Two SQLite databases sit under `.memhtml/`, opened through Node's built-in `node:sqlite` driver, and
 they differ in what a rebuild can recover. `index.db` holds the projected rows, the full-text index,
-the embedding vectors, and the mined edges, all of which the indexer regenerates from the tree.
-`state.db` holds facts the tree cannot reproduce: access counts, reinforcement counts, and
-outcome scores. A committed file, `.memhtml/state/access.jsonl`, keeps a copy of those; the
-corroboration counts `state.db` also holds have none.
+the embedding vectors, and the edges read from each file's `<link>` elements, all of which the
+indexer regenerates from the tree. `state.db` holds facts the tree cannot reproduce: access counts,
+reinforcement counts, and the outcome EWMA. `memhtml state export` copies those into a committed
+file, `.memhtml/state/access.jsonl`.
 
 Retrieval runs four independent ranking arms over one query and then combines their orderings.
 Full-text search ranks on title, claim, and body text. Vector similarity ranks on the embeddings.
 Recency ranks an episodic memory by when the fact happened rather than by when someone wrote it
 down. Salience ranks on how often someone has chosen to open the memory. One SQL statement fuses the
 four orderings by reciprocal rank fusion, where each arm contributes `1/(rank + 60)` under its own
-weight, and a pass in TypeScript then drops near-duplicate hits. That fusion is what this site
-means by four-arm RRF. When an arm's precondition is missing, memhtml drops that arm and sets
-`degraded: true` on the response, so the search gets narrower and still answers. A store with no
-embedder bound is the common case, and it still returns ranked hits from the other three arms.
+weight, and a pass in TypeScript then demotes a hit that nearly duplicates one ranked above it,
+when both carry embeddings. That fusion is what this site means by four-arm RRF. When an arm's
+precondition is missing, memhtml drops that arm, so the search gets narrower and still answers.
+`degraded: true` on the response means the vector arm did not fire. A store with no embedder
+bound is the common case. The MCP search tools ask a running head server first, and a head
+server ranks with full-text search and vectors alone.
 
 Four doors write into the same tree: `memhtml write` and `memhtml apply` on the command line, the
 write tools on the MCP server, your own file tools against the checkout, and a session. A session
@@ -87,9 +89,10 @@ it.
 
 Curation runs as a session on a `curate/<date>` branch, never in the write path. `memhtml curate
 run` lets a model work on that branch within a budget, and `memhtml curate merge` lands the branch on
-`main` only after a gate checks that retrieval didn't get worse. The write path detects a
-contradiction and keeps both claims live with a `contradicts` edge; choosing a winner is a one-way
-door that stays with a writer or a human.
+`main` only after a gate checks that retrieval didn't get worse. When a new claim shares a frame key
+with a live claim it does not supersede, and a lexical check finds they differ, a session commit
+keeps both live with a `contradicts` edge; choosing a winner is a one-way door that stays with a
+writer or a human.
 
 Every command writes one JSON envelope to stdout and nothing else, sends its logs to stderr, and
 exits 0 for success, 2 for a usage error, and 1 for a runtime failure. `memhtml manifest` prints

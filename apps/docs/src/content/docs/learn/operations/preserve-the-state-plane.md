@@ -8,7 +8,7 @@ memhtml state export      # write .memhtml/state/access.jsonl and commit it
 memhtml state import      # replay the sidecar into state.db
 ```
 
-`state.db` is gitignored, and unlike the index it cannot be rebuilt from git. It holds three things the tree never records: how often each memory was opened, how often it was reinforced, and the outcome EWMA, a running average of the positive and negative signals a memory has collected. The committed sidecar `.memhtml/state/access.jsonl` is what survives (`apps/cli/src/state.ts::stateExport`).
+`state.db` is gitignored, and unlike the index it cannot be rebuilt from git. Its access rows hold three things the tree never records: how often each memory was opened or reinforced, how often it got a positive or negative signal, and the outcome EWMA, a running average of those signals. The committed sidecar `.memhtml/state/access.jsonl` is what survives of them (`apps/cli/src/state.ts::stateExport`).
 
 ## Export
 
@@ -46,15 +46,15 @@ Nothing runs `state export` for you, so put it on the cron beside `memhtml publi
 }
 ```
 
-The import upserts with `max()` on the counters that only ever climb, rather than truncating the table (`apps/cli/src/state.ts::stateImport`). Importing onto a live plane therefore keeps any counter the sidecar predates. An import is non-destructive every time, which is what makes it safe on a machine that has been reading for a week.
+The import upserts with `max()` on the counters that only ever climb, rather than truncating the table (`apps/cli/src/state.ts::stateImport`). Importing onto a live plane therefore keeps any counter the sidecar predates, which is what makes it safe on a machine that has been reading for a week. It does set each outcome EWMA back to the file's value.
 
-`rows` is what the sidecar held and `restored` is what was written into `state.access`. The two differ when the live plane already held higher counters. `skipped` counts sidecar lines that did not parse, which is never fatal, because a partial file restores what it holds.
+`rows` is what the sidecar held and `restored` is what was written into `state.access`. `skipped` counts sidecar lines that did not parse, which is never fatal, because a partial file restores what it holds.
 
 ## The hazard with two machines
 
 Two machines both committing memories is the conflict path git handles well.
 
-`.memhtml/state/access.jsonl` merges as a whole file, so two machines' access counts never combine. The later commit wins and the other machine's reads are lost. `memhtml state import` merges by taking the larger of each pair of counters, which is what makes an import non-destructive; the file merge underneath it is still last-writer-wins.
+Git merges `.memhtml/state/access.jsonl` line by line, with no merge driver, so two machines' counts for one memory never add up: changes to rows that are not adjacent merge cleanly, and changes to the same or adjacent rows conflict. `memhtml state import` keeps the larger of each access count and reinforcement count, and it overwrites the outcome EWMA with the file's value.
 
 Run one writer. A second machine that reads the repo should run `memhtml state import` and leave `memhtml state export` alone.
 

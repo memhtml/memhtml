@@ -39,10 +39,10 @@
     "effect": "catalog:"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.2",
+    "@biomejs/biome": "2.6.4",
     "@effect/vitest": "catalog:",
     "@memhtml/store": "workspace:*",
-    "@types/node": "26.6.5",
+    "@types/node": "26.6.6",
     "fast-check": "catalog:",
     "typescript": "7.0.2",
     "vitest": "5.0.5"

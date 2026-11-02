@@ -105,7 +105,7 @@ git -C ~/memhtml diff --stat main...curate/2026-10-18
 git -C ~/memhtml show curate/2026-10-18
 ```
 
-The commit's subject is `memhtml(curate):` followed by the report's first non-blank line, and a line longer than 72 characters keeps its first 71 and gains an ellipsis. The whole report, including what it left undone, is the `curate.run` payload's `report`. Every archive is a move into `archive/<YYYY>/` with the original path mirrored beneath, so `git diff` and the `--stat` above show it as a rename under git's default rename detection.
+The commit's subject is `memhtml(curate):` followed by the report's first non-blank line, and a line longer than 72 characters keeps its first 71 and gains an ellipsis. The whole report, including what it left undone, is the `curate.run` payload's `report`. Every archive is a move into `archive/<YYYY>/`, or `archive/<YYYY>.<n>/` when an earlier archiving holds that slot, with the original path mirrored beneath, so `git diff` and the `--stat` above show it as a rename under git's default rename detection.
 
 ## Land it with curate merge
 
