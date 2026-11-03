@@ -505,6 +505,28 @@ export default defineConfig({
             entryFileName: "index",
             disableSources: true
           }
+        }),
+        /*
+         * `@memhtml/session`: one import path, one entry point and one page, with the settled
+         * options. TypeDoc renders it with no warning and no MDX brace outside code. The shape it
+         * needed came before it: `SessionBase` named as an interface, so the `base` member of
+         * `startSession`'s input no longer expands an object literal inline. Two doc comments that
+         * linked to names `index.ts` does not re-export now name them in code spans instead.
+         */
+        starlightTypeDoc({
+          entryPoints: [join(REPO_ROOT, "packages", "session", "src", "index.ts")],
+          tsconfig: join(REPO_ROOT, "packages", "session", "tsconfig.json"),
+          output: "api/session",
+          typeDoc: {
+            outputFileStrategy: "modules",
+            useCodeBlocks: true,
+            parametersFormat: "list",
+            excludeExternals: true,
+            readme: join(REPO_ROOT, "packages", "session", "README.md"),
+            mergeReadme: true,
+            entryFileName: "index",
+            disableSources: true
+          }
         })
       ],
       /*
@@ -582,6 +604,11 @@ export default defineConfig({
               label: "@memhtml/index",
               collapsed: true,
               items: [{ autogenerate: { directory: "api/index-package" } }]
+            },
+            {
+              label: "@memhtml/session",
+              collapsed: true,
+              items: [{ autogenerate: { directory: "api/session" } }]
             }
           ]
         },
