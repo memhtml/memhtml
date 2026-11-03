@@ -105,7 +105,7 @@ memhtml curate merge curate/2026-10-18
 
 Some sleep phases have no replacement. Confidence decay, retention triage, reprieve, relationship mining, edge typing, task detection, and trace consolidation don't run in 0.16. The curator's charter covers deduplication, labels, entity aliases, inbox placement, arcs, and dangling links.
 
-The sleep run's state-export phase is gone too, so put `memhtml state export` on the schedule yourself, as [preserve the state plane](/learn/operations/preserve-the-state-plane/) describes.
+The sleep run's state-export phase is gone too, so nothing runs `memhtml state export` for you: run it on one machine only, with the other [upkeep commands](/learn/operations/run-the-store-day-to-day/), as [preserve the state plane](/learn/operations/preserve-the-state-plane/) describes.
 
 ## New environment variables
 
