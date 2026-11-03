@@ -30,7 +30,7 @@ import { settlePending } from "./settle.js"
  * appends its harvest). So the lock alone would still lose an update: two execs that read the same
  * log each append to it, and the second write drops the first's ops. Every writer therefore re-reads
  * the log under the lock and writes only when the file still holds the ops the caller read
- * ({@link requireLogUnmoved}); a log whose ops changed is refused with {@link LOG_MOVED} and
+ * (`requireLogUnmoved`); a log whose ops changed is refused with {@link LOG_MOVED} and
  * nothing is written, so the caller reads it again and decides. The ops are what is compared, not
  * the base: {@link rebaseSession} is pure and a caller may commit or append over a rebased session
  * it has not saved, which moves the base on purpose.
@@ -261,6 +261,14 @@ const exists = (path: string): Effect.Effect<boolean> =>
   )
 
 /**
+ * The version {@link startSession} starts a session on. Only its `sha` is read, so a bare `{ sha }`
+ * fits and so does a `HeadView`.
+ */
+export interface SessionBase {
+  readonly sha: string
+}
+
+/**
  * Start a session on a base version. Creates the state directory, checks that the base names a
  * commit (`rev-parse`; a `GitFailure` when it does not), and writes an empty log. Fails when the id
  * is not a single path segment.
@@ -277,7 +285,7 @@ const exists = (path: string): Effect.Effect<boolean> =>
 export const startSession = (input: {
   readonly root: string
   readonly id: string
-  readonly base: { readonly sha: string }
+  readonly base: SessionBase
   readonly ref?: string | undefined
   readonly force?: boolean | undefined
 }): Effect.Effect<Session, GitFailure | StorageFailure> =>
@@ -422,7 +430,7 @@ const settleStored = (session: Session, stored: Session): Effect.Effect<Session,
  * Append to the overlay log and persist it. The returned session is the one to keep using. Refused
  * with {@link LOG_MOVED} when the log is no longer the one `session` was read from.
  *
- * A log that carries a `pending` commit is settled first ({@link settleStored}): when that commit had
+ * A log that carries a `pending` commit is settled first (`settleStored`): when that commit had
  * landed, the returned session sits on it (its `baseSha` is the landed commit) and holds only `ops`;
  * otherwise it keeps its ops and gains `ops`. So an op appended after a commit was killed past its
  * swap is committed by the next `session commit` rather than cleared with the landed ops.
