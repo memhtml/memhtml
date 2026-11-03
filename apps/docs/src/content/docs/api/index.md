@@ -18,6 +18,7 @@ Every page below this one is generated from the TSDoc on a package's exported su
 | `@memhtml/telemetry` | [One page](/api/telemetry/): the opt-in OTLP trace exporter, active only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, one import path.                                                                                      |
 | `@memhtml/html`      | [One page](/api/html/): the memory file format, its parser, serializer, hash, head editors, template, fence-language detector and closed vocabulary, one import path.                                                     |
 | `@memhtml/index`     | [One page](/api/index-package/): the SQLite schema and migrations, the indexer that projects the git tree into `index.db`, four-arm retrieval, the state plane and the trace tables, one import path.                     |
+| `@memhtml/session`   | [One page](/api/session/): the session overlay log and its lock, the checkout lock, the validator, and the commit path that lands a session's operations on a ref as one commit, one import path.                         |
 
 Each package's overview page is its `README.md` from the repository, with the module list appended by the generator. The remaining workspace packages are added one per maintenance run, once their generated pages pass the same gates as the authored ones.
 
