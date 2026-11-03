@@ -99,8 +99,11 @@ describe("loadHead", () => {
     expect(head.get("index.html")).toBeUndefined()
     expect(elapsedMs).toBeLessThan(10_000)
     // Measured 235 ms on 2026-09-23 (load average 7); the timeout is for the fixture's 300 file
-    // writes plus `git add` and `git commit` under a loaded host, not for the load itself.
-  }, 30_000)
+    // writes plus `git add` and `git commit` under a loaded host, not for the load itself. CI's
+    // shared runners took past 30 s for that fixture five times between 2026-10-27 and 2026-11-02
+    // while `loadHead` itself logged under 1.5 s, so the test allows two minutes. The bound on the
+    // load is the `elapsedMs` assertion above, and it is unchanged.
+  }, 120_000)
 
   it("answers every index from the parsed records", async () => {
     const { repo, sha, files } = await corpus(30)

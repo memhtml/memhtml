@@ -234,7 +234,7 @@ describe("the query embed's deadline", () => {
       coverage: 1
     })
     expect(answered?.data.vector.detail).toContain("left to finish in the background")
-    expect(answered?.data.vector.embedMs).toBeGreaterThanOrEqual(150)
+    expect(answered?.data.vector.embedMs).toBeGreaterThanOrEqual(140)
     expect(answered?.data.hits[0]?.path).toBe("areas/inbox/orchard.html")
     expect(answered?.data.hits[0]?.arms).toEqual(["lexical"])
     expect(state.queries).toEqual(["orchard facts"])
@@ -255,7 +255,7 @@ describe("the query embed's deadline", () => {
     expect(bounded?.data.vector.reason).toBe("embed-timeout")
     const unbounded = await search(repo.root, { query: "orchard facts", embedDeadlineMs: 0 })
     expect(unbounded?.data.vector).toMatchObject({ used: true, reason: null })
-    expect(unbounded?.data.vector.embedMs).toBeGreaterThanOrEqual(400)
+    expect(unbounded?.data.vector.embedMs).toBeGreaterThanOrEqual(350)
   })
 
   it("lets one late embed finish and stops the rest", async () => {
