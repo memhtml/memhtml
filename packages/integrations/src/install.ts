@@ -200,7 +200,7 @@ const snapshotOf = async (path: string): Promise<TextSnapshot> => {
 }
 
 /** How one artifact's bytes are read back out of a file and removed from it. */
-interface Editor {
+export interface Editor {
   readonly ownedNow: (current: string | null) => string | null
   readonly strip: (current: string | null) => string | null
 }
