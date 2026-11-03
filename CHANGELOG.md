@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.1](https://github.com/memhtml/memhtml/compare/memhtml-v0.18.0...memhtml-v0.18.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* **deps:** move the Effect set to 4.1.1 ([#372](https://github.com/memhtml/memhtml/issues/372)) ([a455f22](https://github.com/memhtml/memhtml/commit/a455f22e428da84a71b60fa80df9b32c143cae4e))
+
 ## [0.18.0](https://github.com/memhtml/memhtml/compare/memhtml-v0.17.0...memhtml-v0.18.0) (2026-10-26)
 
 
