@@ -65,7 +65,7 @@ git fetch
 git diff HEAD...@{upstream} -- .memhtml/state/access.jsonl   # a lower accessCount on a + line, or a removed line not re-added under archive/
 ```
 
-Real multi-machine use needs counters that merge in any order, either by taking the larger value or by summing per-machine sub-counters. Until someone builds that, keep `memhtml state export` on one machine.
+Real multi-machine use needs counters that merge in any order and still add up, such as per-machine sub-counters that are summed. Taking the larger value merges in any order but keeps only one machine's bumps, which is what `memhtml state import` already does. Until someone builds counters that add up, keep `memhtml state export` on one machine.
 
 ## Why this plane exists
 
