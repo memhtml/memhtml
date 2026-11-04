@@ -322,7 +322,7 @@ $MEMHTML_ROOT/                        # its own git repo, one global memory stor
   resources/people/<person>.html  # the person plane
   archive/<YYYY>[.<n>]/<original-path>  # soft-evicted, path-preserving, injective
   .memhtml/
-    index.db                      # gitignored, rebuildable from the tree
+    index.db                      # gitignored; its memory rows rebuild from the tree
     state.db                      # gitignored, NOT rebuildable from git
     state/access.jsonl            # committed sidecar: the state plane's only durable copy
     sessions/<id>.json            # gitignored, one session's log of operations

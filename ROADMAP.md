@@ -177,7 +177,7 @@ Sequencing, cheapest first: (a) docs/code-mode.md cookbook — DONE with this en
 
 ### 8. ~~Multi-machine state plane — merge-commutative counters~~ — DROPPED
 
-Descoped 2026-08-07: multi-machine is not a requirement. The original analysis stands if that ever changes (`access.jsonl` is last-writer-wins on merge; fix shape was merge-commutative counters), but nothing waits on it and no trigger is armed.
+Descoped 2026-08-07: multi-machine is not a requirement. Nothing waits on it and no trigger is armed. The 2026-08-07 analysis called `access.jsonl` last-writer-wins on merge, and that was wrong: git merges it line by line with no merge driver, so two machines' counts for one memory conflict and never add up. If multi-machine use ever becomes a requirement, the fix shape is counters that merge in any order and still add up, such as summed per-machine sub-counters. Taking the larger value merges in any order but keeps only one machine's bumps.
 
 ### 9. Committed embedding cache (opt-in)
 

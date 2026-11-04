@@ -93,12 +93,12 @@ search` ranks sessions, no query returns both, and none of retrieval's four rank
 A memory rebuild leaves the trace tables alone (`packages/index/src/schema-const.ts::TRACE_TABLES`). So `memhtml
 index rebuild`, which drops the full-text search index and deletes every memory table, costs no re-walk of `$MEMHTML_TRACE_ROOT`. The trace plane and the memory index are rebuilt by different commands because they are recovered from different sources: the tree for one, the transcripts for the other.
 
-Recovering the trace tables therefore means re-running `memhtml trace index` from a zero watermark, which re-walks `$MEMHTML_TRACE_ROOT` in full. That is slow and loses nothing.
+Recovering the trace tables therefore means re-running `memhtml trace index` from a zero watermark, which re-walks `$MEMHTML_TRACE_ROOT` in full. That is slow, and it brings back only the transcripts still under the root.
 
 ## How transcripts become memories
 
-The scan indexes transcripts and leaves them as transcripts, and no command turns one into a memory. The sleep pipeline's consolidator did that until 0.16 removed it. An agent that wants a session's lessons kept reads `memhtml trace search` and `memhtml trace links` over what the scan indexed, and writes the records through a [session](/learn/operations/write-through-a-session/), where the write bar judges them.
+The scan indexes transcripts and leaves them as transcripts, and no command turns one into a memory. An agent that wants a session's lessons kept reads `memhtml trace search` over what the scan indexed, and `memhtml trace links` for the memories that a `write`, `apply`, `correct` or `read` given that session's id touched. It writes the records through a [session](/learn/operations/write-through-a-session/), where the write bar judges them, and `memhtml session commit` records no link.
 
-`memhtml trace index` on the cron is therefore the prerequisite for that agent having anything to read.
+Run with the other [upkeep commands](/learn/operations/run-the-store-day-to-day/), `memhtml trace index` is therefore the prerequisite for `memhtml trace search` having anything to read.
 
 [The trace indexer and its firewall](/internals/the-trace-indexer/) covers the streaming parser and the watermark.

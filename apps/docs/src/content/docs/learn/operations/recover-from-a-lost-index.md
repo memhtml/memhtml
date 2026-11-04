@@ -3,7 +3,7 @@ title: Recover from a lost index
 description: Restore a store from a clone in four commands, in the order that matters, and know exactly what a rebuild cannot bring back.
 ---
 
-As long as the tree and the sidecar are pushed, losing `.memhtml/` costs you time, the access history since the last `state export`, any session operations that never landed, and the memory-session links that `memhtml trace links` reads.
+As long as the tree and the sidecar are pushed, losing `.memhtml/` costs you time, the access history since the last pushed `state export`, any session operations that never landed, the memory-session links that `memhtml trace links` reads, and the trace rows of every transcript no longer under `$MEMHTML_TRACE_ROOT`.
 
 ```bash
 git clone <remote> ~/memhtml
@@ -23,7 +23,7 @@ memhtml eval discriminate         # expect passed true
 
 Run `memhtml init` first, because the merge driver it configures lives in this clone and nowhere else. `.gitattributes` travels with the clone and the `merge.ours.driver` config does not, so until you run it, the first merge that touches a generated file writes conflict markers into that file.
 
-Run `memhtml state import` right after `memhtml init`, before any export. An export can replace the sidecar with this clone's own rows, or with an empty file. The rebuild does not touch `state.db`, so the import can come before or after it. Retrieval ranks a query with four arms: full-text search, vector similarity, recency, and salience, which favors memories you have opened and reinforced before. The import gives the salience arm its signal on your first query.
+Run `memhtml state import` right after `memhtml init`, before any export. An export can replace the sidecar with this clone's own rows, or with an empty file. The rebuild does not touch `state.db`, so the import can come before or after it. Retrieval ranks a query with four arms: full-text search, vector similarity, recency, and salience, which favors memories you have opened and reinforced before. The import gives the salience arm the sidecar's history on your first query.
 
 Run the rebuild last, because it is the only step that spends Bedrock calls and the one you re-run if it gets interrupted.
 
@@ -35,9 +35,10 @@ The git tree is the system of record. It holds every memory, every authored `<li
 
 | Artifact                                                                                                                  | Rebuilds from                 | Cost                                                                                                              |
 | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `index.db`: embeddings, authored edges, chunks, full-text search                                                          | The tree                      | `memhtml index rebuild --embed`. The Bedrock calls are the only real expense.                                     |
-| `state.db`: access counts, reinforcement counts, and the outcome EWMA, a running average of positive and negative signals | The sidecar only              | `memhtml state import`. Anything since the last export is gone.                                                   |
-| The trace tables                                                                                                          | `$MEMHTML_TRACE_ROOT`         | `memhtml trace index` from a zero watermark: slow, and it loses nothing.                                          |
+| The memory rows of `index.db`: embeddings, authored edges, chunks, full-text search                                       | The tree                      | `memhtml index rebuild --embed`. The Bedrock calls are the only real expense.                                     |
+| `state.db`: access counts, reinforcement counts, and the outcome EWMA, a running average of positive and negative signals | The sidecar only              | `memhtml state import`. Anything since the last pushed export is gone.                                            |
+| The trace tables                                                                                                          | `$MEMHTML_TRACE_ROOT`         | `memhtml trace index` from a zero watermark: slow, and only the transcripts still there come back.                |
+| The memory-session links in `index.db` that `memhtml trace links` reads                                                   | Nothing                       | Gone. A later `write`, `apply`, `correct` or `read` given a session id records new ones.                          |
 | An unmerged `curate/<date>` branch                                                                                        | Nothing, unless it was pushed | Run `memhtml curate run` again. A run never moved `main`, so it's safe to repeat.                                 |
 | A session's operations that never landed, in `.memhtml/sessions/`                                                         | Nothing                       | The writes are gone. The agent that made them has to write them again.                                            |
 | The snapshots in `.memhtml/snapshots/` and the vector cache in `.memhtml/vectors/`                                        | The tree                      | A load reads git; a session commit writes a snapshot. `memhtml head embed` refills the vectors at Bedrock prices. |
@@ -48,7 +49,7 @@ The git tree is the system of record. It holds every memory, every authored `<li
 
 :::
 
-Two rows in that table lose data that nothing regenerates: `state.db`, by everything since the last `state export`, and a session's operations that never landed. Nothing runs `state export` for you, so run it regularly and by hand before a machine goes away. See [preserve the state plane](/learn/operations/preserve-the-state-plane/).
+Nothing regenerates the access history `state.db` gained since the last pushed `state export`, a session's operations that never landed, the memory-session links that `memhtml trace links` reads, or the trace rows of a transcript no longer under `$MEMHTML_TRACE_ROOT`. Nothing runs `state export` for you, so run it on one machine only, with the other [upkeep commands](/learn/operations/run-the-store-day-to-day/), and run it and push before that machine goes away. See [preserve the state plane](/learn/operations/preserve-the-state-plane/).
 
 ## Confirming the recovery
 
@@ -64,14 +65,15 @@ Then run `memhtml doctor` and expect `healthy: true`, and `memhtml eval discrimi
 
 ## Recovering without a remote
 
-If the tree is intact on disk and only `.memhtml/` is gone, skip the clone:
+If the tree is intact on disk and only `.memhtml/` is gone, skip the clone, but first restore the files git tracks under `.memhtml/`. The sidecar is one of them, and without it `memhtml state import` restores nothing and still exits 0:
 
 ```bash
+git restore .memhtml/
 memhtml state import
 memhtml index rebuild --embed
 ```
 
-If only `index.db` is gone, the next `memhtml index update` rebuilds it. On the new, empty file, `update` falls through to a rebuild on its own (`update` in `packages/index/src/indexer.ts`), so that pass just takes longer than usual.
+If only `index.db` is gone, the next `memhtml index update` rebuilds its memory rows. On the new, empty file, `update` falls through to a rebuild on its own (`update` in `packages/index/src/indexer.ts`), so that pass just takes longer than usual. The trace tables come back only through `memhtml trace index`, and the memory-session links do not come back.
 
 ## What a rebuild leaves alone
 
