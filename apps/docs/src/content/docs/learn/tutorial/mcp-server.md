@@ -146,9 +146,9 @@ memhtml integrations install claude   # or codex, cursor, opencode
 memhtml integrations install          # every host whose home directory exists
 ```
 
-It writes that host's MCP entry with an absolute command and an explicit `MEMHTML_ROOT`, and it records what it wrote in a receipt so `memhtml integrations uninstall claude` removes exactly that. It also installs hooks, an instruction block, and a skill, which is more than a client entry: `--hooks none` writes the entry, block, and skill and no hook. [Wire up your coding agent](/learn/operations/wire-a-coding-agent/) is the full page, with the per-host files and the restart or trust step each one needs.
+It writes that host's MCP entry with an absolute command and an explicit `MEMHTML_ROOT`, and it records what it wrote in a receipt so `memhtml integrations uninstall claude` can remove it. It also installs hooks, an instruction block, and a skill, which is more than a client entry: `--hooks none` writes the entry, block, and skill and no hook. [Wire up your coding agent](/learn/operations/wire-a-coding-agent/) is the full page, with the per-host files and the restart or trust step each one needs.
 
-Write the entry by hand for any other client, or when you want to see the shape the command produces. An MCP client launches the server as a subprocess, and while the wrapper key differs between clients, the `command` / `args` / `env` triple is the shape they share:
+Write the entry by hand for any other client, or when you want to see the shape the command produces. An MCP client launches the server as a subprocess, and while the wrapper key differs between clients, Claude Code, Codex, and Cursor share the `command` / `args` / `env` triple below, and OpenCode spells it as one `command` array plus `environment`:
 
 ```json
 {
