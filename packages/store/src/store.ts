@@ -58,13 +58,13 @@ export type WriteInput = NewMemoryInput &
   WriteProvenance & {
     /**
      * An explicit path override. Re-derived through the placement rule when it is not a usable
-     * memory path unless {@link strictPath} is set, and refused with `WriteConflict` when a file
+     * memory path unless `strictPath` is set, and refused with `WriteConflict` when a file
      * already sits there: nothing in this corpus is overwritten, so a revision is `correctMemory`
      * (which archives the file it replaces) and never a second write to the same path.
      */
     readonly path?: string | undefined
     /**
-     * Refuse an unusable {@link path} instead of re-deriving one.
+     * Refuse an unusable `path` instead of re-deriving one.
      *
      * OPT-IN, because the lenient branch is shipped behavior that callers depend on. It exists for
      * the caller that places documents at deterministic paths, where a silent re-derivation makes a
@@ -151,6 +151,12 @@ export interface BatchWriteResult {
 }
 
 /** A memory as read from the tree, carrying its path, its bytes, and its parsed form. */
+/** What `linkMemories` answers. */
+export interface LinkResult {
+  /** The commit that added the link, or `null` when the source already carried it and nothing was committed. */
+  readonly commitSha: string | null
+}
+
 export interface ReadResult {
   readonly path: string
   readonly html: string
@@ -307,7 +313,7 @@ export interface StoreShape {
     srcPath: string,
     rel: EdgeRel,
     dstPath: string
-  ) => Effect.Effect<{ readonly commitSha: string | null }, StoreError>
+  ) => Effect.Effect<LinkResult, StoreError>
   /** Paths with uncommitted changes. Empty means a clean tree. */
   readonly dirtyPaths: () => Effect.Effect<ReadonlyArray<string>, StoreError>
   /** Fail with `DirtyTree` unless the working tree is clean. What a curation pass calls before it starts. */
@@ -1372,7 +1378,7 @@ export const makeStore = (git: GitShape, hooks: StoreHooks = {}): StoreShape => 
     srcPath: string,
     rel: EdgeRel,
     dstPath: string
-  ): Effect.Effect<{ readonly commitSha: string | null }, StoreError> =>
+  ): Effect.Effect<LinkResult, StoreError> =>
     Effect.gen(function* () {
       const src = normalizePath(srcPath)
       const dst = normalizePath(dstPath)
