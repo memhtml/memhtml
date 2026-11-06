@@ -46,7 +46,7 @@ Review a curator branch with `git log` and `git diff` against `main` instead, as
 
 ## The supervisor holds nothing
 
-`memhtml serve mcp` has no database of its own. It spawns `memhtml-mcp` with inherited stdio and waits (`apps/cli/src/serve.ts::serveMcp`), so the supervisor holds no handle that could conflict with the child. Interrupting it kills the child, so Ctrl-C never leaves an orphaned server holding the database open (`apps/cli/src/serve.ts::serveMcp`).
+`memhtml serve mcp` has no database of its own. It spawns `memhtml-mcp` with inherited stdio and waits (`apps/cli/src/serve.ts::serveMcp`), so the supervisor holds no handle that could conflict with the child. Ctrl-C on a terminal signals both processes, so it stops the server along with the supervisor and leaves no orphaned server holding the database open.
 
 `MEMHTML_MCP_BIN` names the server explicitly. Absent, the supervisor uses the sibling-path default: `apps/cli/dist/serve.js` finds `apps/mcp/dist/bin.js` two directories over, because the two apps ship as one build. Set it for a split deployment that keeps them apart.
 
