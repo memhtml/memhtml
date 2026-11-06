@@ -2,9 +2,9 @@
 
 Environment, daily operation, the concurrency rules, and recovery.
 
-Every command writes exactly ONE JSON envelope to stdout and logs to stderr, so every line below is safe to pipe into `jq` and safe to run from cron. Exit 0 success, 2 usage, 1 runtime (`apps/cli/src/envelope.ts::EXIT_OK`, `apps/cli/src/envelope.ts::EXIT_USAGE`, `apps/cli/src/envelope.ts::EXIT_RUNTIME`). `memhtml manifest` is the authoritative command surface and answers on a machine with no repo, no database, and no credentials.
+Every command logs to stderr, and every command but three writes exactly ONE JSON envelope to stdout: `memhtml help` on a terminal writes Markdown, `memhtml serve mcp` gives stdout to the MCP server until the server exits and then exits 0 whatever the server's exit code, and `memhtml hook` writes the host's own protocol and exits 0 on a runtime failure. So every line below except the `memhtml serve mcp` ones is safe to pipe into `jq` and safe to run from cron. Exit 0 success, 2 usage, 1 runtime (`apps/cli/src/envelope.ts::EXIT_OK`, `apps/cli/src/envelope.ts::EXIT_USAGE`, `apps/cli/src/envelope.ts::EXIT_RUNTIME`). `memhtml manifest` is the authoritative command surface and answers on a machine with no repo, no database, and no credentials.
 
-One thing a cron line needs from that contract: there is no `--json` flag to pass, because the typed envelope is the only output the binary has, on every command.
+One thing a cron line needs from that contract: there is no `--json` flag to pass. Only `memhtml help` reads one, and with no terminal it answers with the typed envelope anyway.
 
 ---
 
@@ -124,7 +124,7 @@ Retrying is safe because the error being retried is `SQLITE_BUSY` specifically �
 
 What still needs one writer is a curation session with its `curate/<date>` branch checked out, for a reason that is about git rather than the database: a concurrent write commits ONTO that branch and is either merged as if it were curation or lost with `git branch -D`. Quiesce writes for the length of one.
 
-`memhtml serve mcp` holds no database of its own — it spawns `memhtml-mcp` with inherited stdio and waits (`apps/cli/src/serve.ts::serveMcp`), so the supervisor has no handle to conflict with the child. Interrupting it kills the child, so Ctrl-C never leaves an orphaned server holding the database open (`apps/cli/src/serve.ts::serveMcp`).
+`memhtml serve mcp` holds no database of its own: it spawns `memhtml-mcp` with inherited stdio and waits (`apps/cli/src/serve.ts::serveMcp`), so the supervisor has no handle to conflict with the child. Ctrl-C on a terminal signals both processes, so it stops the server along with the supervisor and leaves no orphaned server holding the database open.
 
 `memhtml eval discriminate` does not build the app layer either (`apps/cli/src/run.ts::run`): it measures the ranking stack against its own generated fixture corpus in a temp directory with an in-memory database and never reads your `index.db`. Deliberate — checking the gate is exactly what an operator wants while the server is up.
 
