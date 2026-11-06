@@ -25,11 +25,11 @@ memhtml search "one writer many readers"      # FTS + vector + recency + salienc
 memhtml serve mcp                             # the same store over stdio: 15 tools, 2 resources
 ```
 
-`memhtml manifest` (or a bare `memhtml`) answers with every command, flag, response type, and error code the binary accepts, and it answers on a machine with no repo, no database, and no credentials. Every command writes exactly one JSON envelope to stdout (the one exception is `memhtml help` on a terminal, which writes Markdown), logs go to stderr, and the exit code is 0 for success, 2 for a usage error, 1 for a runtime failure. `AGENTS.md` is generated from the same table that drives parsing, so the doc cannot drift from the binary.
+`memhtml manifest` (or a bare `memhtml`) answers with every command, flag, response type, and error code the binary accepts, and it answers on a machine with no repo, no database, and no credentials. Every command writes exactly one JSON envelope to stdout, logs go to stderr, and the exit code is 0 for success, 2 for a usage error, 1 for a runtime failure. Three commands differ: `memhtml help` on a terminal writes Markdown, `memhtml serve mcp` gives stdout to the MCP server and writes its envelope when the server exits, and `memhtml hook` writes the host's own protocol and exits 0 on a runtime failure. `AGENTS.md` is generated from the same table that drives parsing, so the doc cannot drift from the binary.
 
 ## Wire up your coding agent
 
-One command wires an agent to the store: the MCP server entry, hooks, a fenced block in the host's instruction file, and a skill, all recorded in a receipt with the SHA-256 of every owned file or fragment, so uninstall removes exactly what install wrote and nothing you added beside it.
+One command wires an agent to the store: the MCP server entry, hooks, a fenced block in the host's instruction file, and a skill, all recorded in a receipt with the SHA-256 of every owned file or fragment, so uninstall removes what the receipt claims rather than anything that only looks like it.
 
 ```bash
 npx memhtml@latest integrations install       # every host whose home directory exists
@@ -44,7 +44,7 @@ memhtml integrations install --dry-run        # what it would write, and the ren
 | Cursor      | `~/.cursor/mcp.json` entry, `sessionStart` in `~/.cursor/hooks.json`, a skill; with `--project`, `.cursor/rules/memhtml.mdc` | restart for the MCP entry                 |
 | OpenCode    | `mcp.memhtml` in `opencode.json`, a generated plugin, a block in `AGENTS.md`, a skill                                        | restart, plugins load at startup          |
 
-A hook reads the host's payload on stdin, runs recall or transcript indexing under a hard time bound, and prints the host's own protocol, so the agent starts a session and each prompt with the memories that matter. No hook writes a memory: memhtml is single-writer, and distilling a transcript into a durable fact belongs to a curator on a reviewable branch. Any failure inside a hook prints nothing and exits 0, so a hook can never block a turn.
+A hook reads the host's payload on stdin, runs recall or transcript indexing under a time bound, and prints the host's own protocol, so the agent gets the memories that matter wherever its host lets a hook inject them. No hook writes a memory: memhtml is single-writer, and distilling a transcript into a durable fact belongs to a curator on a reviewable branch. Once its arguments parse, any failure inside a hook gives the host an empty answer and exits 0, so a failing hook never surfaces as a host error.
 
 ```bash
 memhtml integrations doctor     # binary path and version, store root, MCP entry, hooks, block, skill, live handshake
@@ -322,7 +322,7 @@ $MEMHTML_ROOT/                        # its own git repo, one global memory stor
   resources/people/<person>.html  # the person plane
   archive/<YYYY>[.<n>]/<original-path>  # soft-evicted, path-preserving, injective
   .memhtml/
-    index.db                      # gitignored, rebuildable from the tree
+    index.db                      # gitignored; its memory rows rebuild from the tree
     state.db                      # gitignored, NOT rebuildable from git
     state/access.jsonl            # committed sidecar: the state plane's only durable copy
     sessions/<id>.json            # gitignored, one session's log of operations

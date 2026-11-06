@@ -64,9 +64,9 @@ memhtml search "prose, not a query language" --dense
 
 Make `--dense` a habit on every call. It emits minified JSON with null fields dropped, which is what you want when the output goes into a prompt. `memhtml recall` runs the same fusion without the MMR pass, under a character budget, for when you want a context pack rather than a hit list.
 
-Every command writes exactly one JSON envelope to stdout and nothing else, and sends its logs to stderr. The one exception is `memhtml help` on a terminal, which writes Markdown; piped, or with `--json`, it is an envelope like every other command. Exit 0 is success. Exit 2 is a usage error you fix by changing the call. Exit 1 is a runtime failure you fix by changing the store or the environment.
+Every command sends its logs to stderr, and every command but three writes exactly one JSON envelope to stdout and nothing else. `memhtml help` on a terminal writes Markdown; piped, or with `--json`, it is an envelope like every other command. `memhtml serve mcp` gives stdout to the MCP server until it exits, and `memhtml hook` writes the host's own protocol. Exit 0 is success. Exit 2 is a usage error you fix by changing the call. Exit 1 is a runtime failure you fix by changing the store or the environment.
 
-When you are the operator wiring a host agent rather than the agent being wired, one command is the whole path: it writes the host's MCP entry, its hooks, an instruction block, and a skill, and records them in a receipt so uninstall removes exactly that.
+When you are the operator wiring a host agent rather than the agent being wired, one command is the whole path: it writes the host's MCP entry, its hooks, an instruction block, and a skill, and records them in a receipt so uninstall can remove them.
 
 ```bash
 memhtml integrations install    # claude, codex, cursor, opencode; omitted, it detects them
