@@ -299,7 +299,7 @@ The commit's subject is `memhtml(session): <message>`, and a `Memhtml-Session: s
 | `kind`           | What happened                                                                                                                        | What to do                                           |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
 | `committed`      | The log landed as one commit. `sha` names it, and the log is empty again.                                                            | Nothing.                                             |
-| `rebase-needed`  | The ref moved past the session's base. `mainSha` is the new tip, and `overlapping` lists the session's paths that changed meanwhile. | `memhtml session rebase`, then commit again.         |
+| `rebase-needed`  | The ref moved past the base, or git couldn't lock it. `mainSha` names the ref's tip, `overlapping` the session's paths that changed. | `memhtml session rebase`, then commit again.         |
 | `refused`        | An operation breaks a rule, and `violations` names each one. An empty log is `refused` with no violations. Nothing moved.            | Fix or drop the operation, or pass `--drop-refused`. |
 | `worktree-dirty` | The ref is checked out, and the checkout holds uncommitted changes at a path this commit writes. Nothing moved.                      | Commit or stash those changes, then commit again.    |
 
@@ -311,7 +311,7 @@ When a new record's claim has the same frame key as an active record at another 
 
 ## When the ref moved, rebase
 
-A commit without `--drop-refused` never retries on its own. When it answers `rebase-needed`, move the session's base to the ref's new tip and commit again:
+A commit without `--drop-refused` never retries on its own. When it answers `rebase-needed`, move the session's base to the ref's tip and commit again:
 
 ```bash
 memhtml session rebase --id s1
@@ -328,7 +328,7 @@ The fixed half holds in every store:
 
 - `format`: the file has to parse as a memory, with exactly one claim.
 - `duplicate`: the article already exists in an active record.
-- `claim-edit`: a put over an active record with a different article. Write the new fact under its own title with a `memhtml-supersedes` link. When the same batch archives the old record, the link names its archive path, `/archive/<YYYY>/<its path>`.
+- `claim-edit`: a put over an active record with a different article. Write the new fact under its own title with a `memhtml-supersedes` link. When the same batch archives the old record, the link names the slot that archive takes, `/archive/<YYYY>[.<n>]/<its path>`.
 - `reserved-path`: `.memhtml/`, `memhtml.config.json`, and any `index.html` or `sitemap.xml` are never writable. `areas/arcs/` and `resources/people/` are writable only by curation.
 - `batch-cap`: one commit holds at most 200 operations.
 
@@ -373,7 +373,7 @@ A writer waits up to 15 seconds for the lock. Past that it fails with `ERR_STORA
 
 ## A commit killed halfway
 
-Before anything shared moves, `session commit` writes the commit it built into the log as `pending`. The next `session commit` on that id settles it. If the earlier commit landed, the answer is `committed` with `recovered: true` and nothing is committed twice. If it didn't land, the checkout is put back and the commit is made again.
+Before anything shared moves, `session commit` writes the commit it built into the log as `pending`. The next `session commit` on that id settles it. If the earlier commit landed, the answer is `committed` with `recovered: true` and nothing is committed twice. If it didn't land and the ref exists, the commit is made again, and when the ref is the branch your checkout has open, any checkout update the killed commit made is undone first.
 
 ## Make these calls faster with a head server
 

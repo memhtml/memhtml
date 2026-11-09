@@ -182,7 +182,7 @@ Mitigation today is one exporter: any other machine should run `memhtml state im
 A session is a log of operations over one version of the corpus, landed as one commit. The log lives at `.memhtml/sessions/<id>.json`, and `memhtml session status --id <id>` reports its ops and paths.
 
 ```bash
-memhtml session start --id s1                      # on the tip of the branch HEAD names
+memhtml session start --id s1                      # on refs/heads/main unless --ref names another ref
 memhtml session exec --id s1 <<'SH'
 grep -rl 'content="system:memhtml"' /mnt/memhtml/projects | wc -l
 SH
@@ -190,7 +190,7 @@ memhtml session put --id s1 --file ops.jsonl       # JSONL write lines, like app
 memhtml session commit --id s1 --message "three facts"
 ```
 
-A commit that answers `rebase-needed` means another writer landed first. Run `memhtml session rebase --id s1` and commit again. A `refused` answer names each violation, and `--drop-refused` takes the refused ops out of the log, records them in `<id>.dropped.jsonl`, and commits the rest. A `worktree-dirty` answer means the checkout has uncommitted changes at a path the commit touches.
+A commit that answers `rebase-needed` means another writer landed first or git couldn't lock the ref. Run `memhtml session rebase --id s1` and commit again. A `refused` answer names each violation, and `--drop-refused` takes the refused ops out of the log, records them in `<id>.dropped.jsonl`, and commits the rest. A `worktree-dirty` answer means the checkout has uncommitted changes at a path the commit touches.
 
 Session state builds up. `memhtml session prune --older-than 7d --dry-run` reports what a prune would remove, and the same command without `--dry-run` removes it. It never removes a log that holds ops. It lists those under `unlanded` for you to commit.
 
