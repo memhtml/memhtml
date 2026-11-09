@@ -53,7 +53,7 @@
     "effect": "catalog:"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.4",
+    "@biomejs/biome": "2.6.5",
     "@effect/vitest": "catalog:",
     "@types/node": "26.6.6",
     "typescript": "7.0.2",
