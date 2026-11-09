@@ -31,7 +31,7 @@
     "write-file-atomic": "8.0.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.5",
+    "@biomejs/biome": "2.6.6",
     "@effect/vitest": "catalog:",
     "@types/node": "26.6.6",
     "@types/proper-lockfile": "4.1.4",

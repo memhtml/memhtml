@@ -63,9 +63,9 @@ overrides:
 # override and a mixed Effect RC set the gates never ran against.
 catalog:
   effect: 4.1.1
-  "@effect/platform-node": 4.1.1
-  "@effect/platform-node-shared": 4.1.1
-  "@effect/vitest": 4.1.1
+  "@effect/platform-node": 4.1.2
+  "@effect/platform-node-shared": 4.1.2
+  "@effect/vitest": 4.1.2
   fast-check: 4.10.2
 
 allowBuilds:
