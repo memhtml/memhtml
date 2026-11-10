@@ -35,15 +35,23 @@ export const MODEL_SPEC_PREFIXES = ["fake", "bedrock:", "proxy:"] as const
 /** The environment variable `memhtml curate run` reads its default `--model` from. */
 export const CURATOR_MODEL_VAR = "MEMHTML_CURATOR_MODEL"
 
+/** What {@link modelSpecOf} returns for a string that names a spec: the spec. */
+export interface ModelSpecParsed {
+  readonly ok: true
+  readonly spec: CuratorModelSpec
+}
+
+/** What {@link modelSpecOf} returns for a string that names no spec: the reason. */
+export interface ModelSpecRejected {
+  readonly ok: false
+  readonly reason: string
+}
+
 /**
  * The spec a string names, or the reason it names none. Pure, so `run.ts` can judge a flag at exit 2
  * before any repo opens; {@link parseModelSpec} is the same function as an effect.
  */
-export const modelSpecOf = (
-  spec: string
-):
-  | { readonly ok: true; readonly spec: CuratorModelSpec }
-  | { readonly ok: false; readonly reason: string } => {
+export const modelSpecOf = (spec: string): ModelSpecParsed | ModelSpecRejected => {
   const trimmed = spec.trim()
   if (trimmed === "fake") return { ok: true, spec: { kind: "fake" } }
   const at = trimmed.indexOf(":")
