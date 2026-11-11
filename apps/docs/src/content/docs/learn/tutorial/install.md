@@ -120,7 +120,7 @@ The top level is fixed at four PARA buckets: `projects/`, `areas/`, `resources/`
 memhtml index rebuild --embed
 ```
 
-`--embed` fills vectors from Bedrock. With no AWS credentials yet, pass `--no-embed`: the rebuild becomes instant, retrieval runs on its lexical floor, and you fill the vectors later by running `memhtml index embed`, which embeds every chunk that has no vector and rebuilds nothing. Both states are honest ones to be in:
+`--embed` fills vectors from Bedrock. With no AWS credentials yet, pass `--no-embed`: the rebuild skips the embedding calls, retrieval runs on its lexical floor, and you fill the vectors later by running `memhtml index embed`, which embeds every chunk that has no vector and rebuilds nothing. Both states are honest ones to be in:
 
 ```bash
 export MEMHTML_EMBED=off      # an explicit opt-out, distinct from a missing credential
@@ -168,7 +168,7 @@ memhtml status
 
 Two databases sit under `.memhtml/`, and they differ in what you can recover:
 
-- `index.db` is gitignored and rebuildable from the tree. Losing it costs a rebuild.
+- `index.db` is gitignored, and its memory rows rebuild from the tree. Losing it costs a rebuild, plus the memory-session links, which nothing restores, and the trace rows, which `memhtml trace index` refills from the transcripts still under the trace root.
 - `state.db` is gitignored and holds facts the tree cannot reproduce: access counts, reinforcement counts, and the outcome EWMA. `memhtml state export` copies those into a committed file, `.memhtml/state/access.jsonl`; the edge and entity corroboration tables `state.db` also holds, which nothing has written since 0.16, have no copy.
 
 Both are plain SQLite, opened through node's built-in `node:sqlite`. The only database dependency is node itself, with no driver flags to keep in step, so `sqlite3` or any GUI browser opens both files directly and a stuck index stays inspectable without this binary.

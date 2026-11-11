@@ -94,10 +94,12 @@ with a live claim it does not supersede, and a lexical check finds they differ, 
 keeps both live with a `contradicts` edge; choosing a winner is a one-way door that stays with a
 writer or a human.
 
-Every command writes one JSON envelope to stdout and nothing else, sends its logs to stderr, and
-exits 0 for success, 2 for a usage error, and 1 for a runtime failure. `memhtml manifest` prints
-every command, flag, response type, error code, and environment variable the binary accepts, and it
-answers on a machine with no store, no database, and no credentials.
+Every command sends its logs to stderr. Every command but three writes one JSON envelope to stdout
+and nothing else, and exits 0 for success, 2 for a usage error, and 1 for a runtime failure. The
+three are `memhtml help` on a terminal, which writes Markdown; `memhtml serve mcp`, whose stdout
+belongs to the MCP server until it exits; and `memhtml hook`, which writes the host's own protocol.
+`memhtml manifest` prints every command, flag, response type, error code, and environment variable
+the binary accepts, and it answers on a machine with no store, no database, and no credentials.
 
 ## Where to start
 

@@ -5,7 +5,7 @@ description: One JSON envelope per command, append-only response types and error
 
 ## 1. One envelope, three exit codes
 
-Every command writes one JSON envelope to stdout and nothing else, with one exception: `memhtml help` on a terminal writes Markdown, and piped or with `--json` it is an envelope like every other command. Logs go to stderr. The exit code is 0 for success, 2 for a usage error, and 1 for a runtime error (`apps/cli/src/envelope.ts::EXIT_OK`, `apps/cli/src/envelope.ts::EXIT_USAGE`, `apps/cli/src/envelope.ts::EXIT_RUNTIME`).
+Every command writes one JSON envelope to stdout and nothing else, with three exceptions. `memhtml help`, or `--help` on any command, writes Markdown on a terminal, and piped or with `--json` it is an envelope like every other command. `memhtml serve mcp` gives stdout to the MCP server it supervises (`apps/cli/src/serve.ts::serveMcp`). When the server exits, the command writes a `serve.exit` envelope carrying the server's exit code, and exits 0 whatever that code is. `memhtml hook` writes the host's own hook protocol and exits 0 on a runtime failure (`packages/integrations/src/dialect.ts::renderHookOutput`, `apps/cli/src/run.ts::run`); a usage error still gets an envelope, at exit 2. Otherwise the exit code is 0 for success, 2 for a usage error, and 1 for a runtime failure (`apps/cli/src/envelope.ts::EXIT_OK`, `apps/cli/src/envelope.ts::EXIT_USAGE`, `apps/cli/src/envelope.ts::EXIT_RUNTIME`). Logs go to stderr.
 
 `AGENTS.md` is generated from the same `COMMANDS` array that drives argument parsing (`apps/cli/src/agents-doc.ts::renderAgentsDoc`), so it is the reference for the command list and cannot drift from the live answer. Adding a command means editing that one array.
 

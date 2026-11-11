@@ -45,7 +45,7 @@ The git tree is the system of record. It holds every memory, every authored `<li
 
 :::agent
 
-**For an agent.** A path that returns nothing can still hold a live memory. A lost or stale index makes a memory impossible to retrieve while the file sits in the tree, and eviction moves a file with `git mv` into `archive/<YYYY>/` instead of deleting it. So before you report anything as gone, retry with `--include-archived` and check `memhtml status` for a stale index. Reporting an absence as a deletion writes a false fact into the corpus.
+**For an agent.** A path that returns nothing can still hold a live memory. A lost or stale index makes a memory impossible to retrieve while the file sits in the tree, and an eviction moves the file into `archive/` instead of deleting it. So before you report anything as gone, retry with `--include-archived` and check `memhtml status` for a stale index. Reporting an absence as a deletion writes a false fact into the corpus.
 
 :::
 
@@ -61,7 +61,7 @@ memhtml status --dense | jq '{indexFresh: .data.indexFresh, embedderUp: .data.em
 
 `indexFresh: true` means the index describes the current HEAD. `embedderUp: true` means the stored vectors are in the configured model's space and there is at least one of them. That field is read off the stored watermark, so it tells you about this index rather than about whether Bedrock is reachable. `countsByType` is the per-type census: compare it against the store you remember, and against `activeFiles` on `memhtml index status`.
 
-Then run `memhtml doctor` and expect `healthy: true`, and `memhtml eval discriminate` and expect `passed: true`. That second command is the discrimination gate: it checks that every probe query ranks its target fact above deliberately wrong versions of the same fact. Run it here specifically, because it proves the rebuilt vectors still separate a fact from a near-copy that contradicts it, and a row count cannot show you that.
+Then run `memhtml doctor` and expect `healthy: true`, and `memhtml eval discriminate` and expect `passed: true`. That second command is the discrimination gate: it checks that every probe query ranks its target fact above deliberately wrong versions of the same fact. It runs on a fixture corpus it builds itself and never opens this store's index (`packages/eval/src/harness.ts::buildStack`), so it checks the installed ranking code, not the rebuilt vectors. For those, read `memhtml index status` and expect `embeddings` equal to `chunks` and `embedModelMatches: true`.
 
 ## Recovering without a remote
 
@@ -73,10 +73,10 @@ memhtml state import
 memhtml index rebuild --embed
 ```
 
-If only `index.db` is gone, the next `memhtml index update` rebuilds its memory rows. On the new, empty file, `update` falls through to a rebuild on its own (`update` in `packages/index/src/indexer.ts`), so that pass just takes longer than usual. The trace tables come back only through `memhtml trace index`, and the memory-session links do not come back.
+If only `index.db` is gone, the next `memhtml index update` rebuilds its memory rows. On the new, empty file, `update` falls through to a rebuild on its own (`packages/index/src/indexer.ts::makeIndexer::update`). That pass reads HEAD only, so an uncommitted edit waits for the next `update`, and with an embedder configured it embeds every chunk again. The trace tables come back only through `memhtml trace index`, and the memory-session links do not come back.
 
 ## What a rebuild leaves alone
 
-A rebuild reads the tree at HEAD first, then empties every memory table and reprojects what it read, keeping every stored vector in the configured model's space whose chunk id comes back (`packages/index/src/indexer.ts::makeIndexer::reproject`, `packages/index/src/indexer.ts::makeIndexer::truncateForRebuild`). It destroys nothing outside `.memhtml/`, and inside `.memhtml/` it leaves the trace tables and the attached state plane untouched.
+A rebuild reads the tree at HEAD first, then empties every memory table and reprojects what it read, keeping every stored vector in the configured model's space whose chunk id comes back (`packages/index/src/indexer.ts::makeIndexer::reproject`, `packages/index/src/indexer.ts::makeIndexer::truncateForRebuild`). It destroys nothing outside `.memhtml/`, and inside `.memhtml/` it leaves the trace tables, the memory-session links, and the attached state plane untouched.
 
 So running `memhtml index rebuild` as a diagnostic is safe: it cannot lose an access count, and it cannot cost you a re-walk of `$MEMHTML_TRACE_ROOT`.
