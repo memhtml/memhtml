@@ -324,7 +324,7 @@ $MEMHTML_ROOT/                        # its own git repo, one global memory stor
   .memhtml/
     index.db                      # gitignored; its memory rows rebuild from the tree
     state.db                      # gitignored, NOT rebuildable from git
-    state/access.jsonl            # committed sidecar: the state plane's only durable copy
+    state/access.jsonl            # committed sidecar: the only durable copy of state.access
     sessions/<id>.json            # gitignored, one session's log of operations
     snapshots/<sha>.arrow         # gitignored, the head's cold-start cache
     vectors/<model>@<dim>.arrow   # gitignored, the head's vector cache

@@ -90,8 +90,8 @@ Two properties keep the trace plane out of memory retrieval.
 Traces stay out of the ranked path. `memhtml search` and `memhtml recall` rank memories, `memhtml trace
 search` ranks sessions, no query returns both, and none of retrieval's four ranking arms, which are full-text search, vector similarity, recency, and salience, reads a trace row.
 
-A memory rebuild leaves the trace tables alone (`packages/index/src/schema-const.ts::TRACE_TABLES`). So `memhtml
-index rebuild`, which drops the full-text search index and deletes every memory table, costs no re-walk of `$MEMHTML_TRACE_ROOT`. The trace plane and the memory index are rebuilt by different commands because they are recovered from different sources: the tree for one, the transcripts for the other.
+A memory rebuild leaves the trace tables alone, because it empties only the tables in `packages/index/src/schema-const.ts::MEMORY_TABLES` (`packages/index/src/indexer.ts::makeIndexer::truncateForRebuild`). So `memhtml
+index rebuild`, which empties every memory table and, through a delete trigger, the full-text search index, costs no re-walk of `$MEMHTML_TRACE_ROOT`. The trace plane and the memory index are rebuilt by different commands because they are recovered from different sources: the tree for one, the transcripts for the other.
 
 Recovering the trace tables therefore means re-running `memhtml trace index` from a zero watermark, which re-walks `$MEMHTML_TRACE_ROOT` in full. That is slow, and it brings back only the transcripts still under the root.
 
