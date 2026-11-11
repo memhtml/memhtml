@@ -49,8 +49,8 @@ The three tables answer three questions that sound like one.
 
 `memory_session_links` answers which memory came from which session, and how. Its `link_kind` is CHECK-constrained to `wrote`, `read`, `corrected`, or `reinforced`. Three properties of the table are easy to misread:
 
-- The store's injected recorder writes the row at memory-write time, and the trace scanner never writes it. The provenance is recorded by the act that created it.
-- The same link is also carried by the file, as `memhtml-session`, `memhtml-prompt`, and `memhtml-turn` metas, so it survives a rebuild. This table exists to make the link queryable in both directions.
+- The store's injected recorder writes the row when a `write`, `apply`, `correct` or `read` given a session id touches the memory, and the trace scanner never writes it. The provenance is recorded by the act that created it.
+- A write also stamps its session into the file, as `memhtml-session`, `memhtml-prompt`, and `memhtml-turn` metas, but nothing rebuilds this table from them, and a `read` link exists only here. `memhtml index rebuild` leaves the rows alone, and deleting `index.db` loses them. This table exists to make the link queryable in both directions.
 - There is no foreign key to `traces`, on purpose. A memory can be written in a session whose transcript has not been scanned yet, and refusing the link would discard provenance the file already carries.
 
 ### 7.1. Consumers, and the shape of each
