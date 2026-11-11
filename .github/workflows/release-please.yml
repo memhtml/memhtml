@@ -99,14 +99,14 @@ jobs:
       # BEFORE setup-node, and the order is load-bearing. Both prepend to PATH, so whichever
       # runs last wins, and setup-node's node is the one that must: it writes the OIDC .npmrc
       # and its npm is the one that has to run the publish.
-      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
 
       # No `version:` — action-setup ERRORS when the workflow pins a version while
       # package.json's `packageManager` also pins one. That field is the single source of
       # truth, and it must be >= 11.1.3: earlier pnpm sends the literal
       # `${NODE_AUTH_TOKEN}` that setup-node writes as a bearer token and 404s before
       # OIDC can engage (pnpm#11513).
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       # `registry-url` is what writes the .npmrc that scopes the registry, and OIDC never
       # engages without it.

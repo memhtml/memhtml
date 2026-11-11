@@ -1,6 +1,6 @@
 ---
 title: Wire up your coding agent
-description: What memhtml integrations install writes for Claude Code, Codex, Cursor, and OpenCode, which step each host still needs from you, and how uninstall removes exactly what install wrote.
+description: What memhtml integrations install writes for Claude Code, Codex, Cursor, and OpenCode, which step each host still needs from you, and how uninstall uses the receipt to remove what install wrote.
 ---
 
 ```bash
@@ -10,23 +10,25 @@ memhtml integrations install --dry-run         # every file and entry it would w
 memhtml integrations doctor                    # check the wiring, including a live handshake
 ```
 
-`memhtml integrations install` wires a coding agent to this store in one command: the host's MCP server entry, its hooks, a fenced block in its instruction file, and a skill. Every one of those is recorded in a receipt with the SHA-256 of the bytes it owns, so `uninstall` removes exactly what `install` wrote and nothing a human added beside it. The four hosts are `claude` (Claude Code), `codex` (Codex CLI), `cursor`, and `opencode`, in that order everywhere the command reports them.
+`memhtml integrations install` wires a coding agent to this store in one command: the host's MCP server entry, its hooks, a fenced block in its instruction file, and a skill. Every one of those is recorded in a receipt with the SHA-256 of the bytes it owns, so `uninstall` removes what that receipt claims rather than anything that only looks like it. The four hosts are `claude` (Claude Code), `codex` (Codex CLI), `cursor`, and `opencode`, in that order everywhere the command reports them.
 
 With no host argument, install detects one by home directory: `~/.claude`, `~/.codex`, `~/.cursor`, and `~/.config/opencode`. A host whose directory is absent isn't installed, so a machine with two agents on it gets two integrations and no guesses.
 
 ## What it writes
 
-Four components per host, plus the receipt that owns them:
+Up to four components per host, plus the receipt that owns them:
 
 | Component         | What it does                                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------- |
 | MCP entry         | Registers `memhtml-mcp` over stdio, so the host gets the fifteen tools and two resources                              |
-| Hooks             | Session-start recall, per-prompt recall where the host can inject it, transcript indexing where a trace root is known |
+| Hooks             | Session-start and per-prompt recall where the host injects it, indexing on Claude Code and OpenCode with a trace root |
 | Instruction block | A fenced block in the host's instruction file carrying the recall discipline                                          |
 | Skill             | A `SKILL.md` the host loads on demand, carrying the same discipline                                                   |
 | Receipt           | `~/.config/memhtml/integrations/<host>.json`: the SHA-256 of every owned file or fragment                             |
 
-Two kinds of thing get written, and the difference is how ownership is checked. A **file** is wholly memhtml's, so the receipt claims the hash of the whole thing: the skill, the OpenCode plugin, the Cursor rule. A **fragment** lives inside a file other tools also own, so the receipt claims only the rendered bytes of the fragment: a JSON key, a fenced TOML table, a Markdown block, one entry in a hooks array. Your own entries, comments, key order, and line breaking survive both directions byte for byte: the editor splices only the owned bytes and never reformats a neighbor.
+Two kinds of thing get written, and the difference is how ownership is checked. A **file** is wholly memhtml's, so the receipt claims the hash of the whole thing: the skill, the OpenCode plugin, the Cursor rule. A **fragment** lives inside a file other tools also own, so the receipt claims only the rendered bytes of the fragment: a JSON key, a fenced TOML table, a Markdown block, one entry in a hooks array. Your own entries, comments, key order, and line breaking survive both directions: the editor splices only the owned bytes and never reformats a neighbor.
+
+Four things around those bytes can still change. Uninstall drops the blank lines directly above and below a removed Markdown or TOML block and leaves one blank line between what was above it and what was below. A file install or uninstall rewrites always ends with a newline, so one that had no final newline gains one. Uninstall also removes a JSON object or array that memhtml's part leaves empty, comments inside it included, such as an `"mcpServers": {}` or `"hooks": {}` you wrote yourself, and Cursor's `"version": 1` once it is the only key left. And a file with nothing else left in it is deleted, even one that existed before install.
 
 One file is shared on purpose. Codex, Cursor, and OpenCode all read `~/.agents/skills/memhtml/SKILL.md`, so install adopts a byte-identical twin instead of refusing it as somebody else's file, and uninstall leaves it on disk while another host's receipt still claims it.
 
@@ -99,7 +101,7 @@ memhtml integrations install opencode
 | Instruction block | `~/.config/opencode/AGENTS.md`, inside the same Markdown fence |
 | Skill             | `~/.agents/skills/memhtml/SKILL.md`                            |
 
-OpenCode's hook system is its plugin system, so install generates a JavaScript file rather than a config entry, and the receipt claims the whole file. The plugin wires two handlers by default: `chat.message` pushes recall onto each user message, and `experimental.session.compacting` pushes the session-start pack into the compaction prompt. A third handler, `session.idle`, indexes the session's transcript at turn end, and install writes it only when a trace root is known, which for OpenCode means `MEMHTML_TRACE_ROOT`. Restart OpenCode after install, because it loads plugins and config at startup.
+OpenCode's hook system is its plugin system, so install generates a JavaScript file rather than a config entry, and the receipt claims the whole file. The plugin wires two handlers by default: `chat.message` pushes recall onto each user message, and `experimental.session.compacting` pushes the session-start pack into the compaction prompt. A third handler, `session.idle`, runs the transcript indexer over the trace root at turn end, cut off after 1.5 s like every call the plugin makes, and install writes it only when a trace root is known, which for OpenCode means `MEMHTML_TRACE_ROOT`. Restart OpenCode after install, because it loads plugins and config at startup.
 
 ## What the report says
 
@@ -136,7 +138,7 @@ OpenCode's hook system is its plugin system, so install generates a JavaScript f
 }
 ```
 
-The report is keyed by host because the host argument is optional: `memhtml integrations install` wires every host it detects, and one flat report could describe only the last of them. A row's `action` is `created`, `updated`, or `unchanged` on a real run, `planned` on a dry run, and `removed` on an uninstall. `backups` names the prior bytes `--force` kept beside a file. `nextSteps` is that host's manual half, and it's the empty array for a host that asks nothing of you.
+The report is keyed by host because the host argument is optional: `memhtml integrations install` wires every host it detects, and one flat report could describe only the last of them. A row's `action` is `created`, `updated`, or `unchanged` on a real run and `planned` on a dry run, and `removed` marks what an uninstall or a `--hooks none` re-run takes away; an uninstall reports the shared skill as `unchanged` while another host's receipt still claims it. `backups` names the prior bytes `--force` kept beside a file. `nextSteps` is that host's manual half, and it's the empty array for a host that asks nothing of you.
 
 Read `changed` rather than counting entries: at the top it's true when any host changed, and each host carries its own. A re-run that finds every managed fragment already correct reports `changed: false` and writes nothing, which is what makes install safe on a cron line or in a machine-setup script. Uninstall answers the same type with `action: "uninstall"` and one host row, which carries a `state` of `installed` or `not-installed` beside the entries it removed.
 
@@ -146,11 +148,11 @@ Read `changed` rather than counting entries: at the top it's true when any host 
 
 By default the MCP entry and every hook line name an absolute node executable and an absolute entry script, and the receipt records the version the binary reported. Two reasons, and both are about hosts rather than about taste. A GUI host doesn't inherit your shell's `PATH`, so a bare `memhtml-mcp` in its config is a command it can't find. And a version-manager alias that moves leaves a bare command pointing at nothing, with the failure showing up as a server that won't start rather than as a message about a path.
 
-The cost is that an upgrade moves the entry script, so run `install` again after one. `doctor` re-resolves the path on every run and tells an upgrade from a move, so you find out before a session does.
+The cost is that an upgrade can move the entry script, so run `install` again after one; the re-run rewrites the entries and the receipt to the new paths. `doctor` checks that the node executable, CLI, and MCP entry script the receipt recorded still exist, then runs the recorded CLI and compares the version it prints with the receipt's. A toolchain that moved fails its `binary-*` row and, with it, `cli-version` and `mcp-handshake`, while an upgrade in place fails `cli-version` alone, so you find out before a session does.
 
 `--bare-command` writes `memhtml` and `memhtml-mcp` instead and leaves `PATH` to you. Choose it when you manage the toolchain yourself and would rather the config not name a version.
 
-The entry also carries `MEMHTML_ROOT` in its `env`, absolute, rather than relying on your shell profile. A host launches the server from its own environment, and the default `~/memhtml` may not be the store you meant.
+The entry also carries `MEMHTML_ROOT` in its `env` (`environment` on OpenCode), absolute, rather than relying on your shell profile. A host launches the server from its own environment, and the default `~/memhtml` may not be the store you meant.
 
 ## Project scope
 
@@ -176,15 +178,15 @@ A managed fragment a human edited is a different case, and install refuses it:
 ERR_INTEGRATION_MODIFIED
 ```
 
-The refusal is per entry, and nothing is written when one fires. It fires when the bytes install owns no longer hash to what the receipt claims, which means either you edited the block or another tool rewrote the file around it. Read the entry, decide which version you want, then either keep your edit by removing the receipt's claim on it with `uninstall`, or overwrite it with `--force`. `--force` keeps the prior bytes beside the file as a timestamped backup, and the report names the backup path.
+The refusal is per entry, and nothing is written when one fires. It fires when the bytes install owns no longer hash to what the receipt claims, which means you or another tool changed or removed them, not that the file around them was reformatted. Read the entry and decide which version you want. `--force` writes install's version and keeps the prior bytes beside the file as a timestamped backup, and the report names the backup path. No command keeps your edit and drops the receipt's claim on it: `uninstall` refuses a modified entry too, as the end of this section says.
 
-The same refusal covers a receipt that is present and can't be read, whether it's truncated, of the wrong shape, copied in from another host or root, or claims a path outside its own root. Install won't plan over it as if the host were never installed, and uninstall won't guess at what to remove from it; `--force` on install proceeds as a fresh install and keeps the unreadable bytes beside it. Uninstall also stops when another host's receipt at the same scope can't be read, because that receipt may claim the skill the three non-Claude hosts share.
+The same refusal covers a receipt that is present and can't be read, whether it's truncated, of the wrong shape, copied in from another host or root, or claims a path outside its own root: install won't plan over it as if the host were never installed, and `--force` on install proceeds as a fresh install and keeps the unreadable bytes beside it. Uninstall won't guess at what to remove from it either, and answers `ERR_STORAGE` with nothing removed. Uninstall also stops when another host's receipt at the same scope can't be read, because that receipt may claim the skill the three non-Claude hosts share.
 
 With no host named, install plans every detected host before it writes to any of them, so a refusal on the third host leaves the first two untouched. If a disk error interrupts the real pass, the failure names the hosts that did land and the uninstall command for each.
 
-Re-running install with a narrower `--hooks` mode removes the events it no longer wants, and `--hooks none` removes every hook the previous install wrote, including OpenCode's plugin file, in the same transaction that drops them from the receipt. The report lists those rows as `removed`. Your own hook entries beside ours stay where they are.
+Re-running install with a narrower `--hooks` mode removes the events it no longer wants, and `--hooks none` removes every hook the previous install wrote, including OpenCode's plugin file, in the same transaction that drops them from the receipt. A narrower mode reports its hooks row as `updated`, and `--hooks none` reports the hooks or plugin row as `removed`. Your own hook entries beside ours stay where they are.
 
-`uninstall` refuses a modified entry with the same code and has no `--force`. That asymmetry is deliberate: overwriting your edit is recoverable from the backup, and deleting a file you had made your own isn't.
+`uninstall` refuses the whole host with the same code when any entry it claims was modified, and has no `--force`. That asymmetry is deliberate: overwriting your edit is recoverable from the backup, and deleting a file you had made your own isn't.
 
 ## List and doctor
 
@@ -206,13 +208,13 @@ memhtml integrations doctor claude   # one host
 
 The check names, in the order a healthy host reports them: `receipt`, `binary-node`, `binary-cli`, `binary-mcp`, `cli-version`, `store-root`, one `entry:<role>` per receipt entry, `hooks`, `instruction-block`, `skill`, `trace-root` when an installed hook names one, `mcp-handshake`, and `hook-trust` on Codex. An absent or unreadable receipt answers with that one `receipt` row and stops, because nothing else is knowable without it. `trace-root` passes on a root that exists and holds no transcript yet, which is every machine before its first session, and fails only on a root that cannot be listed.
 
-`cli-version` runs the recorded CLI's `manifest` and compares the version it prints with the version the receipt records, so an upgrade reads differently from a binary that moved. `mcp-handshake` spawns the server the entry names, with the env the entry carries, and completes a live `initialize`. That last check is the one that catches a config which reads correctly and starts nothing.
+`cli-version` and `mcp-handshake` run the CLI and the server the receipt records, or `memhtml` and `memhtml-mcp` from doctor's own `PATH` after `--bare-command`. `cli-version` runs `manifest` and compares the version it prints with the version the receipt records, so an upgrade in place reads differently from a binary that moved. `mcp-handshake` adds the receipt's `MEMHTML_ROOT` to doctor's own environment and completes a live `initialize`. It doesn't read the host's config file, so it proves the server starts from doctor's environment, and the `entry:mcp-entry` row is what proves the config still holds what install wrote. Without `--bare-command`, the two together catch a config which reads correctly and starts nothing.
 
 The store-root check reads the directory rather than calling `memhtml status`, because `status` on a bare directory creates a store, and a diagnostic that creates the thing it's checking always passes. The same rule gates the handshake: when `store-root` failed, `mcp-handshake` reads `not attempted`, because starting the server would scaffold the `.memhtml/` the row above just reported missing and the next run would read green.
 
 ## The shell snippet
 
-The MCP entries carry their own environment, so nothing about the host integration needs your shell. `integrations shell` is for you, running the CLI by hand:
+The MCP entries carry their own `MEMHTML_ROOT`, so the host integration doesn't need that variable from your shell. `integrations shell` is for you, running the CLI by hand:
 
 ```bash
 memhtml integrations shell           # print the snippet

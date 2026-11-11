@@ -16,7 +16,7 @@ memhtml serve mcp
 
 Nothing appears on stdout, and that is correct: stdout is the JSON-RPC stream. Anything else written there would corrupt the protocol, so every log goes to stderr. The server then waits for a client to speak first.
 
-`memhtml serve mcp` holds no database of its own. It spawns the `memhtml-mcp` entry point with inherited stdio and waits (`apps/cli/src/serve.ts::serveMcp`), so the supervisor holds no handle that could conflict with the child. Interrupting the supervisor kills the child, so Ctrl-C never leaves an orphaned server holding the database open (`apps/cli/src/serve.ts::serveMcp`). On exit you get the one envelope the contract promises:
+`memhtml serve mcp` holds no database of its own. It spawns the `memhtml-mcp` entry point with inherited stdio and waits (`apps/cli/src/serve.ts::serveMcp`), so the supervisor holds no handle that could conflict with the child. Ctrl-C on a terminal stops the server along with the supervisor, so no orphaned server is left holding the database open, and no envelope is written. When the client closes stdin instead, the server exits and the supervisor writes the one envelope the contract promises:
 
 ```json
 {
@@ -65,7 +65,7 @@ trace_search        trace_links         memory_status
 
 The order is deliberate, because a client publishes it and an agent reads it top-down. `memory_write_batch` sits second, directly after `memory_write`, so the tool that `memory_write`'s own description points at is the very next entry rather than thirteen tools away.
 
-Three resource templates come with them:
+Two resource templates come with them:
 
 ```json
 {
@@ -146,9 +146,9 @@ memhtml integrations install claude   # or codex, cursor, opencode
 memhtml integrations install          # every host whose home directory exists
 ```
 
-It writes that host's MCP entry with an absolute command and an explicit `MEMHTML_ROOT`, and it records what it wrote in a receipt so `memhtml integrations uninstall claude` removes exactly that. It also installs hooks, an instruction block, and a skill, which is more than a client entry: `--hooks none` writes the entry, block, and skill and no hook. [Wire up your coding agent](/learn/operations/wire-a-coding-agent/) is the full page, with the per-host files and the restart or trust step each one needs.
+It writes that host's MCP entry with an absolute command and an explicit `MEMHTML_ROOT`, and it records what it wrote in a receipt so `memhtml integrations uninstall claude` can remove it. It also installs hooks, an instruction block, and a skill, which is more than a client entry: `--hooks none` writes the entry, block, and skill and no hook. [Wire up your coding agent](/learn/operations/wire-a-coding-agent/) is the full page, with the per-host files and the restart or trust step each one needs.
 
-Write the entry by hand for any other client, or when you want to see the shape the command produces. An MCP client launches the server as a subprocess, and while the wrapper key differs between clients, the `command` / `args` / `env` triple is the shape they share:
+Write the entry by hand for any other client, or when you want to see the shape the command produces. An MCP client launches the server as a subprocess, and while the wrapper key differs between clients, Claude Code, Codex, and Cursor share the `command` / `args` / `env` triple below, and OpenCode spells it as one `command` array plus `environment`:
 
 ```json
 {
