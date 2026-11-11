@@ -25,7 +25,7 @@ memhtml search "one writer many readers"      # FTS + vector + recency + salienc
 memhtml serve mcp                             # the same store over stdio: 15 tools, 2 resources
 ```
 
-`memhtml manifest` (or a bare `memhtml`) answers with every command, flag, response type, and error code the binary accepts, and it answers on a machine with no repo, no database, and no credentials. Every command writes exactly one JSON envelope to stdout, logs go to stderr, and the exit code is 0 for success, 2 for a usage error, 1 for a runtime failure. Three commands differ: `memhtml help` on a terminal writes Markdown, `memhtml serve mcp` gives stdout to the MCP server and writes its envelope when the server exits, and `memhtml hook` writes the host's own protocol and exits 0 on a runtime failure. `AGENTS.md` is generated from the same table that drives parsing, so the doc cannot drift from the binary.
+`memhtml manifest` (or a bare `memhtml`) answers with every command, flag, response type, and error code the binary accepts, and it answers on a machine with no repo, no database, and no credentials. Every command writes exactly one JSON envelope to stdout, logs go to stderr, and the exit code is 0 for success, 2 for a usage error, 1 for a runtime failure. Three commands differ: `memhtml help` on a terminal writes Markdown; `memhtml serve mcp` gives stdout to the MCP server, writes its envelope when the server exits, and exits 0 whatever the server's exit code; and `memhtml hook` writes the host's own protocol and exits 0 on a runtime failure. `AGENTS.md` is generated from the same table that drives parsing, so the doc cannot drift from the binary.
 
 ## Wire up your coding agent
 
@@ -324,7 +324,7 @@ $MEMHTML_ROOT/                        # its own git repo, one global memory stor
   .memhtml/
     index.db                      # gitignored; its memory rows rebuild from the tree
     state.db                      # gitignored, NOT rebuildable from git
-    state/access.jsonl            # committed sidecar: the state plane's only durable copy
+    state/access.jsonl            # committed sidecar: the only durable copy of state.access
     sessions/<id>.json            # gitignored, one session's log of operations
     snapshots/<sha>.arrow         # gitignored, the head's cold-start cache
     vectors/<model>@<dim>.arrow   # gitignored, the head's vector cache
