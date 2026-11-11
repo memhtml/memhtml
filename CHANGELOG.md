@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.18.2](https://github.com/memhtml/memhtml/compare/memhtml-v0.18.1...memhtml-v0.18.2) (2026-11-11)
+
+
+### Bug Fixes
+
+* **deps:** bump node-html-parser to 9.0.7 ([#392](https://github.com/memhtml/memhtml/issues/392)) ([5452d2a](https://github.com/memhtml/memhtml/commit/5452d2a12e650703f93cdd714fbfbf550ff7cd1c))
+* **deps:** bump parse5 to 8.1.1 ([#384](https://github.com/memhtml/memhtml/issues/384)) ([4d71154](https://github.com/memhtml/memhtml/commit/4d71154d4d513acf0afffb3a671db1a1024d4022))
+* **deps:** move the Effect set to 4.1.2 ([#383](https://github.com/memhtml/memhtml/issues/383)) ([be62f01](https://github.com/memhtml/memhtml/commit/be62f014563d4655ff32888eefe8421059974e70))
+
 ## [0.18.1](https://github.com/memhtml/memhtml/compare/memhtml-v0.18.0...memhtml-v0.18.1) (2026-11-03)
 
 
