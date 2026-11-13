@@ -93,7 +93,7 @@ In 0.16 the curator is one command on the same schedule, and the merge stays a r
 30 3 * * *  cd $HOME && MEMHTML_ROOT=$HOME/memhtml MEMHTML_CURATOR_MODEL=bedrock:global.anthropic.claude-opus-5 memhtml curate run --dense >> /var/log/memhtml/curate.jsonl 2>> /var/log/memhtml/curate.err
 ```
 
-The run commits to `curate/<UTC date>` and never moves `main`. A run that proposes nothing commits nothing and creates no branch. Each run starts from `main`, so a run that starts before you land the last branch repeats that branch's work. When two branches wait, land one and delete the other, because `curate merge` can refuse the second. When a run leaves a branch, review it with git, then land it:
+The run commits to `curate/<UTC date>` and never moves `main`. A run that proposes nothing commits nothing and creates no branch. Each run starts from `main`, so a run that starts before you land the last branch repeats that branch's work. When two branches wait, land one and then try the other. `curate merge` replays the second branch's operations onto the new `main`, and refuses with nothing moved when they collide with what the first branch landed. Delete a branch the merge refuses. When a run leaves a branch, review it with git, then land it:
 
 ```bash
 git -C ~/memhtml log --oneline main..curate/2026-10-18
