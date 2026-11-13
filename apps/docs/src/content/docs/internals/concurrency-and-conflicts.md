@@ -42,6 +42,6 @@ The refusal is a typed `WriteConflict` carrying the path and the blob sha now at
 
 ## 5. Re-running curation is cheap because the run never moved main
 
-A curator run commits only to its `curate/<date>` branch and never checks that branch out, so the run never touches `main`, the checkout, or the index. Throwing a run away is `git branch -D` with no compensating writes. The next run on a new ref reads the corpus fresh and briefs the model on what's there now: an archived duplicate is no longer a duplicate, a repaired link is no longer dangling, and a filed record is no longer in the inbox.
+A curator run commits only to its `curate/<date>` branch and never checks that branch out, so the run never touches `main`, the checkout, or the index. Throwing a run away is `git branch -D` with no compensating writes. The next run on a new ref reads the corpus at `main` and briefs the model on what's there now: once a run's branch has landed, an archived duplicate is no longer a duplicate, a repaired link is no longer dangling, and a filed record is no longer in the inbox.
 
 `curate merge` is memhtml's door back, and it moves `main` with the same compare-and-swap a session commit uses. When `main` moved past the branch's base, the merge replays the branch's operations as one new commit on `main`'s tip. A replay that collides with what `main` gained meanwhile refuses with nothing moved, so a curation landing never overwrites an agent's write.
