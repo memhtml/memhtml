@@ -20,7 +20,7 @@
     "@expressive-code/plugin-collapsible-sections": "^0.44.3",
     "@expressive-code/plugin-line-numbers": "^0.44.3",
     "@memhtml/cli": "workspace:*",
-    "@tabler/icons-astro": "^3.50.0",
+    "@tabler/icons-astro": "^3.51.0",
     "astro": "^7.4.8",
     "astro-d2": "^0.14.1",
     "astro-og-canvas": "^0.13.3",
