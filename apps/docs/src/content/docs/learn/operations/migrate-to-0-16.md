@@ -9,7 +9,7 @@ Upgrade in this order:
 
 1. On 0.15.x, merge or discard every `sleep/<date>` branch.
 2. If you want a strict write bar, write and commit `memhtml.config.json`.
-3. Install 0.16.
+3. Install 0.16 or later.
 4. Replace a `sleep run` schedule with `curate run` and a reviewed `curate merge`.
 5. Put `session prune` on the schedule, and decide whether to run a head server.
 
@@ -21,7 +21,7 @@ Upgrade in this order:
 | `memhtml sleep review`                                                                                | `git log` and `git diff` over the `curate/<date>` branch, and the `report` in the `curate.run` payload                                           |
 | `memhtml sleep merge`                                                                                 | `memhtml curate merge`                                                                                                                           |
 | `memhtml sleep plan`                                                                                  | `memhtml curate run --dry-run`, which shows what a run would do and writes nothing                                                               |
-| `memhtml sleep status`                                                                                | The `curate/<date>` branches themselves: `git branch --list 'curate/*'`                                                                          |
+| `memhtml sleep status`                                                                                | `git branch --list 'curate/*'` for the runs that committed, and `memhtml session status --id curate-<date>` for a run that left no branch        |
 | `memhtml apply --consolidate last-wins`                                                               | `--detect-conflicts`, which reports a contradiction without changing the write, and `memhtml correct` to supersede a fact                        |
 | MCP `memory_write_batch` `consolidate`                                                                | `detect_conflicts`, and `memory_correct`                                                                                                         |
 | The `consolidated_into` and `superseded_path` fields on each batch result, and `summary.consolidated` | Nothing. A batch result carries `conflict` and `near_duplicates`, and the summary counts `total`, `written`, `deduped`, `failed`, and `skipped`. |
@@ -45,7 +45,7 @@ git -C ~/memhtml branch -D sleep/2026-10-16   # then delete the landed branch
 git -C ~/memhtml branch -D sleep/2026-10-17   # or discard it, ledger and all
 ```
 
-Settle the oldest branch first. A 0.15.x run that succeeds leaves `HEAD` on its own branch, so a run started before you check out `main` again builds on it, and `sleep merge` refuses the newer branch until the older one lands. Check out `main` before `sleep merge`, and read `merged` in its answer, because a refusal still exits 0. `sleep merge` keeps the branch it lands, so delete each settled branch with `git branch -D`. When `git branch --list 'sleep/*'` prints nothing, the store is ready.
+Settle the oldest branch first. A 0.15.x run that succeeds leaves `HEAD` on its own branch, so a run started before you check out `main` again builds on it, and `sleep merge` refuses the newer branch until the older one lands. Check out `main` before `sleep merge` and before `git branch -D`, because git refuses to delete the branch `HEAD` is on. Read `merged` in the `sleep merge` answer, because a refusal still exits 0. `sleep merge` keeps the branch it lands, so delete each settled branch with `git branch -D`. When `git branch --list 'sleep/*'` prints nothing, the store is ready.
 
 After the upgrade, the reports that earlier merges committed under `.memhtml/sleep/` stay in the tree as history. Nothing in 0.16 reads or writes them, and you can leave the directory where it is. `memhtml init` still creates `.memhtml/sleep/.gitkeep` in a new store.
 
@@ -73,9 +73,9 @@ npm i -g memhtml
 memhtml manifest | jq '.data.commands | map(.name) | map(select(startswith("session") or startswith("curate") or startswith("head") or . == "config"))'
 ```
 
-The store needs no conversion. 0.16 adds no index or state migration. `memhtml index update` picks up where 0.15.x left it.
+The store needs no conversion. No release from 0.16 to 0.18.2 adds an index or state migration. `memhtml index update` picks up where 0.15.x left it.
 
-0.16 adds a few paths under `.memhtml/` that git doesn't track: `sessions/` for session logs, `snapshots/` for cached copies of the corpus, `vectors/` for the head's vector cache, `head.sock` for a running head server, and `checkout.lock` while a writer holds the checkout. A new store's `.gitignore` names the first four. A store scaffolded before 0.16 has an older `.gitignore`, so the first session start, snapshot write, `head embed`, and `head serve` each add their path to `.git/info/exclude`, which stays local to the clone. `checkout.lock` is an empty directory, which git never lists, so `git status` stays clean either way.
+0.16 adds a few paths under `.memhtml/` that git doesn't track: `sessions/` for session logs, `snapshots/` for cached copies of the corpus, `vectors/` for the head's vector cache, `head.sock` for a running head server, and `checkout.lock` while a writer holds the checkout. A new store's `.gitignore` names the first four. A store scaffolded before 0.16 has an older `.gitignore`. There, the first session start, snapshot write, `head embed`, and `head serve` each add their path to `.git/info/exclude`, which stays local to the clone. `checkout.lock` is an empty directory, which git never lists, so `git status` stays clean either way.
 
 If the store already has `.memhtml/snapshots/` or `.memhtml/vectors/` from a pre-release build, those files keep working. Snapshots and vector caches now carry a `format` key. A file without one reads as format 1, the current format, so nothing needs re-embedding.
 
@@ -93,7 +93,7 @@ In 0.16 the curator is one command on the same schedule, and the merge stays a r
 30 3 * * *  cd $HOME && MEMHTML_ROOT=$HOME/memhtml MEMHTML_CURATOR_MODEL=bedrock:global.anthropic.claude-opus-5 memhtml curate run --dense >> /var/log/memhtml/curate.jsonl 2>> /var/log/memhtml/curate.err
 ```
 
-The run commits to `curate/<UTC date>` and never moves `main`. Review the branch with git, then land it:
+The run commits to `curate/<UTC date>` and never moves `main`. A run that proposes nothing commits nothing and creates no branch. Each run starts from `main`, so a run that starts before you land the last branch repeats that branch's work. When two branches wait, land one and then try the other. `curate merge` replays the second branch's operations onto the new `main`, and refuses with nothing moved when they collide with what the first branch landed. Delete a branch the merge refuses. When a run leaves a branch, review it with git, then land it:
 
 ```bash
 git -C ~/memhtml log --oneline main..curate/2026-10-18
@@ -101,9 +101,9 @@ git -C ~/memhtml diff --stat main...curate/2026-10-18
 memhtml curate merge curate/2026-10-18
 ```
 
-`curate merge` runs the head gate before it lands and refuses with `ERR_DISCRIMINATION_FAILED` when the branch ranks the records it shares with `main` worse than the gate tolerates. To throw a run away, `git branch -D` its branch. `--model fake` runs the curator with no credential, which is how to try the schedule on a test store first. [Curate the corpus](/learn/operations/curate-the-corpus/) covers the run, the review, the gate, `curate collapse`, and `--charter`.
+`curate merge` runs the head gate before it lands and refuses with `ERR_DISCRIMINATION_FAILED` when the branch ranks the records it shares with `main` worse than the gate tolerates. It lands on `main` unless you pass `--into`, so a store whose branch is `master` passes `--into master`. To throw a run away, `git branch -D` its branch. The run's session log stays under `.memhtml/sessions/` after the branch is gone, so a new run on the same UTC date needs another `--ref`, such as `curate/2026-10-18-2`. `--model fake` runs the curator with no credential, which is how to try the command on a test store first. [Curate the corpus](/learn/operations/curate-the-corpus/) covers the run, the review, the gate, `curate collapse`, and `--charter`.
 
-Some sleep phases have no replacement. Confidence decay, retention triage, reprieve, relationship mining, edge typing, task detection, and trace consolidation don't run in 0.16. The curator's charter covers deduplication, labels, entity aliases, inbox placement, arcs, and dangling links.
+Some sleep phases have no replacement. Confidence decay, retention triage, reprieve, relationship mining, edge typing, task detection, and trace consolidation don't run in 0.16. The curator's charter covers deduplication, labels, entity aliases, entity questions that became moot, inbox placement, arcs, and dangling links.
 
 The sleep run's state-export phase is gone too, so nothing runs `memhtml state export` for you: run it on one machine only, with the other [upkeep commands](/learn/operations/run-the-store-day-to-day/), as [preserve the state plane](/learn/operations/preserve-the-state-plane/) describes.
 
@@ -124,13 +124,13 @@ The sleep run's state-export phase is gone too, so nothing runs `memhtml state e
 
 ## The MCP server asks the head server first
 
-In 0.16, `memory_search` and `memory_recall` ask a running head server before they read the index, so a record a session committed a moment ago is found before `index update` runs. With no head server running, the connection fails in a few milliseconds and both tools answer from the index exactly as 0.15.x did. A call that sets `include_archived` to true or names a non-empty `as_of`, a query with a double quote, or a query with no term the head indexes always goes to the index.
+In 0.16, `memory_search` and `memory_recall` ask a running head server before they read the index, so a record a session committed a moment ago is found before `index update` runs. With no head server running, the connection fails in a few milliseconds and both tools answer from the index exactly as 0.15.x did. Four kinds of call always go to the index: one that sets `include_archived` to true, one that names a non-empty `as_of`, one whose query has a double quote, and one whose query has no term the head indexes.
 
 Set `MEMHTML_MCP_HEAD=off` in the MCP server's environment and restart the server to send `memory_search` and `memory_recall` to the index as 0.15.x did.
 
 ## Keep the index fresh
 
-A session commit doesn't update `index.db`. `memhtml search`, `memhtml recall`, and any MCP call that answers from the index see a session's records after the next `memhtml index update`. Keep the `index update` line from [the upkeep commands](/learn/operations/run-the-store-day-to-day/#the-upkeep-commands). `memhtml status` reports `indexFresh: false` while the index is behind.
+A session commit doesn't update `index.db`, and neither does `curate merge`, where `sleep merge` updated it. `memhtml search`, `memhtml recall`, and any MCP call that answers from the index see a session's records, and what a `curate merge` landed, after the next `memhtml index update`, so run it after each `curate merge`. Keep the `index update` line from [the upkeep commands](/learn/operations/run-the-store-day-to-day/#the-upkeep-commands). `memhtml status` reports `indexFresh: false` while the index is behind.
 
 ## Prune session state
 
@@ -140,8 +140,8 @@ Each session leaves a small log under `.memhtml/sessions/`, and only `session pr
 memhtml session prune --repo $HOME/memhtml --older-than 7d --dense >> /var/log/memhtml/prune.jsonl 2>> /var/log/memhtml/prune.err
 ```
 
-`session prune` never removes a log that still holds operations. It lists one past the cutoff under `unlanded`, and you can land it with `memhtml session rebase --id <id>` and then `memhtml session commit --id <id> --message <summary> --drop-refused`. Run `memhtml session prune --older-than 7d --dry-run` first to see what it would remove.
+`session prune` never removes a log that still holds operations. It lists one past the cutoff under `unlanded`, and you can land it with `memhtml session rebase --id <id>` and then `memhtml session commit --id <id> --message <summary> --drop-refused`. A commit that drops an operation records it in `.memhtml/sessions/<id>.dropped.jsonl`, which `session prune` keeps. Run `memhtml session prune --older-than 7d --dry-run` first to see what it would remove.
 
 ## Run a head server, if you want one
 
-A head server is optional. It keeps the corpus loaded so the session and head commands that ask it don't load the corpus on every call, and it serves the MCP search tools the current tip of the ref it follows. [Run a head server](/learn/operations/run-a-head-server/) covers starting it, the fallback rules, and a service-manager unit.
+A head server is optional. It keeps the corpus loaded, so the session and head commands that ask it don't load the corpus on every call. It also serves `memory_search` and `memory_recall` the current tip of the ref it follows. [Run a head server](/learn/operations/run-a-head-server/) covers starting it, the fallback rules, and a service-manager unit.
