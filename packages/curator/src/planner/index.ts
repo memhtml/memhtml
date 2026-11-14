@@ -26,7 +26,8 @@ export {
   MAX_DOCUMENT_FREQUENCY_SHARE,
   MIN_DOCUMENT_FREQUENCY_CAP,
   type SimilarityEdge,
-  tfidfVectors
+  tfidfVectors,
+  type Vector
 } from "./similarity.js"
 export {
   ARCHIVE_CHUNK,

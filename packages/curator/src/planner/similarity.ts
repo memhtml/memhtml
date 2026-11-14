@@ -41,7 +41,8 @@ const byPath = (a: { readonly path: string }, b: { readonly path: string }): num
 export const comparedText = (record: MemoryRecord): string =>
   `${record.title} ${record.claim} ${record.bodyText}`
 
-interface Vector {
+/** One record's TF-IDF vector: its path and its L2-normalized weight per token. */
+export interface Vector {
   readonly path: string
   readonly weights: ReadonlyMap<string, number>
 }
