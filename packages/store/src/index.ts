@@ -16,6 +16,7 @@
 export { PARA_BUCKETS, type ParaBucket } from "@memhtml/contracts/types"
 export { checkoutLockTarget, withCheckoutLock } from "./checkout-lock.js"
 export {
+  type CommitResult,
   Git,
   GitFailure,
   type GitShape,
@@ -80,6 +81,7 @@ export type {
   BatchWriteResult,
   CorrectResult,
   DedupeLookup,
+  LinkResult,
   MoveCallback,
   ReadResult,
   StoreError,

@@ -409,7 +409,7 @@ export const PROMPT_TRAILER = "Memhtml-Prompt"
  * range without reading any file, which is how a reader attributes a run's writes.
  *
  * Both values are agent-supplied and reach `git commit --trailer` verbatim, so each is flattened
- * to one line by {@link oneLine} before it becomes part of a commit message. A value that holds
+ * to one line by `oneLine` before it becomes part of a commit message. A value that holds
  * only whitespace flattens to empty and is omitted, exactly as an absent one is.
  */
 export const provenanceTrailers = (input: {
