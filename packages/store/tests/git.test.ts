@@ -885,6 +885,12 @@ describe("interruption waits for the git child", () => {
    * than failing fast the way an existing `index.lock` would make `git add` do. Probed against git
    * 2.50.1: `index.lock` and `HEAD.lock` both present while it waits, both removed on SIGTERM.
    *
+   * The interrupt waits for `HEAD.lock`, not `index.lock`. git creates a lock with
+   * `open(O_CREAT|O_EXCL)` and only then registers it for its SIGTERM cleanup (`tempfile.c`
+   * `create_tempfile_mode`), so a SIGTERM sent the moment `index.lock` appears can kill git with
+   * the lock still on disk (CI flake on 2026-11-02 and 2026-11-03). `HEAD.lock` is taken in the
+   * ref update, after `index.lock` is registered, so from then on SIGTERM removes `index.lock`.
+   *
    * (Mutation: dropping the `return awaitChildExit(child)` from `spawnGit` makes `Fiber.interrupt`
    * return while the pid is still alive and `index.lock` still on disk, and this case names it.)
    */
@@ -898,6 +904,7 @@ describe("interruption waits for the git child", () => {
     const branch = (await run(repo.git.run(["symbolic-ref", "--short", "HEAD"]))).trim()
     const refLock = join(repo.root, ".git", "refs", "heads", `${branch}.lock`)
     const indexLock = join(repo.root, ".git", "index.lock")
+    const headLock = join(repo.root, ".git", "HEAD.lock")
     await writeFile(refLock, "", "utf8")
 
     let child: ChildProcess | undefined
@@ -916,7 +923,8 @@ describe("interruption waits for the git child", () => {
           "memhtml(write): never lands"
         ])
       )
-      await waitUntil(() => exists(indexLock), "the blocked commit to take index.lock")
+      await waitUntil(() => exists(headLock), "the blocked commit to reach its ref update")
+      expect(await exists(indexLock)).toBe(true)
       if (child === undefined) throw new Error("no child process was observed")
       const pid = child.pid
       if (pid === undefined) throw new Error("the child has no pid")
