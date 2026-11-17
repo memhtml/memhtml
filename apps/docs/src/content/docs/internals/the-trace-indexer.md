@@ -61,6 +61,6 @@ Because of the firewall those are a separate query surface rather than a fifth r
 
 ## 8. The consumer that motivates the plane
 
-An agent distilling sessions into memories is the consumer. Anything an agent learned mid-session and didn't explicitly write down is otherwise lost, because the transcripts hold it and the corpus doesn't. Until 0.16 the sleep pipeline's consolidator ran that distillation with a sandboxed agent. 0.16 removed it, and no command distills transcripts now. An agent that does it reads the plane below and writes what it keeps through a [session](/internals/sessions-and-the-commit-path/).
+An agent distilling sessions into memories is the consumer. Anything an agent learned mid-session and didn't explicitly write down is otherwise lost, because the transcripts hold it and the corpus doesn't. Until 0.16 the sleep pipeline's consolidator ran that distillation with a sandboxed agent. 0.16 removed it, and no memhtml command distills transcripts: `memhtml curate run` and `memhtml curate collapse` work over the records already in the corpus (`packages/curator/src/tools.ts::CuratorTools`). An agent that does it reads the plane below and writes what it keeps through a [session](/internals/sessions-and-the-commit-path/).
 
 Joining `traces` to `memory_session_links` produces the manifest. With it that agent's first move is reading the sessions that touch the memories in question, rather than reading everything. The manifest carries paths, date ranges, and session ids, tied to the memory files they relate to.
