@@ -21,7 +21,7 @@ memhtml eval discriminate         # expect passed true
 
 ## Run them in this order
 
-Run `memhtml init` first, because the merge driver it configures lives in this clone and nowhere else. `.gitattributes` travels with the clone and the `merge.ours.driver` config does not, so until you run it, the first merge that touches a generated file writes conflict markers into that file.
+Run `memhtml init` first, because the merge driver it configures lives in this clone and nowhere else. `.gitattributes` travels with the clone and the `merge.ours.driver` config does not, so until you run it, git merges a generated file line by line, which can write conflict markers into it.
 
 Run `memhtml state import` right after `memhtml init`, before any export. An export can replace the sidecar with this clone's own rows, or with an empty file. The rebuild does not touch `state.db`, so the import can come before or after it. Retrieval ranks a query with four arms: full-text search, vector similarity, recency, and salience, which favors memories you have opened and reinforced before. The import gives the salience arm the sidecar's history on your first query.
 
