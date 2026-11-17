@@ -68,7 +68,7 @@ No hook writes a memory. Not the session-start pack, not the per-prompt search, 
 
 Two reasons hold that line. A hook that wrote a memory would put a commit on the critical path of a turn, and it would wait on the checkout lock behind every other writer to the store. And deciding what's durable is a judgment that belongs to an agent reading whole transcripts, not to a hook with 1.5 s and one prompt.
 
-So hooks recall and index, and writing down what a transcript was worth is a later step. An agent reads the indexed transcripts with `memhtml trace search` and writes the records it decides to keep through a [session](/learn/operations/write-through-a-session/), where the write bar judges each one. No 0.16 command does that step on its own. The indexing hooks are what give that agent something to read, which is why they're worth installing on the host whose transcripts memhtml can read.
+So hooks recall and index, and writing down what a transcript was worth is a later step. An agent reads the indexed transcripts with `memhtml trace search` and writes the records it decides to keep through a [session](/learn/operations/write-through-a-session/), where the write bar judges each one. No memhtml command does that step on its own: `memhtml curate run` and `memhtml curate collapse` work over the records already in the corpus, not over transcripts. The indexing hooks are what give that agent something to read, which is why they're worth installing on the host whose transcripts memhtml can read.
 
 ## Run one by hand
 
