@@ -42,7 +42,7 @@ These are declared in `apps/cli/src/config.ts` and are what `memhtml manifest` r
 
 `index.db` and `state.db` are plain SQLite, opened through node's built-in `node:sqlite` — there is no third-party database dependency and no driver flags to keep in step. `sqlite3`, a GUI browser, or any other tool opens both files directly, which is what makes a stuck index inspectable without this binary.
 
-Each connection sets `journal_mode = WAL`, `busy_timeout = 5000`, `foreign_keys = ON`, and `synchronous = NORMAL`, and registers one SQL function, `vector_distance_cos` (`packages/index/src/database.ts`). WAL is a persistent property of the file rather than of the connection, so a store created by any caller ends up in the same mode. `NORMAL` synchronous can cost the last commits on power loss, which for a projection rebuildable from the git tree is not a durability question.
+Each connection sets `journal_mode = WAL`, `busy_timeout = 5000`, `foreign_keys = ON`, and `synchronous = NORMAL`, and registers one SQL function, `vector_distance_cos` (`packages/index/src/database.ts`). WAL is a persistent property of the file rather than of the connection, so every `index.db` ends up in that mode, while `state.db`, attached after the pragmas run, keeps a rollback journal. `NORMAL` synchronous can cost the last commits on power loss, which for a projection rebuildable from the git tree is not a durability question.
 
 ---
 
@@ -116,15 +116,15 @@ memhtml serve mcp
 MEMHTML_MCP_BIN=/path/to/bin.js memhtml serve mcp   # explicit path, for a split deployment
 ```
 
-15 tools and 2 resources over this same repo (`apps/mcp/src/tools.ts`). Curation is deliberately absent from the tool surface: it is an operator action producing a reviewable branch, not something an agent triggers mid-conversation.
+15 tools (`apps/mcp/src/tools.ts`) and 2 resource templates (`apps/mcp/src/resources.ts`) over this same repo. Curation is deliberately absent from the tool surface: it is an operator action producing a reviewable branch, not something an agent triggers mid-conversation.
 
-**A CLI command and a running server can share one repo.** WAL admits one writer at a time and any number of concurrent readers: readers never block the writer, a second writer waits rather than failing, and a wait that outlives `busy_timeout` is retried with jittered exponential backoff for up to 20 seconds (`packages/index/src/database.ts`). So `memhtml write` while `memhtml serve mcp` is serving the same store is a supported thing to do, and so is the every-10-minutes `index update` cron. Measure it yourself with `node scripts/probe-sqlite-concurrency.mjs`.
+**A CLI command and a running server can share one repo.** WAL on `index.db` admits one writer at a time and any number of concurrent readers: readers never block the writer, a second writer waits rather than failing at once, and a wait that outlives `busy_timeout` (5 seconds) is retried with jittered exponential backoff for up to 20 seconds more (`packages/index/src/database.ts`). So `memhtml write` while `memhtml serve mcp` is serving the same store is a supported thing to do, and so is a periodic `index update` job you run yourself. Measure it yourself with `node scripts/probe-sqlite-concurrency.mjs`.
 
-Retrying is safe because the error being retried is `SQLITE_BUSY` specifically — the lock was never taken, so the statement had no effect to half-apply. A write inside a transaction rolls back before the retry, so the transaction re-runs whole rather than resuming.
+Retrying is safe because the error being retried is `SQLITE_BUSY` specifically: a lock the statement needed was not granted, so that statement, or the transaction it ran in, took no effect. A write inside a transaction rolls back before the retry, so the transaction re-runs whole rather than resuming.
 
-What still needs one writer is a curation session with its `curate/<date>` branch checked out, for a reason that is about git rather than the database: a concurrent write commits ONTO that branch and is either merged as if it were curation or lost with `git branch -D`. Quiesce writes for the length of one.
+What still needs care is a checked-out `curate/<date>` branch, for a reason that is about git rather than the database. `memhtml curate run` never checks its branch out and refuses the one your checkout has open, but while a person has one checked out, a CLI or MCP write, `task add`, `task status`, `publish`, `state export` and `doctor --fix` all commit onto it, and the commit is either merged as if it were curation or lost with `git branch -D`. A session commit still goes to the ref its session started on. Review a curate branch with `git log` and `git diff` instead of checking it out.
 
-`memhtml serve mcp` holds no database of its own: it spawns `memhtml-mcp` with inherited stdio and waits (`apps/cli/src/serve.ts::serveMcp`), so the supervisor has no handle to conflict with the child. Ctrl-C on a terminal signals both processes, so it stops the server along with the supervisor and leaves no orphaned server holding the database open.
+`memhtml serve mcp` holds no database of its own: it spawns `memhtml-mcp` with inherited stdio and waits (`apps/cli/src/serve.ts::serveMcp`), so the supervisor has no handle to conflict with the child. Ctrl-C on a terminal signals both processes, so it stops the server along with the supervisor and leaves no orphaned server holding the database open. A SIGINT or SIGTERM sent to the supervisor's process alone stops only the supervisor: the server keeps running, with the database open, until its stdin closes.
 
 `memhtml eval discriminate` does not build the app layer either (`apps/cli/src/run.ts::run`): it measures the ranking stack against its own generated fixture corpus in a temp directory with an in-memory database and never reads your `index.db`. Deliberate — checking the gate is exactly what an operator wants while the server is up.
 

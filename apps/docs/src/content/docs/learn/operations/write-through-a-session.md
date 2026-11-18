@@ -367,9 +367,9 @@ An id given with `--id` must name a session that already started. A typo then fa
 
 ## Two writers on one checkout
 
-Every writer that changes the shared git index holds the checkout lock, `.memhtml/checkout.lock`, while it stages and commits. That covers every `memhtml write`, `apply`, `correct`, `link`, `archive`, `task status`, `publish`, `state export`, and `doctor --fix`, every session commit, and the fast-forward in `curate merge`. So a session commit and a `memhtml write` in another process never commit each other's files.
+Every writer that changes the shared git index holds the checkout lock, `.memhtml/checkout.lock`, while it stages and commits. That covers every `memhtml init`, `write`, `apply`, `correct`, `link`, `archive`, `task add`, `task status`, `publish`, `state export`, and `doctor --fix`, every session commit, and the fast-forward in `curate merge`. So a session commit and a `memhtml write` in another process never commit each other's files.
 
-A writer waits up to 15 seconds for the lock. Past that it fails with `ERR_STORAGE` (`checkout.locked`). Every writer but `doctor --fix` and `task status <path> done` has then written nothing, so running it again is safe. A lock left by a killed process goes stale after 10 seconds and the next writer takes it.
+A writer waits up to 15 seconds for the lock. Past that it gives up with `checkout.locked`. A `write`, `apply`, `correct`, `link`, `archive` or `task add` has then written nothing, and a `session commit` can simply run again. A lock left by a killed process goes stale after 10 seconds and the next writer takes it.
 
 ## A commit killed halfway
 

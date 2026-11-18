@@ -22,7 +22,7 @@ memhtml init                                  # scaffold $MEMHTML_ROOT: git init
 memhtml write --title "WAL admits one writer and many readers" --type semantic \
   --claim "A CLI command and a running memhtml serve mcp share one index.db."
 memhtml search "one writer many readers"      # FTS + vector + recency + salience, fused with RRF
-memhtml serve mcp                             # the same store over stdio: 15 tools, 2 resources
+memhtml serve mcp                             # the same store over stdio: 15 tools, 2 resource templates
 ```
 
 `memhtml manifest` (or a bare `memhtml`) answers with every command, flag, response type, and error code the binary accepts, and it answers on a machine with no repo, no database, and no credentials. Every command writes exactly one JSON envelope to stdout, logs go to stderr, and the exit code is 0 for success, 2 for a usage error, 1 for a runtime failure. Three commands differ: `memhtml help` on a terminal writes Markdown; `memhtml serve mcp` gives stdout to the MCP server, writes its envelope when the server exits, and exits 0 whatever the server's exit code; and `memhtml hook` writes the host's own protocol and exits 0 on a runtime failure. `AGENTS.md` is generated from the same table that drives parsing, so the doc cannot drift from the binary.
@@ -199,7 +199,7 @@ The single `<mark>` is the claim. It becomes the gist every listing shows, and i
 Three doors, all supported, all landing in the same tree:
 
 1. The CLI. `memhtml write` takes one memory. Give it `--claim` plus `--body` and the template owns the markup; give it `--article-html` and you own the markup, with the format check refusing violations before anything is written. `memhtml apply` takes many: one JSONL op per line, every op validated for shape before any of them executes, then one commit and one index pass.
-2. The MCP server. `memhtml serve mcp` speaks stdio and exposes 15 tools and 2 resources over the same repo: write, read, search, recall, correct, link, archive, batch writes, and trace search. A CLI command and a running server share one store, because WAL admits one writer and any number of readers, and a contended write retries on `SQLITE_BUSY` (see `RUNBOOK.md`, section 4).
+2. The MCP server. `memhtml serve mcp` speaks stdio and exposes 15 tools and 2 resource templates over the same repo: write, read, search, recall, correct, link, archive, batch writes, and trace search. A CLI command and a running server share one store, because WAL admits one writer and any number of readers, and a contended write retries on `SQLITE_BUSY` (see `RUNBOOK.md`, section 4).
 3. Your file tools. The tree is the system of record, so a hand-written file is as real as one the CLI wrote. You take on what the write path would have done: format validity (`memhtml doctor`), path choice, dedup, and the commit.
 
 These three commit straight to the store with no write bar. A session is the write path that's held to the store's write bar, and the next section describes it. Under the default store policy, the CLI's record-creating doors refuse inside a run session and name the session command that does the same job.
@@ -356,7 +356,7 @@ None of them is published. Every workspace package is `private`, and `mise run p
 | `@memhtml/integrations` | Wiring a coding agent to a store: MCP entry, hooks, instructions, receipt.      |
 | `@memhtml/telemetry`    | The opt-in OTLP trace exporter.                                                 |
 | `@memhtml/cli`          | The `memhtml` binary, the envelope contract, and the one composition root.      |
-| `@memhtml/mcp`          | The `memhtml-mcp` stdio server: 15 tools, 2 resources.                          |
+| `@memhtml/mcp`          | The `memhtml-mcp` stdio server: 15 tools, 2 resource templates.                 |
 | `@memhtml/docs`         | The documentation site.                                                         |
 
 ## Development
