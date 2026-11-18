@@ -15,7 +15,7 @@ The terms are alphabetical, and each entry names the page that develops it. Seve
 
 ### Checkout lock
 
-`.memhtml/checkout.lock`, the lock every writer of the shared git index holds while it stages and commits: each v1 write, each session commit, and the `curate merge` fast-forward. A writer waits up to 15 seconds for it and then fails with `ERR_STORAGE` (`checkout.locked`), having written nothing unless it is `doctor --fix` or `task status <path> done`. See [Sessions and the commit path](/internals/sessions-and-the-commit-path/).
+`.memhtml/checkout.lock`, the lock every writer of the shared git index holds while it stages and commits: each v1 write, each session commit, and the `curate merge` fast-forward. A writer waits up to 15 seconds for it and then gives up with `checkout.locked`, and a v1 write has then written nothing. See [Sessions and the commit path](/internals/sessions-and-the-commit-path/).
 
 ### Claim
 
