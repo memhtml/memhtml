@@ -131,7 +131,7 @@ export const chain = (memhtmls: Map<string, Memhtml>, start: string, rel: string
 
 ## Five recipes, with the outputs the fixture corpus yields
 
-Corpus: `pnpm gen:fixture --out /tmp/memhtml-fixture`. The generator is a pure function of its seed — `DEFAULT_SEED = 20260802` and `DEFAULT_CORPUS_SIZE = 200` in `packages/eval/src/corpus.ts` — so the defaults always produce the same 304 files: 200 base memories, 4 people files, 90 synthetic controls, and a 10-file `archive/2025/` tier. Every number below is reproducible rather than observed once. All five recipes run in one `bun demo.ts`, corpus load included, in well under a second.
+Corpus: `pnpm gen:fixture --out /tmp/memhtml-fixture`. The generator is a pure function of its seed and its UTC day (`--now`, the clock when absent), with `DEFAULT_SEED = 20260802` and `DEFAULT_CORPUS_SIZE = 200` in `packages/eval/src/corpus.ts`, so the defaults always produce 304 files: 200 base memories, 4 people files, 90 synthetic controls, and a 10-file `archive/<year>/` tier whose year follows the day. Every number below is reproducible rather than observed once. All five recipes run in one `bun demo.ts`, corpus load included, in well under a second.
 
 **1. Type census** — no tool enumerates this.
 

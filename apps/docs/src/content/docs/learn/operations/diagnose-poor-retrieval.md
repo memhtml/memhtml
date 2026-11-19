@@ -21,7 +21,7 @@ memhtml doctor
 
 `memhtml doctor` reports the same ratio as `vectorCoverage` and flips `healthy` to false under `vectorCoverageLow`, naming the remedy in `vectorCoverageRemedy`. The finding applies only when the vector plane is in use, meaning some vector exists or an embedder is configured. A store run with `MEMHTML_EMBED=off` and no vectors is the deliberate lexical-only configuration and stays healthy.
 
-Quality feels wrong while nothing errors, so run `memhtml eval discriminate`. That command is the discrimination gate: it checks that each probe query ranks its target fact above deliberately wrong versions of the same fact. It tells you whether the ranking stack is broken or the corpus never held the answer, which reading search output cannot. See [check the discrimination gate](/learn/operations/check-the-discrimination-gate/).
+Quality feels wrong while nothing errors, so run `memhtml eval discriminate`. That command is the discrimination gate: it checks that each probe query ranks its target fact above deliberately wrong versions of the same fact. It runs on a corpus it generates itself and reads nothing from your store, so a `fake` failure points at the ranking code, while a pass leaves your corpus, your index, and the live embedder as the places to look; it cannot say whether your corpus holds the answer. See [check the discrimination gate](/learn/operations/check-the-discrimination-gate/).
 
 ## A search returns an empty result, never a driver error
 

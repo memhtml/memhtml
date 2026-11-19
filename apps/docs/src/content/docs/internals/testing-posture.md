@@ -36,17 +36,17 @@ Controls are derived mechanically from the target by the three divergence famili
 
 `packages/eval/src/discriminate.ts::DiscriminationReport::mrr`, `packages/eval/src/discriminate.ts::DiscriminationReport::corpusMrr` defines both.
 
-`mrr` is the mean reciprocal rank measured in the space of `{target} ∪ controls` alone, against a floor of 0.85 (`packages/eval/src/discriminate.ts::MRR_FLOOR`). The refusal, though, is per-probe and absolute: a single target ranked at or below any of its own controls is an inversion, and one inversion fails the run whatever MRR says. An aggregate on its own can be bought by thirty easy probes covering one broken one. A control the search never returned counts as outranked, since being absent is worse than being last.
+`mrr` is the mean reciprocal rank measured in the space of `{target} ∪ controls` alone, against a floor of 0.85 (`packages/eval/src/discriminate.ts::MRR_FLOOR`). The refusal, though, is per-probe and absolute: a single target ranked at or below any of its own controls is an inversion, and one inversion fails the run whatever MRR says. An aggregate on its own can be bought by thirty easy probes covering one broken one. A control the search never returned counts as outranked by a target it did return, and a target it never returned is an inversion, since being absent is worse than being last.
 
-`corpusMrr` is measured against the whole corpus, and it is reported rather than gated. It is low by construction on a fixture holding many near-identical memories, and reading it as a retrieval defect would confuse the two coordinate spaces the two field names exist to keep apart (`packages/eval/src/discriminate.ts::DiscriminationReport::corpusMrr`).
+`corpusMrr` uses the target's rank in the whole hit list of up to 40 rather than among its own controls, counts a target missing from it as `0`, and is reported rather than gated, so reading a low value as a retrieval defect would confuse the two coordinate spaces the two field names exist to keep apart (`packages/eval/src/discriminate.ts::DiscriminationReport::corpusMrr`).
 
 ### 3.2. A skipped gate never looks like a passing one
 
-`packages/eval/src/run.ts::runDiscrimination`. Fake mode runs everywhere and is what CI measures. Live mode without credentials reports `skipped: true` and `passed: false` with a loud stderr line, and never a green report. A caller who asked for live and got a silent fake would be told the real vector space discriminates when nothing had measured it.
+`packages/eval/src/run.ts::runDiscrimination`. Fake mode runs everywhere and is what CI measures. Live mode without credentials returns `skipped: true` and `passed: false` with a loud stderr line, and `memhtml eval discriminate` prints that as an `ERR_DISCRIMINATION_FAILED` failure at exit 1, never as a green report. A caller who asked for live and got a silent fake would be told the real vector space discriminates when nothing had measured it.
 
 ### 3.3. Where the gate is wired
 
-Two places. `memhtml eval discriminate` exits non-zero on any inversion. The repository-wide check runs it as a `test:eval` task.
+Three places. `memhtml eval discriminate` exits non-zero on any inversion. The repository-wide check runs the gate as a `test:eval` task, and the package smoke runs the command from the installed package.
 
 ## 4. Standing hazards this suite is written against
 

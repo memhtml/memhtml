@@ -258,9 +258,9 @@ memhtml eval discriminate --mode live           # the same probes against Bedroc
 memhtml eval discriminate --seed 20260802 --size 200 --probes 36 --mrr-floor 0.85
 ```
 
-Every probe must outrank its own wrong-fact twins. The default MRR floor is `0.85` (`packages/eval/src/discriminate.ts::MRR_FLOOR`); lowering it is a deliberate, visible choice. A failing run is reproducible from its `seed`. **Exit 1 with `ERR_DISCRIMINATION_FAILED` on a failed gate** — a refusable gate that exited 0 and left the verdict in the payload is one every shell caller forgets to read.
+Every probe must outrank its own wrong-fact twins. The default MRR floor is `0.85` (`packages/eval/src/discriminate.ts::MRR_FLOOR`); lowering it is a deliberate, visible choice. A failing run's corpus comes back from its `--seed` and `--now` together, and the failure envelope prints neither. **Exit 1 with `ERR_DISCRIMINATION_FAILED` on a failed gate**: a refusable gate that exited 0 and left the verdict in the payload is one every shell caller forgets to read.
 
-`fake` is what CI measures and a pass there is a real pass. `live` WITHOUT `AWS_BEARER_TOKEN_BEDROCK` reports `mode: "live"`, `requested: "live"`, `skipped: true`, zero probes, `passed: false`, and a loud `logError` (`packages/eval/src/run.ts::runDiscrimination`). **If you see `skipped: true`, nothing was measured** — a skipped quality gate must never look like a passing one. Re-run with credentials, or run `--mode fake`.
+`fake` is what CI measures and a pass there is a real pass. `live` WITHOUT `AWS_BEARER_TOKEN_BEDROCK`, or with it blank, skips the run and exits 1 with `ERR_DISCRIMINATION_FAILED`, an `error` that says it did NOT run, and a loud `logError` on stderr (`packages/eval/src/run.ts::runDiscrimination`). **A skipped run fails, and nothing was measured**: a skipped quality gate must never look like a passing one. Re-run with credentials, or run `--mode fake`.
 
 ---
 
