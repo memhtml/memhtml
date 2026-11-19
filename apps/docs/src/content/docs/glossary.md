@@ -95,7 +95,7 @@ Maximal marginal relevance, a diversification pass that picks each next hit by b
 
 ### `mrr` and `corpusMrr`
 
-Two different coordinate spaces, which is why the two field names exist. `mrr` is measured in the space of one probe's target plus that probe's own controls, and it is gated against a floor of 0.85. `corpusMrr` is measured against the whole corpus and is reported, never gated: it is low by construction on a fixture holding many near-identical memories, so reading it as a retrieval defect confuses the two spaces. See [Testing posture](/internals/testing-posture/).
+Two different coordinate spaces, which is why the two field names exist. `mrr` is measured in the space of one probe's target plus that probe's own controls, and it is gated against a floor of 0.85. `corpusMrr` uses the target's rank in the whole hit list of up to 40 and is reported, never gated: it ranks the target among the hits rather than among its own controls, so reading a low value as a retrieval defect confuses the two spaces. See [Testing posture](/internals/testing-posture/).
 
 ### Overlay operation
 

@@ -289,9 +289,9 @@ Salience counts the opens a caller chose. `memhtml read` and `memory_read` of a 
 
 ## The discrimination gate
 
-`memhtml eval discriminate` reports the number that says whether retrieval can tell two similar facts apart. Embeddings are weakest on the tokens that carry a fact's polarity: "drain the VIP before reverting" and "do not drain the VIP before reverting" sit above 0.99 cosine similarity while asserting opposite things. So the gate derives every control from the probe's own target by flipping a negation, a number, or a qualifier, which makes each control a high-cosine wrong answer by construction. Every target has to strictly outrank all of its own controls, mean reciprocal rank has to clear 0.85, and one inversion fails the run.
+`memhtml eval discriminate` reports the number that says whether retrieval can tell two similar facts apart. Embeddings are weakest on the tokens that carry a fact's polarity: "drain the VIP before reverting" and "do not drain the VIP before reverting" differ only by "do not" while asserting opposite things. So the gate derives every control from the probe's own target by flipping a negation, a number, or a qualifier, which makes each control a high-cosine wrong answer by construction. Every target has to strictly outrank all of its own controls, mean reciprocal rank has to clear 0.85, and one inversion fails the run.
 
-One place runs it: `pnpm check`, which CI runs. Fake-embedder mode is deterministic and needs no credentials. `live` mode is an operator diagnostic, and it reports `skipped: true` when it cannot reach the model, so a skipped gate reads as skipped rather than as green.
+Several places run it, all in fake mode: `pnpm check`, which CI and the release workflow run, and the package smoke, which CI, the release workflow, and the pre-push hook run. Fake-embedder mode is deterministic and needs no credentials. `live` mode is an operator diagnostic, and without `AWS_BEARER_TOKEN_BEDROCK` it fails with `ERR_DISCRIMINATION_FAILED` and says it did NOT run, so a skipped gate reads as a failure rather than as green.
 
 ## Code-mode
 
@@ -383,7 +383,7 @@ CI runs that same `mise run check`, so the gate cannot drift from the one you ru
 | `mise run test:integration` | `pnpm test:integration` | the cross-package contracts over a real repo and a real database               |
 | `mise run test:eval`        | `pnpm test:eval`        | the discrimination gate (fake mode)                                            |
 | `mise run test:a11y`        | `pnpm test:a11y`        | WCAG 2.2 AA over the built docs site, in a real browser                        |
-| `mise run gen:fixture`      | `pnpm gen:fixture`      | write a browsable fixture corpus (pure function of a seed)                     |
+| `mise run gen:fixture`      | `pnpm gen:fixture`      | write a browsable fixture corpus (pure function of a seed and a day)           |
 | `mise run agents-doc`       | none                    | regenerate `AGENTS.md` from the built CLI's own table                          |
 | `mise run security`         | none                    | osv-scanner + semgrep + betterleaks + syft/grype + trivy, SARIF into `.sarif/` |
 | `mise run tools:bump`       | none                    | re-resolve every `latest` tool in `mise.lock`                                  |
