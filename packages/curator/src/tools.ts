@@ -167,7 +167,42 @@ export const ProposedOp = z.discriminatedUnion("kind", [
       )
   })
 ])
-export type ProposedOp = z.infer<typeof ProposedOp>
+
+/** The union the `ProposedOp` schema infers, split by `kind` into the named members below. */
+type ProposedOpShape = z.infer<typeof ProposedOp>
+
+/** The member of `ProposedOpShape` whose `kind` is `Kind`. */
+type ProposedOpOf<Kind extends ProposedOpShape["kind"]> = Extract<ProposedOpShape, { kind: Kind }>
+
+/** A proposed `put`: the whole memory file at a repo-relative path. */
+export interface ProposedPut extends ProposedOpOf<"put"> {}
+
+/** A proposed `archive`: the active record to archive, and the slot when the model names one. */
+export interface ProposedArchive extends ProposedOpOf<"archive"> {}
+
+/** A proposed `link`: the active record that gets the edge, its rel, and its root-relative href. */
+export interface ProposedLink extends ProposedOpOf<"link"> {}
+
+/** A proposed `unlink`: the active record that loses the edge, and the edge's rel and href. */
+export interface ProposedUnlink extends ProposedOpOf<"unlink"> {}
+
+/** A proposed `label`: the active record that gets the entity, and the entity. */
+export interface ProposedLabel extends ProposedOpOf<"label"> {}
+
+/** A proposed `unlabel`: the active record that loses the entity, and the entity. */
+export interface ProposedUnlabel extends ProposedOpOf<"unlabel"> {}
+
+/** A proposed `move`: the active record to relocate, and its new live path. */
+export interface ProposedMove extends ProposedOpOf<"move"> {}
+
+export type ProposedOp =
+  | ProposedPut
+  | ProposedArchive
+  | ProposedLink
+  | ProposedUnlink
+  | ProposedLabel
+  | ProposedUnlabel
+  | ProposedMove
 
 /**
  * The archive slot for `path` in the year of `now` (UTC): `archiveSlotFor`'s first generation the
@@ -187,6 +222,12 @@ export const archivePathFor = async (
   }
 }
 
+/** What {@link toOverlayOps} returns: the overlay ops, and the sources `read` could not find. */
+export interface ProposedOverlayOps {
+  readonly ops: ReadonlyArray<OverlayOp>
+  readonly missing: ReadonlyArray<string>
+}
+
 /**
  * Proposed ops as overlay ops. An archive whose source `read` cannot find is reported rather than
  * silently dropped, so the model learns the path was wrong. An archive that names no `to` takes
@@ -197,7 +238,7 @@ export const toOverlayOps = async (
   proposed: ReadonlyArray<ProposedOp>,
   tools: Pick<CuratorTools, "read">,
   now: Date
-): Promise<{ ops: ReadonlyArray<OverlayOp>; missing: ReadonlyArray<string> }> => {
+): Promise<ProposedOverlayOps> => {
   const ops: Array<OverlayOp> = []
   const missing: Array<string> = []
   for (const op of proposed) {
