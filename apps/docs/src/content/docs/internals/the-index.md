@@ -21,7 +21,7 @@ Migrations apply in filename order, and each file's statements commit together w
 
 `files` (`packages/index/migrations/0008_tasks.sql`) projects one memory file: identity, classification under a ten-value `memory_type` CHECK, three text surfaces, the scoring inputs, the bitemporal fields, provenance, and two task columns.
 
-Each child table (`packages/index/migrations/0001_files.sql`) declares `ON UPDATE CASCADE` alongside `ON DELETE CASCADE`. `files.path` is the primary key, and it moves, because eviction is a `git mv`. Foreign keys are checked immediately, so without the update cascade the rename's `UPDATE` fails outright.
+Each child table (`packages/index/migrations/0001_files.sql`) declares `ON UPDATE CASCADE` alongside `ON DELETE CASCADE`. `files.path` is the primary key, and it moves, because an eviction moves the file into `archive/`. Foreign keys are checked immediately, so without the update cascade the rename's `UPDATE` fails outright.
 
 ### 2.1. Three text columns, three jobs
 
@@ -93,7 +93,7 @@ Generated `index.html` and `sitemap.xml` files are excluded by name (`packages/i
 
 The full-text index stays live through the bulk load (`packages/index/src/indexer.ts::makeIndexer::reproject`, `packages/index/src/indexer.ts::makeIndexer::truncateForRebuild`). Emptying `files` removes every row from it through the delete trigger, and each new row is indexed through the insert trigger. Nothing drops and recreates `files_fts` around the load. FTS5 writes stay linear, and a drop-and-recreate bracket would open a window where a crash leaves the store with no lexical index (`packages/index/src/schema-const.ts::FTS_INDEX_NAME`, `packages/index/src/indexer.ts::makeIndexer::applyProjectionWrites`). Section 5 gives the measured costs.
 
-Tables are emptied children-first (`packages/index/src/schema-const.ts::MEMORY_TABLES`), so the statements are correct with foreign keys enforced rather than relying on the cascade. A parse failure is a counted skip (`packages/index/src/indexer.ts::makeIndexer::projectOne`): one bad hand-authored file should be reported by `memhtml doctor` and should not stop the indexing of every other file in the tree.
+Tables are emptied children-first (`packages/index/src/schema-const.ts::MEMORY_TABLES`), so the statements are correct with foreign keys enforced rather than relying on the cascade. A parse failure is a counted skip (`packages/index/src/indexer.ts::makeIndexer::projectOne`), so one bad hand-authored file does not stop the indexing of every other file in the tree. `memhtml doctor` reports such a file only while an older version of it is still indexed.
 
 ## 5. Incremental update
 
