@@ -56,7 +56,7 @@ export const FORMAT_METADATA_KEY = "format"
  * change a reader of the previous layout would misread (a column added, removed, retyped, or
  * reordered, or a cell's meaning changed). A file naming another format is refused
  * (`snapshot.read.format`), and the head load reads it as a cache miss; a file naming none reads as
- * {@link UNVERSIONED_FORMAT}.
+ * `UNVERSIONED_FORMAT`.
  */
 export const SNAPSHOT_FORMAT = "1"
 
@@ -67,8 +67,11 @@ export const SNAPSHOT_FORMAT = "1"
  */
 const UNVERSIONED_FORMAT = "1"
 
-type LinkColumns = { rel: Utf8; href: Utf8 }
-type FacetColumns = { name: Utf8; value: Utf8 }
+/** Column types of one entry in a row's `links` list. */
+export type LinkColumns = { rel: Utf8; href: Utf8 }
+
+/** Column types of one entry in a row's `facets` list. */
+export type FacetColumns = { name: Utf8; value: Utf8 }
 
 /** Column types, in the order the file stores them. */
 export type SnapshotColumns = {
@@ -317,6 +320,14 @@ const attempt = <A>(operation: string, thunk: () => A): Effect.Effect<A, Storage
     Effect.mapError(() => StorageFailure.make({ operation: `snapshot.${operation}` }))
   )
 
+/** What {@link writeSnapshot} reports about the file it wrote. */
+export interface SnapshotWriteResult {
+  /** Size of the Arrow IPC file, in bytes. */
+  bytes: number
+  /** Rows written, one per record. */
+  rows: number
+}
+
 /**
  * Write every record as one row of an Arrow IPC file at `path`, creating parent directories.
  * The bytes land in a sibling staging file and are renamed into place by `write-file-atomic`, so a
@@ -331,7 +342,7 @@ export const writeSnapshot = (input: {
   records: Iterable<MemoryRecord>
   sha: string
   path: string
-}): Effect.Effect<{ bytes: number; rows: number }, StorageFailure> =>
+}): Effect.Effect<SnapshotWriteResult, StorageFailure> =>
   Effect.gen(function* () {
     const records = Array.from(input.records)
     const bytes = yield* attempt("write.encode", () =>
@@ -461,11 +472,19 @@ const refused = (
     Effect.andThen(Effect.fail(StorageFailure.make({ operation: `snapshot.${operation}` })))
   )
 
+/** What {@link readSnapshot} and {@link readSnapshotIfPresent} return for a file they read. */
+export interface SnapshotContents {
+  /** The commit sha the file's schema metadata names. */
+  sha: string
+  /** Every row of the file, materialized as a record. */
+  records: ReadonlyArray<MemoryRecord>
+}
+
 /** Decode the bytes of the file at `path` (named in logs only) as a snapshot. */
 const decodeSnapshot = (
   path: string,
   buffer: Buffer
-): Effect.Effect<{ sha: string; records: ReadonlyArray<MemoryRecord> }, StorageFailure> =>
+): Effect.Effect<SnapshotContents, StorageFailure> =>
   Effect.gen(function* () {
     const table = yield* refuseRead(path, "read.decode", () =>
       tableFromIPC<SnapshotColumns>(buffer)
@@ -501,9 +520,7 @@ const decodeSnapshot = (
  * `snapshot.read.schema` (columns differ from `FIELDS` by name, type, nullability, or order), and
  * `snapshot.read.rows` (a cell the schema says cannot be null is).
  */
-export const readSnapshot = (
-  path: string
-): Effect.Effect<{ sha: string; records: ReadonlyArray<MemoryRecord> }, StorageFailure> =>
+export const readSnapshot = (path: string): Effect.Effect<SnapshotContents, StorageFailure> =>
   attemptIo("read.file", () => readFile(path)).pipe(
     Effect.flatMap((buffer) => decodeSnapshot(path, buffer))
   )
@@ -515,7 +532,7 @@ export const readSnapshot = (
  */
 export const readSnapshotIfPresent = (
   path: string
-): Effect.Effect<{ sha: string; records: ReadonlyArray<MemoryRecord> } | null, StorageFailure> =>
+): Effect.Effect<SnapshotContents | null, StorageFailure> =>
   attemptIo("read.file", () =>
     readFile(path).catch((cause: NodeJS.ErrnoException) => {
       if (cause.code === "ENOENT") return null
