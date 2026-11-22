@@ -121,7 +121,7 @@ That last trade is safe because `index.db` is disposable. `state.db` is the file
 
 ## Cron does not carry your shell profile
 
-Every command is safe to run from cron, because stdout carries one envelope and logs go to stderr. Cron runs without your shell profile, so set the variables on the line itself:
+Every command but `memhtml serve mcp` and `memhtml hook` is safe to run unattended, because its stdout carries one envelope and its logs go to stderr. `memhtml serve mcp` hands stdout to the MCP server, and `memhtml hook` writes a coding-agent host's own protocol. Cron runs without your shell profile, so set the variables on the line itself:
 
 ```cron
 */10 * * * *  cd $HOME && MEMHTML_ROOT=$HOME/memhtml memhtml index update --embed >> /var/log/memhtml/index.log 2>&1

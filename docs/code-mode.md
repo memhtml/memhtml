@@ -25,7 +25,7 @@ Any HTML parser — cheerio, linkedom, bs4, lxml — reads the corpus with no sc
 
 1. **Read-only.** A code-mode script never writes into the tree. Writes go through `memhtml apply` / `memory_write*`, which own commits, dedup, conflicts, and validation. A dirty tree after a code-mode run is a bug in the run.
 2. **No salience side effects.** Reading files off disk touches no access row. Salience bumps only on a CHOSEN open through `memory_read` / `memhtml read`, so code-mode follows the same rule everything else does — no chosen open, no bump — rather than carrying a carve-out of its own. A script that wants a traversal to count calls `memhtml read` or `memhtml reinforce` on the paths it actually consulted.
-3. **Structural and lexical planes only.** No cosine, no RRF, no salience ranking. For ranked retrieval, shell out to `memhtml search` and consume the envelope — the typed JSON envelope is the binary's only output on every command, so the one-envelope contract makes it a code-mode API already.
+3. **Structural and lexical planes only.** No cosine, no RRF, no salience ranking. For ranked retrieval, shell out to `memhtml search` and consume the envelope: the typed JSON envelope is all `memhtml search` writes to stdout, so the one-envelope contract makes it a code-mode API already.
 4. **Search finds entry points; code traverses from there.** The intended opening move for a consuming agent is ranked retrieval first, code-mode second: run `memhtml search` or `memhtml recall` to get a handful of paths the four-arm RRF blend says are relevant, then switch to code-mode to walk edges, count, join, and filter from those paths. Starting in code-mode means starting with a full-corpus scan and no relevance signal, which is the expensive way to find a starting point the ranked planes already know. Starting in RRF and staying there means paying a tool call per hop for traversal that one script does in one pass.
 
 ## The helper (~100 lines, cheerio)
@@ -131,7 +131,7 @@ export const chain = (memhtmls: Map<string, Memhtml>, start: string, rel: string
 
 ## Five recipes, with the outputs the fixture corpus yields
 
-Corpus: `pnpm gen:fixture --out /tmp/memhtml-fixture`. The generator is a pure function of its seed — `DEFAULT_SEED = 20260802` and `DEFAULT_CORPUS_SIZE = 200` in `packages/eval/src/corpus.ts` — so the defaults always produce the same 304 files: 200 base memories, 4 people files, 90 synthetic controls, and a 10-file `archive/2025/` tier. Every number below is reproducible rather than observed once. All five recipes run in one `bun demo.ts`, corpus load included, in well under a second.
+Corpus: `pnpm gen:fixture --out /tmp/memhtml-fixture`. The generator is a pure function of its seed and its UTC day (`--now`, the clock when absent), with `DEFAULT_SEED = 20260802` and `DEFAULT_CORPUS_SIZE = 200` in `packages/eval/src/corpus.ts`, so the defaults always produce 304 files: 200 base memories, 4 people files, 90 synthetic controls, and a 10-file `archive/<year>/` tier whose year follows the day. Every number below is reproducible rather than observed once. All five recipes run in one `bun demo.ts`, corpus load included, in well under a second.
 
 **1. Type census** — no tool enumerates this.
 

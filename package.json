@@ -1,6 +1,6 @@
 {
   "name": "memhtml",
-  "version": "0.18.1",
+  "version": "0.18.2",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.21.0",
@@ -30,11 +30,11 @@
     "package:smoke:live": "pnpm package:assemble && pnpm package:lint && node scripts/smoke-package.mjs --live"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.4",
+    "@biomejs/biome": "2.6.8",
     "effect": "catalog:",
     "publint": "0.3.25",
-    "tsdown": "0.23.4",
-    "turbo": "2.11.10",
+    "tsdown": "0.23.7",
+    "turbo": "2.11.11",
     "typescript": "7.0.2"
   }
 }

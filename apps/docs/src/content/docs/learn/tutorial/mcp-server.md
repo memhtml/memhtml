@@ -1,9 +1,9 @@
 ---
 title: Wire up the MCP server
-description: Run memhtml serve mcp over stdio, see the tools and resources a client gets, and call one by hand.
+description: Run memhtml serve mcp over stdio, see the tools and resource templates a client gets, and call one by hand.
 ---
 
-`memhtml serve mcp` exposes the same store over the Model Context Protocol on stdio: fifteen tools and two resources (`apps/mcp/src/tools.ts`). This tutorial starts the server, lists what a client sees, calls a tool by hand so you can verify the wiring without a client, and then configures a client.
+`memhtml serve mcp` exposes the same store over the Model Context Protocol on stdio: fifteen tools (`apps/mcp/src/tools.ts`) and two resource templates (`apps/mcp/src/resources.ts`). This tutorial starts the server, lists what a client sees, calls a tool by hand so you can verify the wiring without a client, and then configures a client.
 
 You need a store with something in it, so [write a memory](/learn/tutorial/first-memory/) first.
 
@@ -16,7 +16,7 @@ memhtml serve mcp
 
 Nothing appears on stdout, and that is correct: stdout is the JSON-RPC stream. Anything else written there would corrupt the protocol, so every log goes to stderr. The server then waits for a client to speak first.
 
-`memhtml serve mcp` holds no database of its own. It spawns the `memhtml-mcp` entry point with inherited stdio and waits (`apps/cli/src/serve.ts::serveMcp`), so the supervisor holds no handle that could conflict with the child. Interrupting the supervisor kills the child, so Ctrl-C never leaves an orphaned server holding the database open (`apps/cli/src/serve.ts::serveMcp`). On exit you get the one envelope the contract promises:
+`memhtml serve mcp` holds no database of its own. It spawns the `memhtml-mcp` entry point with inherited stdio and waits (`apps/cli/src/serve.ts::serveMcp`), so the supervisor holds no handle that could conflict with the child. Ctrl-C on a terminal stops the server along with the supervisor, so no orphaned server is left holding the database open, and no envelope is written. When the client closes stdin instead, the server exits and the supervisor writes the one envelope the contract promises:
 
 ```json
 {
@@ -65,7 +65,7 @@ trace_search        trace_links         memory_status
 
 The order is deliberate, because a client publishes it and an agent reads it top-down. `memory_write_batch` sits second, directly after `memory_write`, so the tool that `memory_write`'s own description points at is the very next entry rather than thirteen tools away.
 
-Three resource templates come with them:
+Two resource templates come with them:
 
 ```json
 {
@@ -172,9 +172,9 @@ When your `memhtml` is a symlink into `~/.local/bin` and the client does not inh
 
 ## Run it alongside the CLI
 
-A CLI command and a running server can share one store. The index is WAL SQLite: it admits one writer at a time and any number of concurrent readers, readers never block the writer, a second writer waits rather than failing, and a wait that outlives `busy_timeout` is retried with jittered exponential backoff for up to 20 seconds (`packages/index/src/database.ts`). So running `memhtml write` while a server serves the same store is supported, and so is the every-ten-minutes `index update` cron.
+A CLI command and a running server can share one store. The index is WAL SQLite: it admits one writer at a time and any number of concurrent readers, readers never block the writer, a second writer waits rather than failing at once, and a wait that outlives `busy_timeout` (5 seconds) is retried with jittered exponential backoff for up to 20 seconds more (`packages/index/src/database.ts`). So running `memhtml write` while a server serves the same store is supported, and so is a periodic `index update` job you run yourself.
 
-The one thing to avoid is a checked-out `curate/<date>` branch, for a git reason rather than a database one: a concurrent write commits onto that branch and is then either landed as if it were curation or lost when the branch is dropped. `memhtml curate run` never checks its branch out, so this only happens when a person does.
+The one thing to avoid is a checked-out `curate/<date>` branch, for a git reason rather than a database one: a CLI or MCP write made while it's checked out commits onto that branch and is then either landed as if it were curation or lost when the branch is dropped. `memhtml curate run` never checks its branch out, so this only happens when a person does.
 
 Two more behaviors come from the store rather than from the server. `memory_search` and `memory_recall` ask a running [head server](/learn/operations/run-a-head-server/) first, so a record a session committed a moment ago is found before the index catches up, and both answer from the index when no head server answers within 2 seconds or `MEMHTML_MCP_HEAD=off` is set. And `memory_write`, `memory_write_batch`, and `memory_correct` follow the store's `v1Doors` policy, reading `MEMHTML_SESSION` from the server's own environment. Under the default policy, a server an agent runtime starts inside a run answers those three tools with `ERR_SESSION_BOUND`, and a shared server started outside any run writes as before. [Set the store policy](/learn/operations/set-the-store-policy/#v1doors) has the modes.
 
