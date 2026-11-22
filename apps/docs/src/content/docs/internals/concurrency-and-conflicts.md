@@ -22,7 +22,7 @@ Three actors share the tree, and Figure 1 shows the cycle they form through `mai
 
 One checkout has one git index, and before 0.16 nothing stopped two processes from staging into it at once. A `memhtml write` that ran while another process had staged a file could sweep that file into its own commit. The checkout lock, `.memhtml/checkout.lock`, closes that gap. Every v1 write holds it from its first stage to its commit (`StoreShape.exclusive`, `packages/store/src/store.ts::StoreShape::exclusive`), and so do `init`, `task status`, `publish`, `state export`, `doctor --fix`, every session commit, and the `curate merge` fast-forward.
 
-A writer waits up to 15 seconds for the lock and then fails with `ERR_STORAGE` (`checkout.locked`). Every writer but `doctor --fix` and `task status <path> done` has then written nothing, and running it again is safe. [Sessions and the commit path](/internals/sessions-and-the-commit-path/#5-the-checkout-lock) lists the timings and the one crash window that remains.
+A writer waits up to 15 seconds for the lock and then gives up with `checkout.locked`. A v1 write has then written nothing, and running it again is safe. [Sessions and the commit path](/internals/sessions-and-the-commit-path/#5-the-checkout-lock) lists the timings and the one crash window that remains.
 
 ## 3. A session that loses a race answers rebase-needed
 
@@ -42,6 +42,6 @@ The refusal is a typed `WriteConflict` carrying the path and the blob sha now at
 
 ## 5. Re-running curation is cheap because the run never moved main
 
-A curator run commits only to its `curate/<date>` branch and never checks that branch out, so the run never touches `main`, the checkout, or the index. Throwing a run away is `git branch -D` with no compensating writes. The next run on a new ref reads the corpus fresh and briefs the model on what's there now: an archived duplicate is no longer a duplicate, a repaired link is no longer dangling, and a filed record is no longer in the inbox.
+A curator run commits only to its `curate/<date>` branch and never checks that branch out, so the run never touches `main`, the checkout, or the index. Throwing a run away is `git branch -D` with no compensating writes. The next run on a new ref reads the corpus at `main` and briefs the model on what's there now: once a run's branch has landed, an archived duplicate is no longer a duplicate, a repaired link is no longer dangling, and a filed record is no longer in the inbox.
 
 `curate merge` is memhtml's door back, and it moves `main` with the same compare-and-swap a session commit uses. When `main` moved past the branch's base, the merge replays the branch's operations as one new commit on `main`'s tip. A replay that collides with what `main` gained meanwhile refuses with nothing moved, so a curation landing never overwrites an agent's write.

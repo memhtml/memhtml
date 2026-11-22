@@ -49,8 +49,8 @@ The three tables answer three questions that sound like one.
 
 `memory_session_links` answers which memory came from which session, and how. Its `link_kind` is CHECK-constrained to `wrote`, `read`, `corrected`, or `reinforced`. Three properties of the table are easy to misread:
 
-- The store's injected recorder writes the row at memory-write time, and the trace scanner never writes it. The provenance is recorded by the act that created it.
-- The same link is also carried by the file, as `memhtml-session`, `memhtml-prompt`, and `memhtml-turn` metas, so it survives a rebuild. This table exists to make the link queryable in both directions.
+- The store's injected recorder writes the row when a `write`, `apply`, `correct` or `read` given a session id touches the memory, and the trace scanner never writes it. The provenance is recorded by the act that created it.
+- A write also stamps its session into the file, as `memhtml-session`, `memhtml-prompt`, and `memhtml-turn` metas, but nothing rebuilds this table from them, and a `read` link exists only here. `memhtml index rebuild` leaves the rows alone, and deleting `index.db` loses them. This table exists to make the link queryable in both directions.
 - There is no foreign key to `traces`, on purpose. A memory can be written in a session whose transcript has not been scanned yet, and refusing the link would discard provenance the file already carries.
 
 ### 7.1. Consumers, and the shape of each
@@ -61,6 +61,6 @@ Because of the firewall those are a separate query surface rather than a fifth r
 
 ## 8. The consumer that motivates the plane
 
-An agent distilling sessions into memories is the consumer. Anything an agent learned mid-session and didn't explicitly write down is otherwise lost, because the transcripts hold it and the corpus doesn't. Until 0.16 the sleep pipeline's consolidator ran that distillation with a sandboxed agent. 0.16 removed it, and no command distills transcripts now. An agent that does it reads the plane below and writes what it keeps through a [session](/internals/sessions-and-the-commit-path/).
+An agent distilling sessions into memories is the consumer. Anything an agent learned mid-session and didn't explicitly write down is otherwise lost, because the transcripts hold it and the corpus doesn't. Until 0.16 the sleep pipeline's consolidator ran that distillation with a sandboxed agent. 0.16 removed it, and no memhtml command distills transcripts: `memhtml curate run` and `memhtml curate collapse` work over the records already in the corpus (`packages/curator/src/tools.ts::CuratorTools`). An agent that does it reads the plane below and writes what it keeps through a [session](/internals/sessions-and-the-commit-path/).
 
 Joining `traces` to `memory_session_links` produces the manifest. With it that agent's first move is reading the sessions that touch the memories in question, rather than reading everything. The manifest carries paths, date ranges, and session ids, tied to the memory files they relate to.

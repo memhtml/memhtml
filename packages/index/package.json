@@ -1,6 +1,6 @@
 {
   "name": "@memhtml/index",
-  "version": "0.18.1",
+  "version": "0.18.2",
   "private": true,
   "description": "SQLite schema, migrations, the git-driven indexer, and four-arm retrieval.",
   "type": "module",
@@ -39,7 +39,7 @@
     "effect": "catalog:"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.6",
+    "@biomejs/biome": "2.6.8",
     "@effect/vitest": "catalog:",
     "@memhtml/store": "workspace:*",
     "@types/node": "26.6.6",
