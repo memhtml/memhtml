@@ -3,7 +3,7 @@ title: Recover from a lost index
 description: Restore a store from a clone in four commands, in the order that matters, and know exactly what a rebuild cannot bring back.
 ---
 
-As long as the tree and the sidecar are pushed, losing `.memhtml/` costs you time, the access history since the last `state export`, any session operations that never landed, and the memory-session links that `memhtml trace links` reads.
+As long as the tree and the sidecar are pushed, losing `.memhtml/` costs you time, the access history since the last pushed `state export`, any session operations that never landed, the memory-session links that `memhtml trace links` reads, and the trace rows of every transcript no longer under `$MEMHTML_TRACE_ROOT`.
 
 ```bash
 git clone <remote> ~/memhtml
@@ -21,9 +21,9 @@ memhtml eval discriminate         # expect passed true
 
 ## Run them in this order
 
-Run `memhtml init` first, because the merge driver it configures lives in this clone and nowhere else. `.gitattributes` travels with the clone and the `merge.ours.driver` config does not, so until you run it, the first merge that touches a generated file writes conflict markers into that file.
+Run `memhtml init` first, because the merge driver it configures lives in this clone and nowhere else. `.gitattributes` travels with the clone and the `merge.ours.driver` config does not, so until you run it, git merges a generated file line by line, which can write conflict markers into it.
 
-Run `memhtml state import` right after `memhtml init`, before any export. An export can replace the sidecar with this clone's own rows, or with an empty file. The rebuild does not touch `state.db`, so the import can come before or after it. Retrieval ranks a query with four arms: full-text search, vector similarity, recency, and salience, which favors memories you have opened and reinforced before. The import gives the salience arm its signal on your first query.
+Run `memhtml state import` right after `memhtml init`, before any export. An export can replace the sidecar with this clone's own rows, or with an empty file. The rebuild does not touch `state.db`, so the import can come before or after it. Retrieval ranks a query with four arms: full-text search, vector similarity, recency, and salience, which favors memories you have opened and reinforced before. The import gives the salience arm the sidecar's history on your first query.
 
 Run the rebuild last, because it is the only step that spends Bedrock calls and the one you re-run if it gets interrupted.
 
@@ -35,20 +35,21 @@ The git tree is the system of record. It holds every memory, every authored `<li
 
 | Artifact                                                                                                                  | Rebuilds from                 | Cost                                                                                                              |
 | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `index.db`: embeddings, authored edges, chunks, full-text search                                                          | The tree                      | `memhtml index rebuild --embed`. The Bedrock calls are the only real expense.                                     |
-| `state.db`: access counts, reinforcement counts, and the outcome EWMA, a running average of positive and negative signals | The sidecar only              | `memhtml state import`. Anything since the last export is gone.                                                   |
-| The trace tables                                                                                                          | `$MEMHTML_TRACE_ROOT`         | `memhtml trace index` from a zero watermark: slow, and it loses nothing.                                          |
+| The memory rows of `index.db`: embeddings, authored edges, chunks, full-text search                                       | The tree                      | `memhtml index rebuild --embed`. The Bedrock calls are the only real expense.                                     |
+| `state.db`: access counts, reinforcement counts, and the outcome EWMA, a running average of positive and negative signals | The sidecar only              | `memhtml state import`. Anything since the last pushed export is gone.                                            |
+| The trace tables                                                                                                          | `$MEMHTML_TRACE_ROOT`         | `memhtml trace index` from a zero watermark: slow, and only the transcripts still there come back.                |
+| The memory-session links in `index.db` that `memhtml trace links` reads                                                   | Nothing                       | Gone. A later `write`, `apply`, `correct` or `read` given a session id records new ones.                          |
 | An unmerged `curate/<date>` branch                                                                                        | Nothing, unless it was pushed | Run `memhtml curate run` again. A run never moved `main`, so it's safe to repeat.                                 |
 | A session's operations that never landed, in `.memhtml/sessions/`                                                         | Nothing                       | The writes are gone. The agent that made them has to write them again.                                            |
 | The snapshots in `.memhtml/snapshots/` and the vector cache in `.memhtml/vectors/`                                        | The tree                      | A load reads git; a session commit writes a snapshot. `memhtml head embed` refills the vectors at Bedrock prices. |
 
 :::agent
 
-**For an agent.** A path that returns nothing can still hold a live memory. A lost or stale index makes a memory impossible to retrieve while the file sits in the tree, and eviction moves a file with `git mv` into `archive/<YYYY>/` instead of deleting it. So before you report anything as gone, retry with `--include-archived` and check `memhtml status` for a stale index. Reporting an absence as a deletion writes a false fact into the corpus.
+**For an agent.** A path that returns nothing can still hold a live memory. A lost or stale index makes a memory impossible to retrieve while the file sits in the tree, and an eviction moves the file into `archive/` instead of deleting it. So before you report anything as gone, retry with `--include-archived` and check `memhtml status` for a stale index. Reporting an absence as a deletion writes a false fact into the corpus.
 
 :::
 
-Two rows in that table lose data that nothing regenerates: `state.db`, by everything since the last `state export`, and a session's operations that never landed. Nothing runs `state export` for you, so run it regularly and by hand before a machine goes away. See [preserve the state plane](/learn/operations/preserve-the-state-plane/).
+Nothing regenerates the access history `state.db` gained since the last pushed `state export`, a session's operations that never landed, the memory-session links that `memhtml trace links` reads, or the trace rows of a transcript no longer under `$MEMHTML_TRACE_ROOT`. Nothing runs `state export` for you, so run it on one machine only, with the other [upkeep commands](/learn/operations/run-the-store-day-to-day/), and run it and push before that machine goes away. See [preserve the state plane](/learn/operations/preserve-the-state-plane/).
 
 ## Confirming the recovery
 
@@ -60,21 +61,22 @@ memhtml status --dense | jq '{indexFresh: .data.indexFresh, embedderUp: .data.em
 
 `indexFresh: true` means the index describes the current HEAD. `embedderUp: true` means the stored vectors are in the configured model's space and there is at least one of them. That field is read off the stored watermark, so it tells you about this index rather than about whether Bedrock is reachable. `countsByType` is the per-type census: compare it against the store you remember, and against `activeFiles` on `memhtml index status`.
 
-Then run `memhtml doctor` and expect `healthy: true`, and `memhtml eval discriminate` and expect `passed: true`. That second command is the discrimination gate: it checks that every probe query ranks its target fact above deliberately wrong versions of the same fact. Run it here specifically, because it proves the rebuilt vectors still separate a fact from a near-copy that contradicts it, and a row count cannot show you that.
+Then run `memhtml doctor` and expect `healthy: true`, and `memhtml eval discriminate` and expect `passed: true`. That second command is the discrimination gate: it checks that every probe query ranks its target fact above deliberately wrong versions of the same fact. It runs on a fixture corpus it builds itself and never opens this store's index (`packages/eval/src/harness.ts::buildStack`), so it checks the installed ranking code, not the rebuilt vectors. For those, read `memhtml index status` and expect `embeddings` equal to `chunks` and `embedModelMatches: true`.
 
 ## Recovering without a remote
 
-If the tree is intact on disk and only `.memhtml/` is gone, skip the clone:
+If the tree is intact on disk and only `.memhtml/` is gone, skip the clone, but first restore the files git tracks under `.memhtml/`. The sidecar is one of them, and without it `memhtml state import` restores nothing and still exits 0:
 
 ```bash
+git restore .memhtml/
 memhtml state import
 memhtml index rebuild --embed
 ```
 
-If only `index.db` is gone, the next `memhtml index update` rebuilds it. On the new, empty file, `update` falls through to a rebuild on its own (`update` in `packages/index/src/indexer.ts`), so that pass just takes longer than usual.
+If only `index.db` is gone, the next `memhtml index update` rebuilds its memory rows. On the new, empty file, `update` falls through to a rebuild on its own (`packages/index/src/indexer.ts::makeIndexer::update`). That pass reads HEAD only, so an uncommitted edit waits for the next `update`, and with an embedder configured it embeds every chunk again. The trace tables come back only through `memhtml trace index`, and the memory-session links do not come back.
 
 ## What a rebuild leaves alone
 
-A rebuild reads the tree at HEAD first, then empties every memory table and reprojects what it read, keeping every stored vector in the configured model's space whose chunk id comes back (`packages/index/src/indexer.ts::makeIndexer::reproject`, `packages/index/src/indexer.ts::makeIndexer::truncateForRebuild`). It destroys nothing outside `.memhtml/`, and inside `.memhtml/` it leaves the trace tables and the attached state plane untouched.
+A rebuild reads the tree at HEAD first, then empties every memory table and reprojects what it read, keeping every stored vector in the configured model's space whose chunk id comes back (`packages/index/src/indexer.ts::makeIndexer::reproject`, `packages/index/src/indexer.ts::makeIndexer::truncateForRebuild`). It destroys nothing outside `.memhtml/`, and inside `.memhtml/` it leaves the trace tables, the memory-session links, and the attached state plane untouched.
 
 So running `memhtml index rebuild` as a diagnostic is safe: it cannot lose an access count, and it cannot cost you a re-walk of `$MEMHTML_TRACE_ROOT`.

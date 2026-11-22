@@ -28,7 +28,7 @@ import { BATCH_CAP, type CommitScope, isReservedPath, type Violation } from "./v
  * already unlinks (at the holder's path, or at the path the batch moved it to) is left to the batch,
  * and a move's source the batch puts a new record at needs nothing, nor does an archive's source
  * the batch puts at after the archive (a claim edit, refused whatever the edges). Nor does a source
- * under `archive/`, or at a path that is not a usable memory path ({@link activeRecordPathViolation}):
+ * under `archive/`, or at a path that is not a usable memory path (`activeRecordPathViolation`):
  * `validateOps` refuses that archive or move, and a pair for it would aim a live edge under
  * `archive/<YYYY>/archive/`, or out of the archive, at a path no commit writes. A holder `scope` may
  * not write ({@link isReservedPath}: an arc or a people record under `session`) is left alone too,

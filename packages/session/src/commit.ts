@@ -478,7 +478,7 @@ const overlappingPaths = (
  *    collisions between different paths, so a path-disjoint advance can still carry one, and only
  *    a head rebuilt at the tip can judge it. `overlapping` still names the path collisions.
  * 3. Stage the ops over the head. A head op the validator passed as a change whose editor hands
- *    back its file unchanged ({@link changedNothing}) is `refused` as a `format` violation and
+ *    back its file unchanged (`changedNothing`) is `refused` as a `format` violation and
  *    writes nothing, so an editor that disagrees with the reader cannot land an empty commit. Then
  *    frame-key contradictions, marked on the new file's head before hashing. A rival that agrees
  *    with the put, that the put supersedes, or that the batch archives is reported under
