@@ -42,7 +42,7 @@ export interface Trailers {
   readonly [key: string]: string
 }
 
-/** The result of a `commit` that had nothing staged. */
+/** The result of a `commit`, including one that had nothing staged. */
 export interface CommitResult {
   /** The new commit's sha, or `null` when the index held no change and nothing was committed. */
   readonly sha: string | null
