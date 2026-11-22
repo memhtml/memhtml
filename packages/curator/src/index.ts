@@ -21,6 +21,7 @@ export {
   type FrameKeyMember,
   HEADLINE_CLAIM_TYPES,
   INBOX_PREFIX,
+  type LastCurate,
   type LowConfidenceRecord,
   type MootDetectedTask,
   NEIGHBOR_CLAIM_CHARS,
@@ -108,6 +109,8 @@ export {
   curatorModel,
   DEFAULT_CURATOR_MODEL_ID,
   MODEL_SPEC_PREFIXES,
+  type ModelSpecParsed,
+  type ModelSpecRejected,
   modelSpecOf,
   parseModelSpec,
   withOutputCeiling
@@ -122,6 +125,14 @@ export {
   type CuratorSessionStatus,
   type CuratorTools,
   type OpSummary,
+  type ProposedArchive,
+  type ProposedLabel,
+  type ProposedLink,
+  type ProposedMove,
   ProposedOp,
+  type ProposedOverlayOps,
+  type ProposedPut,
+  type ProposedUnlabel,
+  type ProposedUnlink,
   toOverlayOps
 } from "./tools.js"

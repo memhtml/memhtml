@@ -172,6 +172,12 @@ export interface BriefingOptions extends InboxPolicy {
   readonly neighborsOf?: NeighborsOf | undefined
 }
 
+/** The newest other `curate/<date>` ref a briefing counts recent records from, and its commit date. */
+export interface LastCurate {
+  readonly ref: string
+  readonly date: string
+}
+
 export interface Briefing {
   /** Active (non-archived) records in the view. */
   readonly active: number
@@ -196,7 +202,7 @@ export interface Briefing {
   /** Active records with a stated confidence, lowest first, capped at {@link BRIEFING_LOW_CAP}. */
   readonly lowestConfidence: ReadonlyArray<LowConfidenceRecord>
   /** The newest other `curate/<date>` ref and its commit date, or `null` on a first run. */
-  readonly lastCurate: { readonly ref: string; readonly date: string } | null
+  readonly lastCurate: LastCurate | null
   /**
    * Active records created after `lastCurate`'s date (every active record on a first run), newest
    * first, `task` and `verdict` rows and `resources/people/` excluded, capped at
@@ -300,7 +306,7 @@ const mootReason = (
  */
 export const briefingFromView = (
   view: HeadView,
-  lastCurate: Briefing["lastCurate"] = null,
+  lastCurate: LastCurate | null = null,
   options: BriefingOptions = {}
 ): Briefing => {
   let active = 0
