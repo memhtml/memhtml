@@ -119,7 +119,7 @@ Those artifacts are what make the store browsable: open `$MEMHTML_ROOT/index.htm
 
 ## Publish is also the conflict resolution
 
-`.gitattributes` marks `index.html` and `sitemap.xml` with `merge=ours`, and that attribute needs the per-clone `merge.ours.driver` config that [`memhtml init`](/learn/operations/initialize-a-store/) sets. If a merge has already written conflict markers into a generated file, leave the file itself alone.
+`.gitattributes` marks every `index.html` listing and the root `sitemap.xml` with `merge=ours`, and that attribute needs the per-clone `merge.ours.driver` config that [`memhtml init`](/learn/operations/initialize-a-store/) sets. If a merge has already written conflict markers into a generated file, leave the file itself alone.
 
 Finish the merge however git needs you to, then run `memhtml index update` and `memhtml publish` and let publish overwrite the artifact. The listings come from the index, so updating it first is what makes them describe the merged tree. The generator is the authority for a derived file, so an edit you make by hand only produces a version the next publish replaces.
 

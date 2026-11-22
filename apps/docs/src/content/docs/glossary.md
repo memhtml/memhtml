@@ -15,7 +15,7 @@ The terms are alphabetical, and each entry names the page that develops it. Seve
 
 ### Checkout lock
 
-`.memhtml/checkout.lock`, the lock every writer of the shared git index holds while it stages and commits: each v1 write, each session commit, and the `curate merge` fast-forward. A writer waits up to 15 seconds for it and then fails with `ERR_STORAGE` (`checkout.locked`), having written nothing unless it is `doctor --fix` or `task status <path> done`. See [Sessions and the commit path](/internals/sessions-and-the-commit-path/).
+`.memhtml/checkout.lock`, the lock every writer of the shared git index holds while it stages and commits: each v1 write, each session commit, and the `curate merge` fast-forward. A writer waits up to 15 seconds for it and then gives up with `checkout.locked`, and a v1 write has then written nothing. See [Sessions and the commit path](/internals/sessions-and-the-commit-path/).
 
 ### Claim
 
@@ -95,7 +95,7 @@ Maximal marginal relevance, a diversification pass that picks each next hit by b
 
 ### `mrr` and `corpusMrr`
 
-Two different coordinate spaces, which is why the two field names exist. `mrr` is measured in the space of one probe's target plus that probe's own controls, and it is gated against a floor of 0.85. `corpusMrr` is measured against the whole corpus and is reported, never gated: it is low by construction on a fixture holding many near-identical memories, so reading it as a retrieval defect confuses the two spaces. See [Testing posture](/internals/testing-posture/).
+Two different coordinate spaces, which is why the two field names exist. `mrr` is measured in the space of one probe's target plus that probe's own controls, and it is gated against a floor of 0.85. `corpusMrr` uses the target's rank in the whole hit list of up to 40 and is reported, never gated: it ranks the target among the hits rather than among its own controls, so reading a low value as a retrieval defect confuses the two spaces. See [Testing posture](/internals/testing-posture/).
 
 ### Overlay operation
 

@@ -161,6 +161,14 @@ const tableOf = (stored: StoredVectors): Table<VectorColumns> => {
   return new Table(schema, [batch])
 }
 
+/** What {@link writeVectorCache} reports about the file it wrote. */
+export interface VectorCacheWriteResult {
+  /** Size of the Arrow IPC file, in bytes. */
+  readonly bytes: number
+  /** Rows written, one per stored vector. */
+  readonly rows: number
+}
+
 /**
  * Write `stored` as one Arrow IPC file at `path`, creating parent directories. The bytes land in a
  * sibling staging file and are renamed into place by `write-file-atomic`, so a reader never sees
@@ -173,7 +181,7 @@ const tableOf = (stored: StoredVectors): Table<VectorColumns> => {
 export const writeVectorCache = (input: {
   readonly stored: StoredVectors
   readonly path: string
-}): Effect.Effect<{ readonly bytes: number; readonly rows: number }, StorageFailure> =>
+}): Effect.Effect<VectorCacheWriteResult, StorageFailure> =>
   Effect.gen(function* () {
     const bytes = yield* attempt("write.encode", () => tableToIPC(tableOf(input.stored), "file"))
     yield* attemptIo("write.mkdir", () => mkdir(dirname(input.path), { recursive: true }))
@@ -194,7 +202,7 @@ export interface ReadVectors extends StoredVectors {
  * Open the cache at `path` for `space`. A missing file is `null`, the answer for a store nobody has
  * embedded yet, and so is a file whose metadata names a format other than
  * {@link VECTOR_CACHE_FORMAT}: a cache of another layout is a miss, with a warning, not a failure.
- * A file whose metadata names no format is format "1" ({@link UNVERSIONED_FORMAT}).
+ * A file whose metadata names no format is format "1" (`UNVERSIONED_FORMAT`).
  * Every other refusal is a `StorageFailure` whose `operation` names the step: `vectors.read.file`
  * (unreadable), `vectors.read.decode` (not an Arrow IPC file, or truncated), `vectors.read.space`
  * (the metadata names another model id or dimension, or none), and `vectors.read.schema` (columns
