@@ -1,17 +1,19 @@
 import { InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime"
-import { Effect, Schedule } from "effect"
+import { Effect, Schedule, Schema } from "effect"
 import { describe, expect, it } from "vitest"
 import { invokeJson } from "../src/client.js"
-import { EMBED_DIM, EMBED_MODEL_ID } from "../src/constants.js"
+import { EMBED_DIM, EMBED_MODEL_ID, STRUCTURED_TOOL_NAME } from "../src/constants.js"
 import { buildEmbedBody, makeEmbeddings } from "../src/embeddings.js"
 import { makeModelClient } from "../src/model-client.js"
 import {
   fromProxyResponse,
+  fromResponsesPayload,
   isRetryableProxyFailure,
   makeProxyClient,
   type ProxyFetch,
   ProxyHttpError,
   proxyRouteFor,
+  RESPONSES_MIN_OUTPUT_TOKENS,
   toProxyRequest
 } from "../src/proxy.js"
 import {
@@ -74,6 +76,53 @@ const command = (modelId: string, body: string) =>
   })
 
 const signal = () => new AbortController().signal
+
+/**
+ * A Responses payload as bedrock-runtime's `/openai/v1/responses` shapes it behind an LLM gateway
+ * (probed live 2026-11-23 with `global.openai.gpt-5.6-terra`), cut to the fields that matter and
+ * the ones that could be misread: the reasoning item that precedes the message, and the echoed
+ * request fields a fold must not take for the answer.
+ */
+const responsesPayload = (
+  text: string,
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> => ({
+  id: "resp_probe",
+  object: "response",
+  status: "completed",
+  incomplete_details: null,
+  error: null,
+  model: "global.openai.gpt-5.6-terra",
+  output: [
+    { type: "reasoning", id: "rs_probe", summary: [], content: [] },
+    {
+      type: "message",
+      id: "msg_probe",
+      role: "assistant",
+      status: "completed",
+      content: [{ type: "output_text", annotations: [], logprobs: [], text }]
+    }
+  ],
+  usage: {
+    input_tokens: 44,
+    output_tokens: 12,
+    input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+    output_tokens_details: { reasoning_tokens: 0 },
+    total_tokens: 56
+  },
+  max_output_tokens: 2000,
+  store: false,
+  text: { format: { type: "json_schema", name: "emit", strict: true } },
+  ...overrides
+})
+
+/** The same probe cut off by its budget: a reasoning item, no message, `status: "incomplete"`. */
+const TRUNCATED_RESPONSES_PAYLOAD = responsesPayload("", {
+  status: "incomplete",
+  incomplete_details: { reason: "max_output_tokens" },
+  output: [{ type: "reasoning", id: "rs_probe", summary: [], content: [] }],
+  usage: { input_tokens: 13, output_tokens: 16, total_tokens: 29 }
+})
 
 /** No delay between attempts, so the retry cases run in milliseconds. */
 const IMMEDIATE = Schedule.recurs(5)
@@ -143,10 +192,11 @@ describe("proxyConfigFromEnv", () => {
 })
 
 describe("proxyRouteFor", () => {
-  it("routes by model id: Anthropic to messages, OpenAI to completions, the embedder to embeddings", () => {
+  it("routes by model id: Anthropic to messages, OpenAI to responses, the embedder to embeddings", () => {
     expect(proxyRouteFor("global.anthropic.claude-opus-5")).toBe("messages")
     expect(proxyRouteFor("global.anthropic.claude-sonnet-5")).toBe("messages")
-    expect(proxyRouteFor("global.openai.gpt-5.6-sol")).toBe("completions")
+    expect(proxyRouteFor("global.openai.gpt-5.6-sol")).toBe("responses")
+    expect(proxyRouteFor("global.openai.gpt-5.6-terra")).toBe("responses")
     expect(proxyRouteFor(EMBED_MODEL_ID)).toBe("embeddings")
     expect(proxyRouteFor("amazon.nova-pro-v1:0")).toBeNull()
   })
@@ -175,15 +225,81 @@ describe("toProxyRequest", () => {
     ])
   })
 
-  it("turns the Bedrock OpenAI body into a chat-completions request by adding the model", () => {
+  /**
+   * The whole Responses body, by equality, so a chat-completions key that leaked through
+   * (`messages`, `max_completion_tokens`, `reasoning_effort`, `response_format`) fails here as an
+   * extra key and a dropped one as a missing key.
+   */
+  it("turns the Bedrock OpenAI structured body into a Responses request", () => {
+    const schema = {
+      type: "object",
+      properties: { color: { type: "string" } },
+      required: ["color"],
+      additionalProperties: false
+    }
     const body = JSON.parse(
-      buildInvokeBody("gpt-5.6-sol", "hi", { effort: "low", maxTokens: 500 })
+      buildInvokeBody(
+        "gpt-5.6-terra",
+        "hi",
+        { system: "sys", effort: "low", maxTokens: 500 },
+        { inputSchema: schema, description: "One color." }
+      )
     ) as Record<string, unknown>
-    const request = toProxyRequest(CONFIG, "global.openai.gpt-5.6-sol", body)
-    expect(request?.path).toBe("/v1/chat/completions")
-    expect(request?.body).toEqual({ ...body, model: "bedrock/global.openai.gpt-5.6-sol" })
-    // The cache-off field is part of that body and rides through to the proxy untouched.
-    expect(request?.body.prompt_cache_options).toEqual({ mode: "explicit" })
+    const request = toProxyRequest(CONFIG, "global.openai.gpt-5.6-terra", body)
+    expect(request?.route).toBe("responses")
+    expect(request?.path).toBe("/v1/responses")
+    expect(request?.body).toEqual({
+      model: "bedrock/global.openai.gpt-5.6-terra",
+      instructions: "sys",
+      input: [{ role: "user", content: "hi" }],
+      max_output_tokens: 500,
+      reasoning: { effort: "low" },
+      prompt_cache_options: { mode: "explicit" },
+      store: false,
+      text: {
+        format: {
+          type: "json_schema",
+          name: STRUCTURED_TOOL_NAME,
+          strict: true,
+          schema: { description: "One color.", ...schema }
+        }
+      }
+    })
+  })
+
+  it("sends a prose request with no instructions and no text format when it has neither", () => {
+    const body = JSON.parse(
+      buildInvokeBody("gpt-5.6-sol", "hi", { effort: "xhigh", openaiPromptCache: "implicit" })
+    ) as Record<string, unknown>
+    expect(toProxyRequest(CONFIG, "global.openai.gpt-5.6-sol", body)?.body).toEqual({
+      model: "bedrock/global.openai.gpt-5.6-sol",
+      input: [{ role: "user", content: "hi" }],
+      max_output_tokens: 64_000,
+      reasoning: { effort: "xhigh" },
+      store: false
+    })
+  })
+
+  /**
+   * Chat completions takes a budget of 1 and Responses refuses anything under its minimum with a
+   * 400, so the smallest budget `clampTokens` yields is raised to the smallest this route accepts.
+   * The answer is still truncated there, so it reaches the truncation gate and not the caller.
+   */
+  it("raises a budget under the Responses minimum to the minimum, and leaves one at it alone", () => {
+    const budgetFor = (maxTokens: number) =>
+      toProxyRequest(
+        CONFIG,
+        "global.openai.gpt-5.6-sol",
+        JSON.parse(buildInvokeBody("gpt-5.6-sol", "hi", { effort: "low", maxTokens })) as Record<
+          string,
+          unknown
+        >
+      )?.body.max_output_tokens
+    expect(RESPONSES_MIN_OUTPUT_TOKENS).toBe(16)
+    expect(budgetFor(0)).toBe(16)
+    expect(budgetFor(15)).toBe(16)
+    expect(budgetFor(16)).toBe(16)
+    expect(budgetFor(17)).toBe(17)
   })
 
   /**
@@ -210,10 +326,75 @@ describe("toProxyRequest", () => {
 })
 
 describe("fromProxyResponse", () => {
-  it("passes chat payloads through untouched", () => {
+  it("passes a Messages payload through untouched", () => {
     const payload = { stop_reason: "end_turn", content: [] }
     expect(fromProxyResponse("messages", payload)).toBe(payload)
-    expect(fromProxyResponse("completions", payload)).toBe(payload)
+  })
+
+  it("folds a completed Responses payload into the chat-completions payload", () => {
+    expect(fromProxyResponse("responses", responsesPayload('{"color":"blue"}'))).toEqual({
+      choices: [
+        { finish_reason: "stop", message: { role: "assistant", content: '{"color":"blue"}' } }
+      ],
+      usage: { prompt_tokens: 44, completion_tokens: 12 }
+    })
+  })
+
+  /** The first item is not a message, so its part is skipped even though its type is the answer's. */
+  it("concatenates every output_text part of every message item, and nothing else", () => {
+    const folded = fromResponsesPayload(
+      responsesPayload("", {
+        output: [
+          { type: "reasoning", content: [{ type: "output_text", text: "thinking" }] },
+          {
+            type: "message",
+            content: [
+              { type: "output_text", text: '{"a":' },
+              { type: "refusal", refusal: "no" },
+              { type: "output_text", text: "1" }
+            ]
+          },
+          { type: "function_call", name: "emit", arguments: "{}" },
+          { type: "message", content: [{ type: "output_text", text: "}" }] }
+        ]
+      })
+    ) as { choices: Array<{ message: { content: string | null } }> }
+    expect(folded.choices[0]?.message.content).toBe('{"a":1}')
+  })
+
+  /**
+   * `incomplete` is the truncation stop under its chat-completions name unless the details name
+   * the content filter; a status the fold does not know stays itself, so it is never read as
+   * `stop`. (Mutation: folding every non-completed status to `length` fails the last two.)
+   */
+  it("maps status onto finish_reason: completed, incomplete by its reason, anything else as itself", () => {
+    const finishOf = (payload: unknown) =>
+      (fromResponsesPayload(payload) as { choices: Array<{ finish_reason: string | null }> })
+        .choices[0]?.finish_reason
+    expect(finishOf(responsesPayload("ok"))).toBe("stop")
+    expect(finishOf(TRUNCATED_RESPONSES_PAYLOAD)).toBe("length")
+    expect(finishOf(responsesPayload("", { status: "incomplete", incomplete_details: null }))).toBe(
+      "length"
+    )
+    expect(
+      finishOf(
+        responsesPayload("", {
+          status: "incomplete",
+          incomplete_details: { reason: "content_filter" }
+        })
+      )
+    ).toBe("content_filter")
+    expect(finishOf(responsesPayload("", { status: "failed" }))).toBe("failed")
+    expect(finishOf({})).toBeNull()
+  })
+
+  it("folds an off-shape Responses payload to an empty message with no usage", () => {
+    for (const payload of [null, {}, { output: "nope", usage: { input_tokens: "3" } }]) {
+      expect(fromResponsesPayload(payload)).toEqual({
+        choices: [{ finish_reason: null, message: { role: "assistant", content: null } }],
+        usage: {}
+      })
+    }
   })
 
   it("folds OpenAI embeddings into Cohere's shape, ordered by index", () => {
@@ -283,26 +464,20 @@ describe("makeProxyClient", () => {
   })
 
   /**
-   * The bytes on the wire to the proxy's chat-completions route carry the cache-off field under the
+   * The bytes on the wire to the proxy's Responses route carry the cache-off field under the
    * default, and not under `implicit`. Asserted here and not only in `wire.test.ts` because this is
    * the transport memhtml runs behind in practice, and a proxy translation that rebuilt the body
    * from known fields would drop exactly this one.
    */
-  it("carries prompt_cache_options to the chat-completions route by default, and omits it under implicit", async () => {
-    const reply = () => ({
-      status: 200,
-      body: {
-        choices: [{ finish_reason: "stop", message: { content: "ok" } }],
-        usage: { prompt_tokens: 1, completion_tokens: 1 }
-      }
-    })
+  it("carries prompt_cache_options to the Responses route by default, and omits it under implicit", async () => {
+    const reply = () => ({ status: 200, body: responsesPayload("ok") })
     const byDefault = recorder(reply)
     await Effect.runPromise(
       makeModelClient(
         makeProxyClient(CONFIG, { fetch: byDefault.fetchImpl, schedule: IMMEDIATE })
       ).generate("gpt-5.6-sol", "hi", { effort: "low", system: "s" })
     )
-    expect(byDefault.calls[0]?.url).toBe("http://127.0.0.1:4000/v1/chat/completions")
+    expect(byDefault.calls[0]?.url).toBe("http://127.0.0.1:4000/v1/responses")
     expect(byDefault.calls[0]?.body.prompt_cache_options).toEqual({ mode: "explicit" })
 
     const implicit = recorder(reply)
@@ -352,6 +527,132 @@ describe("makeProxyClient", () => {
     expect(outcome._tag).toBe("Failure")
     if (outcome._tag === "Failure")
       expect(outcome.failure.reason).toContain("stop_reason=max_tokens")
+  })
+
+  /**
+   * The OpenAI lane end to end over the proxy: the prose answer and its usage come back through
+   * the fold as the `Generation` the direct path returns for the same answer.
+   */
+  it("serves an OpenAI prose call on the Responses route, with text and usage", async () => {
+    const { calls, fetchImpl } = recorder(() => ({ status: 200, body: responsesPayload("Paris") }))
+    const models = makeModelClient(
+      makeProxyClient(CONFIG, { fetch: fetchImpl, schedule: IMMEDIATE })
+    )
+    const generation = await Effect.runPromise(
+      models.generate("gpt-5.6-sol", "Capital of France?", { effort: "low", system: "One word." })
+    )
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.url).toBe("http://127.0.0.1:4000/v1/responses")
+    expect(calls[0]?.body.instructions).toBe("One word.")
+    expect(generation.text).toBe("Paris")
+    expect(generation.inputTokens).toBe(44)
+    expect(generation.outputTokens).toBe(12)
+  })
+
+  it("serves an OpenAI structured call on the Responses route, decoding the schema-shaped answer", async () => {
+    const { calls, fetchImpl } = recorder(() => ({
+      status: 200,
+      body: responsesPayload('{"color":"blue"}')
+    }))
+    const models = makeModelClient(
+      makeProxyClient(CONFIG, { fetch: fetchImpl, schedule: IMMEDIATE })
+    )
+    const value = await Effect.runPromise(
+      models.generateObject({
+        schema: Schema.Struct({ color: Schema.String }),
+        prompt: "Sky color?",
+        modelKey: "gpt-5.6-terra",
+        effort: "low"
+      })
+    )
+    expect(value).toEqual({ color: "blue" })
+    expect(calls[0]?.body.text).toMatchObject({
+      format: { type: "json_schema", name: STRUCTURED_TOOL_NAME, strict: true }
+    })
+    expect(calls[0]?.body).not.toHaveProperty("response_format")
+  })
+
+  /** `status: "incomplete"` fails the call exactly as a `length` stop does on the direct path. */
+  it("fails a truncated Responses answer as an incomplete response, on both entry points", async () => {
+    const { fetchImpl } = recorder(() => ({ status: 200, body: TRUNCATED_RESPONSES_PAYLOAD }))
+    const models = makeModelClient(
+      makeProxyClient(CONFIG, { fetch: fetchImpl, schedule: IMMEDIATE })
+    )
+    const prose = await Effect.runPromise(
+      Effect.result(models.generate("gpt-5.6-sol", "hi", { effort: "low", maxTokens: 1 }))
+    )
+    expect(prose._tag).toBe("Failure")
+    if (prose._tag === "Failure") {
+      expect(prose.failure._tag).toBe("ModelUnavailable")
+      expect(prose.failure.reason).toBe("incomplete response: stop_reason=max_tokens")
+    }
+    const structured = await Effect.runPromise(
+      Effect.result(
+        models.generateObject({
+          schema: Schema.Struct({ color: Schema.String }),
+          prompt: "hi",
+          modelKey: "gpt-5.6-terra",
+          effort: "low"
+        })
+      )
+    )
+    expect(structured._tag).toBe("Failure")
+    if (structured._tag === "Failure") {
+      expect(structured.failure._tag).toBe("ModelUnavailable")
+    }
+  })
+
+  /** A Responses answer that is not the schema's JSON is the contract violation it is directly. */
+  it("reports a completed Responses answer with no parseable JSON as a contract violation", async () => {
+    const { fetchImpl } = recorder(() => ({ status: 200, body: responsesPayload("not json") }))
+    const models = makeModelClient(
+      makeProxyClient(CONFIG, { fetch: fetchImpl, schedule: IMMEDIATE })
+    )
+    const outcome = await Effect.runPromise(
+      Effect.result(
+        models.generateObject({
+          schema: Schema.Struct({ color: Schema.String }),
+          prompt: "hi",
+          modelKey: "gpt-5.6-terra",
+          effort: "low"
+        })
+      )
+    )
+    expect(outcome._tag).toBe("Failure")
+    if (outcome._tag === "Failure") expect(outcome.failure._tag).toBe("LlmContractViolation")
+  })
+
+  it("retries a throttled Responses call and fails a 400 once with the proxy's body", async () => {
+    const throttled = recorder((offset) =>
+      offset === 0
+        ? { status: 429, body: { error: "slow down" } }
+        : { status: 200, body: responsesPayload("ok") }
+    )
+    const generation = await Effect.runPromise(
+      makeModelClient(
+        makeProxyClient(CONFIG, { fetch: throttled.fetchImpl, schedule: IMMEDIATE })
+      ).generate("gpt-5.6-sol", "hi", { effort: "low" })
+    )
+    expect(throttled.calls).toHaveLength(2)
+    expect(generation.text).toBe("ok")
+
+    const refused = recorder(() => ({
+      status: 400,
+      body: { error: { code: "integer_below_min_value", param: "max_output_tokens" } }
+    }))
+    const outcome = await Effect.runPromise(
+      Effect.result(
+        makeModelClient(
+          makeProxyClient(CONFIG, { fetch: refused.fetchImpl, schedule: IMMEDIATE })
+        ).generate("gpt-5.6-sol", "hi", { effort: "low" })
+      )
+    )
+    expect(refused.calls).toHaveLength(1)
+    expect(outcome._tag).toBe("Failure")
+    if (outcome._tag === "Failure") {
+      expect(outcome.failure.reason).toContain("ProxyHttpError: proxy 400")
+      expect(outcome.failure.reason).toContain("integer_below_min_value")
+    }
   })
 
   /**

@@ -40,9 +40,9 @@ describe("LlmConfig", () => {
   })
 
   /**
-   * The OpenAI lane's cache switch is read on both paths — the body is the same chat-completions
-   * body direct or proxied — and an unknown value dies naming the variable, for the reason the
-   * proxy origin does: a typo that fell back to the default would put the write premium back on.
+   * The OpenAI lane's cache switch is read on both paths, since the field rides under one name in
+   * the direct body and the proxied one, and an unknown value dies naming the variable, for the
+   * reason the proxy origin does: a typo that fell back to the default would put the write premium back on.
    */
   it("reads MEMHTML_OPENAI_PROMPT_CACHE with or without a proxy, and refuses an unknown value", async () => {
     expect(

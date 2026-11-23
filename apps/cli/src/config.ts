@@ -156,7 +156,7 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
      */
     name: PROXY_BASE_URL_VAR,
     description:
-      "An OpenAI- and Anthropic-compatible LLM proxy's origin, e.g. `http://127.0.0.1:4000` for a local LLM gateway. Set, every model call leaves through it instead of going to Bedrock directly: Anthropic models on `/v1/messages`, the OpenAI entity extractor on `/v1/chat/completions`, embeddings on `/v1/embeddings`. Absent means Bedrock directly, under `MEMHTML_AWS_REGION` and the Bedrock credential. A set-but-malformed value fails at startup naming this variable rather than falling back to the direct path.",
+      "An OpenAI- and Anthropic-compatible LLM proxy's origin, e.g. `http://127.0.0.1:4000` for a local LLM gateway. Set, every model call leaves through it instead of going to Bedrock directly: Anthropic models on `/v1/messages`, the OpenAI entity extractor on `/v1/responses`, embeddings on `/v1/embeddings`. Absent means Bedrock directly, under `MEMHTML_AWS_REGION` and the Bedrock credential. A set-but-malformed value fails at startup naming this variable rather than falling back to the direct path.",
     fallback: null
   },
   {
@@ -186,7 +186,7 @@ export const CONFIG_VARS: ReadonlyArray<ConfigVar> = [
   {
     name: OPENAI_PROMPT_CACHE_VAR,
     description:
-      "How the OpenAI extractor model's chat-completions requests ask Bedrock to treat prompt caching. `off` sends `prompt_cache_options: {mode: \"explicit\"}` with no breakpoints, which Bedrock documents as no prompt caching and no cache-write charge; `implicit` sends no caching field and leaves the endpoint's default in place. Off by default because Bedrock's implicit mode for GPT-5.6 writes the whole prompt to the cache at 1.25x the input rate on every call that clears the 1,024-token minimum, and the extraction prompts share no prefix long enough to ever be read back. Set `implicit` for an OpenAI-compatible endpoint that rejects the Bedrock-only field. Read on the direct path and the proxy path alike. Any other value fails at startup naming this variable.",
+      "How the OpenAI extractor model's requests ask Bedrock to treat prompt caching. `off` sends `prompt_cache_options: {mode: \"explicit\"}` with no breakpoints, which Bedrock documents as no prompt caching and no cache-write charge; `implicit` sends no caching field and leaves the endpoint's default in place. Off by default because Bedrock's implicit mode for GPT-5.6 writes the whole prompt to the cache at 1.25x the input rate on every call that clears the 1,024-token minimum, and the extraction prompts share no prefix long enough to ever be read back. Set `implicit` for an OpenAI-compatible endpoint that rejects the Bedrock-only field. Read on the direct path and the proxy path alike. Any other value fails at startup naming this variable.",
     fallback: DEFAULT_OPENAI_PROMPT_CACHE
   },
   {

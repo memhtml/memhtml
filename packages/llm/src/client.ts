@@ -163,8 +163,9 @@ export const LlmConfig = Config.all({
   region: Config.String("MEMHTML_AWS_REGION").pipe(Config.withDefault("us-east-1")),
   /**
    * How the OpenAI lane asks Bedrock to treat prompt caching (`wire.ts`, `OpenAiPromptCache`).
-   * Read on both paths, direct and proxied: the body is the same chat-completions body either way,
-   * and the write premium it turns off is Bedrock's, not the proxy's. `Config` reads a blank value
+   * Read on both paths, direct and proxied: the field rides in the chat-completions body to
+   * InvokeModel and in the Responses body to the proxy under the same name, and the write premium
+   * it turns off is Bedrock's, not the proxy's. `Config` reads a blank value
    * as absent, so the default lands here as "" and `openAiPromptCacheFrom` resolves it.
    */
   openaiPromptCache: Config.String(OPENAI_PROMPT_CACHE_VAR).pipe(

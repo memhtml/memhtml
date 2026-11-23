@@ -39,6 +39,7 @@ export {
 } from "./models.js"
 export {
   fromProxyResponse,
+  fromResponsesPayload,
   invokeClientFor,
   isRetryableProxyFailure,
   makeProxyClient,
@@ -50,7 +51,9 @@ export {
   type ProxyRequest,
   type ProxyRoute,
   proxyRouteFor,
-  toProxyRequest
+  RESPONSES_MIN_OUTPUT_TOKENS,
+  toProxyRequest,
+  toResponsesBody
 } from "./proxy.js"
 export {
   DEFAULT_PROXY_MODEL_PREFIX,
