@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.18.3](https://github.com/memhtml/memhtml/compare/memhtml-v0.18.2...memhtml-v0.18.3) (2026-11-23)
+
+
+### Bug Fixes
+
+* **deps:** move Effect to 4.1.4 ([#416](https://github.com/memhtml/memhtml/issues/416)) ([0744b99](https://github.com/memhtml/memhtml/commit/0744b99e627f5023fd0585daa00a74e60a6ee335))
+* **llm:** call OpenAI models on the Responses API through the LLM proxy ([#433](https://github.com/memhtml/memhtml/issues/433)) ([0c3bbb1](https://github.com/memhtml/memhtml/commit/0c3bbb15962c94389b64c27a2658ded80ebd6a88))
+
 ## [0.18.2](https://github.com/memhtml/memhtml/compare/memhtml-v0.18.1...memhtml-v0.18.2) (2026-11-11)
 
 
