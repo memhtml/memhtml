@@ -21,7 +21,8 @@ import { Effect, Schema } from "effect"
  * The call goes through `@memhtml/llm`'s `ModelClient`: the
  * OpenAI chat-completions dialect on bedrock-runtime `InvokeModel`, with `response_format:
  * json_schema, strict: true` so the answer cannot leave the schema, and through an LLM proxy's
- * `/v1/chat/completions` when `MEMHTML_LLM_BASE_URL` names one. An earlier version carried its own
+ * `/v1/responses` when `MEMHTML_LLM_BASE_URL` names one, where the same strict schema rides as
+ * `text.format`. An earlier version carried its own
  * `fetch` transport against the Bedrock mantle Responses endpoint for GPT-5.6 Luna; the model moved
  * to Terra on 2026-09-02, Terra answers the same strict schema over InvokeModel (probed live), and
  * mantle is retired, so the extractor became a consumer of the one client rather than a second

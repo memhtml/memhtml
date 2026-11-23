@@ -8,9 +8,9 @@
  * | Lane                       | Route                  | Wire format                      |
  * | -------------------------- | ---------------------- | -------------------------------- |
  * | Anthropic structured calls | `/v1/messages`         | Anthropic Messages               |
- * | OpenAI structured calls    | `/v1/chat/completions` | OpenAI chat completions          |
+ * | OpenAI structured calls    | `/v1/responses`        | OpenAI Responses                 |
  * | Cohere embeddings          | `/v1/embeddings`       | OpenAI embeddings (+ `input_type`) |
- * | entity extraction          | `/v1/chat/completions` | OpenAI chat completions          |
+ * | entity extraction          | `/v1/responses`        | OpenAI Responses                 |
  *
  * No `effect` import here either, so the parsers are the same plain functions in both copies.
  *

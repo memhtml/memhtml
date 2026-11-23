@@ -19,6 +19,10 @@ import { type Effort, type ModelKey, modelByKey, thinkingFor } from "./models.js
  * right here at the wire, with the schema-constrained answer presented as a `tool_use`
  * block named `emit`: every consumer from `readToolInput` through `decodeToolInput` then
  * has exactly one shape to read, and the decode stays the single gate for both providers.
+ *
+ * These are the bodies Bedrock's InvokeModel takes. Behind an LLM proxy the OpenAI lane goes out
+ * on the Responses API instead, and `proxy.ts` owns that translation in both directions, so this
+ * module's read side sees the chat-completions payload on either transport.
  */
 
 export interface GenerateOptions {
@@ -65,6 +69,9 @@ export interface GenerateOptions {
  * Probed live 2026-09-11 against `bedrock-runtime.us-east-1.amazonaws.com/openai/v1/chat/completions`
  * with `global.openai.gpt-5.6-sol`: the field is accepted on Chat Completions (200) and honored
  * (`prompt_tokens: 3424, cache_write_tokens: 0` on a prompt that wrote 2,641 tokens without it).
+ * Probed live 2026-11-23 through an LLM gateway on bedrock-runtime's `/openai/v1/responses` with
+ * `global.openai.gpt-5.6-terra`: the field is accepted on Responses (200) and echoed back in the
+ * response as `{mode: "explicit"}`, so the proxy path carries it under the same name.
  */
 export type OpenAiPromptCache = "off" | "implicit"
 

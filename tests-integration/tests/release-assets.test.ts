@@ -472,7 +472,9 @@ describe("release workflow source and signer restrictions", () => {
     )
     const scripts = stepScripts(workflow, "Require a tag for retries")
     expect(scripts).toHaveLength(1)
-    const result = spawnSync("bash", ["-e", "-c", scripts[0] as string], {
+    // --norc: bash sources ~/.bashrc when its stdin is a socket, as it is under spawnSync, and a
+    // host bashrc that prints to stderr would fail the empty-stderr assertions.
+    const result = spawnSync("bash", ["--norc", "-e", "-c", scripts[0] as string], {
       cwd: ROOT,
       encoding: "utf8",
       env: { ...process.env, REF_TYPE: refType }
@@ -497,7 +499,7 @@ describe("release workflow source and signer restrictions", () => {
         encoding: "utf8"
       }).stdout.trim()
       for (const script of scripts) {
-        const result = spawnSync("bash", ["-e", "-c", script], {
+        const result = spawnSync("bash", ["--norc", "-e", "-c", script], {
           cwd: ROOT,
           encoding: "utf8",
           env: { ...process.env, GITHUB_SHA: matches ? sha : "0".repeat(40) }
@@ -574,7 +576,7 @@ process.exit(9)
       "Verify and upload release assets"
     )
     expect(scripts).toHaveLength(1)
-    const result = spawnSync("bash", ["-e", "-c", scripts[0] as string], {
+    const result = spawnSync("bash", ["--norc", "-e", "-c", scripts[0] as string], {
       cwd: ROOT,
       encoding: "utf8",
       env: {
