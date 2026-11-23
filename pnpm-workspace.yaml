@@ -66,7 +66,7 @@ catalog:
   "@effect/platform-node": 4.1.4
   "@effect/platform-node-shared": 4.1.4
   "@effect/vitest": 4.1.4
-  fast-check: 4.10.2
+  fast-check: 4.10.3
 
 allowBuilds:
   # Every entry here is an optional NATIVE accelerator behind a pure-JS fallback that is
