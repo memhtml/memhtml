@@ -17,11 +17,11 @@
   "dependencies": {
     "@astrojs/markdown-satteri": "^0.4.10",
     "@astrojs/starlight": "^0.43.1",
-    "@expressive-code/plugin-collapsible-sections": "^0.44.3",
-    "@expressive-code/plugin-line-numbers": "^0.44.3",
+    "@expressive-code/plugin-collapsible-sections": "^0.44.4",
+    "@expressive-code/plugin-line-numbers": "^0.44.4",
     "@memhtml/cli": "workspace:*",
     "@tabler/icons-astro": "^3.52.0",
-    "astro": "^7.4.12",
+    "astro": "^7.4.13",
     "astro-d2": "^0.14.1",
     "astro-og-canvas": "^0.13.3",
     "canvaskit-wasm": "^0.42.0",
@@ -40,13 +40,13 @@
     "@expo-google-fonts/tinos": "^0.4.2",
     "@types/hast": "^3.0.5",
     "@types/node": "26.6.6",
-    "cspell": "^10.5.1",
+    "cspell": "^10.5.2",
     "mdast-util-to-hast": "^13.2.2",
     "playwright": "^1.65.1",
-    "starlight-typedoc": "^0.23.2",
+    "starlight-typedoc": "^0.23.3",
     "typedoc": "^0.28.20",
     "typedoc-plugin-markdown": "^4.14.1",
     "typescript": "6.0.3",
-    "vitest": "5.1.0"
+    "vitest": "5.1.1"
   }
 }
