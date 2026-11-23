@@ -127,7 +127,7 @@ export MEMHTML_EMBED=off      # an explicit opt-out, distinct from a missing cre
 memhtml index rebuild --no-embed
 ```
 
-A missing credential degrades one search at call time, while `MEMHTML_EMBED=off` degrades every search. Only the second is a decision you made, and the manifest reports the two as different states.
+A missing credential degrades each search that tries its query embed, while `MEMHTML_EMBED=off` degrades every search without trying the embedder. Only the second is a decision you made, and the two answer alike, `degraded: true` with no vector arm, told apart only by the failure reason a failed embed logs on stderr.
 
 ## Confirm it
 
