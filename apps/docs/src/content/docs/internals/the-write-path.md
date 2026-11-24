@@ -90,6 +90,6 @@ Archive (`packages/store/src/store.ts::makeStore::archiveMemory`) is a `git mv` 
 
 ## 7. The writer records provenance in both planes
 
-The writer stamps `memhtml-session`, `memhtml-prompt`, and `memhtml-turn` into the head, and attaches `Memhtml-Session` and `Memhtml-Prompt` commit trailers (`packages/store/src/plumbing.ts::provenanceTrailers`). The operations layer records a `memory_session_links` row carrying its `link_kind`, one of `wrote`, `read`, `corrected`, or `reinforced` (`apps/cli/src/operations.ts::recordLink`, `packages/index/src/traces-persist.ts::LINK_KINDS`, `apps/cli/src/operations.ts::readMemory`, `apps/cli/src/operations.ts::batchWrite`).
+The writer stamps `memhtml-session`, `memhtml-prompt`, and `memhtml-turn` into the head, and attaches `Memhtml-Session` and `Memhtml-Prompt` commit trailers (`packages/store/src/plumbing.ts::provenanceTrailers`). The operations layer records a `memory_session_links` row carrying its `link_kind`, which is `wrote`, `read`, or `corrected` (`apps/cli/src/operations.ts::recordLink`, `packages/index/src/traces-persist.ts::LINK_KINDS`, `apps/cli/src/operations.ts::readMemory`, `apps/cli/src/operations.ts::batchWrite`).
 
 The file-borne copy survives an index rebuild. The row makes the same link queryable in both directions.

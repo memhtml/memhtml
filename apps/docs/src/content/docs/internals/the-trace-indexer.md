@@ -43,13 +43,13 @@ Nothing in the retrieval SQL assembler names `traces` or `trace_prompts`. A test
 
 The three tables answer three questions that sound like one.
 
-`traces` answers what a session was. One row per session, keyed on `session_id` (`packages/index/migrations/0005_traces.sql`), carrying the cwd-derived `slug`, `cwd`, `git_branch`, `entrypoint`, `model`, `version`, `started_at` and `ended_at`, the prompt, turn, and agent counts, `first_prompt`, an `ai_title`, and `file_path`, `file_size`, and `file_mtime`, which point at the transcript on disk and let a rescan skip a file that has not changed. `search_text` is `first_prompt` and `ai_title` joined by a newline under a full-text index, single-column for the same reason `files.fts_text` is.
+`traces` answers what a session was. One row per session, keyed on `session_id` (`packages/index/migrations/0005_traces.sql`), carrying the cwd-derived `slug`, `cwd`, `git_branch`, `entrypoint`, `model`, `version`, `started_at` and `ended_at`, the prompt, turn, and agent counts, `first_prompt`, an `ai_title`, and `file_path`, `file_size`, and `file_mtime`, which point at the transcript on disk. `search_text` is `first_prompt` and `ai_title` joined by a newline under a full-text index, single-column for the same reason `files.fts_text` is.
 
 `trace_prompts` answers what was asked, and in what order. One row per distinct prompt with a `text_head` the extractor caps at 200 characters, and an `ordinal` that counts from 0 within one session and is comparable only there.
 
 `memory_session_links` answers which memory came from which session, and how. Its `link_kind` is CHECK-constrained to `wrote`, `read`, `corrected`, or `reinforced`. Three properties of the table are easy to misread:
 
-- The store's injected recorder writes the row when a `write`, `apply`, `correct` or `read` given a session id touches the memory, and the trace scanner never writes it. The provenance is recorded by the act that created it.
+- The store's injected recorder writes the row when a `write`, `apply`, `correct`, `task add` or `read` given a session id touches the memory, and the trace scanner never writes it. The provenance is recorded by the act that created it.
 - A write also stamps its session into the file, as `memhtml-session`, `memhtml-prompt`, and `memhtml-turn` metas, but nothing rebuilds this table from them, and a `read` link exists only here. `memhtml index rebuild` leaves the rows alone, and deleting `index.db` loses them. This table exists to make the link queryable in both directions.
 - There is no foreign key to `traces`, on purpose. A memory can be written in a session whose transcript has not been scanned yet, and refusing the link would discard provenance the file already carries.
 
