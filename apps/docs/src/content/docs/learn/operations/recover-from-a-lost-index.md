@@ -3,7 +3,7 @@ title: Recover from a lost index
 description: Restore a store from a clone in four commands, in the order that matters, and know exactly what a rebuild cannot bring back.
 ---
 
-As long as the tree and the sidecar are pushed, losing `.memhtml/` costs you time, the access history since the last pushed `state export`, any session operations that never landed, the memory-session links that `memhtml trace links` reads, and the trace rows of every transcript no longer under `$MEMHTML_TRACE_ROOT`.
+As long as the tree and the sidecar are pushed, losing `.memhtml/` costs you the time and the Bedrock calls of a rebuild. It also loses the access history since the last pushed `state export`, any session operations that never landed, the memory-session links that `memhtml trace links` reads, and the trace rows of every transcript no longer under `$MEMHTML_TRACE_ROOT`.
 
 ```bash
 git clone <remote> ~/memhtml
@@ -23,7 +23,7 @@ memhtml eval discriminate         # expect passed true
 
 Run `memhtml init` first, because the merge driver it configures lives in this clone and nowhere else. `.gitattributes` travels with the clone and the `merge.ours.driver` config does not, so until you run it, git merges a generated file line by line, which can write conflict markers into it.
 
-Run `memhtml state import` right after `memhtml init`, before any export. An export can replace the sidecar with this clone's own rows, or with an empty file. The rebuild does not touch `state.db`, so the import can come before or after it. Retrieval ranks a query with four arms: full-text search, vector similarity, recency, and salience, which favors memories you have opened and reinforced before. The import gives the salience arm the sidecar's history on your first query.
+Run `memhtml state import` right after `memhtml init`, before any export. An export can replace the sidecar with this clone's own rows, or with an empty file. The rebuild does not touch `state.db`, so the import can come before or after it. A search or a recall over the index ranks a query with up to four arms: full-text search, vector similarity, recency, and salience, which favors memories you have opened and reinforced before. The import gives the salience arm the sidecar's history on your first query.
 
 Run the rebuild last, because it is the only step that spends Bedrock calls and the one you re-run if it gets interrupted.
 
@@ -31,7 +31,7 @@ None of the three destroys anything on a fresh clone, so a recovery interrupted 
 
 ## What survives, and what it survives as
 
-The git tree is the system of record. It holds every memory, every authored `<link>`, every `<meta>`, and, through `git log --follow`, the history of every eviction. `.memhtml/state/access.jsonl` is committed too.
+The git tree is the system of record. It holds every memory, every authored `<link>`, every `<meta>`, and, through `git log --follow`, the history of every eviction. `.memhtml/state/access.jsonl` is committed too, once a `memhtml state export` has written it.
 
 | Artifact                                                                                                                  | Rebuilds from                 | Cost                                                                                                              |
 | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------- |
@@ -45,7 +45,7 @@ The git tree is the system of record. It holds every memory, every authored `<li
 
 :::agent
 
-**For an agent.** A path that returns nothing can still hold a live memory. A lost or stale index makes a memory impossible to retrieve while the file sits in the tree, and an eviction moves the file into `archive/` instead of deleting it. So before you report anything as gone, retry with `--include-archived` and check `memhtml status` for a stale index. Reporting an absence as a deletion writes a false fact into the corpus.
+**For an agent.** A search that leaves a memory out does not show that the memory is gone. A lost or stale index hides a memory from `memhtml search` and `memhtml list` while the file sits in the tree, where `memhtml read` still opens it by path, and an eviction moves the file into `archive/` instead of deleting it. So before you report anything as gone, read the path, retry the search with `--include-archived`, and check `memhtml status` for `indexFresh: false`. Reporting an absence as a deletion writes a false fact into the corpus.
 
 :::
 
@@ -65,7 +65,7 @@ Then run `memhtml doctor` and expect `healthy: true`, and `memhtml eval discrimi
 
 ## Recovering without a remote
 
-If the tree is intact on disk and only `.memhtml/` is gone, skip the clone, but first restore the files git tracks under `.memhtml/`. The sidecar is one of them, and without it `memhtml state import` restores nothing and still exits 0:
+If the tree is intact on disk and only `.memhtml/` is gone, skip the clone, but first restore the files git tracks under `.memhtml/`. A committed sidecar is one of them, and without it `memhtml state import` restores nothing and still exits 0:
 
 ```bash
 git restore .memhtml/
