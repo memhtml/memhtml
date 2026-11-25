@@ -592,6 +592,28 @@ export default defineConfig({
             entryFileName: "index",
             disableSources: true
           }
+        }),
+        /*
+         * `@memhtml/curator`: one entry point and one page, with the settled options. The page is
+         * generated from every name `index.ts` exports, the planner's through `planner/index.ts`.
+         * The source was readied for the page in an earlier change: the seven
+         * `Proposed*` interfaces, `ModelSpecParsed`, `ModelSpecRejected`, `ProposedOverlayOps`,
+         * `LastCurate` and `Vector` are named and exported.
+         */
+        starlightTypeDoc({
+          entryPoints: [join(REPO_ROOT, "packages", "curator", "src", "index.ts")],
+          tsconfig: join(REPO_ROOT, "packages", "curator", "tsconfig.json"),
+          output: "api/curator",
+          typeDoc: {
+            outputFileStrategy: "modules",
+            useCodeBlocks: true,
+            parametersFormat: "list",
+            excludeExternals: true,
+            readme: join(REPO_ROOT, "packages", "curator", "README.md"),
+            mergeReadme: true,
+            entryFileName: "index",
+            disableSources: true
+          }
         })
       ],
       /*
@@ -689,6 +711,11 @@ export default defineConfig({
               label: "@memhtml/store",
               collapsed: true,
               items: [{ autogenerate: { directory: "api/store" } }]
+            },
+            {
+              label: "@memhtml/curator",
+              collapsed: true,
+              items: [{ autogenerate: { directory: "api/curator" } }]
             }
           ]
         },
