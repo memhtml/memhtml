@@ -570,6 +570,50 @@ export default defineConfig({
             entryFileName: "index",
             disableSources: true
           }
+        }),
+        /*
+         * `@memhtml/store`: one entry point and one page, with the settled options. The page covers
+         * the main import path; `@memhtml/store/testing` is described in the README and not
+         * rendered. TypeDoc renders the page with no warning and no MDX brace outside code. The
+         * shape it needed came before it: `LinkResult` names what `linkMemories` resolves to, and
+         * `CommitResult` is exported through the package barrel.
+         */
+        starlightTypeDoc({
+          entryPoints: [join(REPO_ROOT, "packages", "store", "src", "index.ts")],
+          tsconfig: join(REPO_ROOT, "packages", "store", "tsconfig.json"),
+          output: "api/store",
+          typeDoc: {
+            outputFileStrategy: "modules",
+            useCodeBlocks: true,
+            parametersFormat: "list",
+            excludeExternals: true,
+            readme: join(REPO_ROOT, "packages", "store", "README.md"),
+            mergeReadme: true,
+            entryFileName: "index",
+            disableSources: true
+          }
+        }),
+        /*
+         * `@memhtml/curator`: one entry point and one page, with the settled options. The page is
+         * generated from every name `index.ts` exports, the planner's through `planner/index.ts`.
+         * The source was readied for the page in an earlier change: the seven
+         * `Proposed*` interfaces, `ModelSpecParsed`, `ModelSpecRejected`, `ProposedOverlayOps`,
+         * `LastCurate` and `Vector` are named and exported.
+         */
+        starlightTypeDoc({
+          entryPoints: [join(REPO_ROOT, "packages", "curator", "src", "index.ts")],
+          tsconfig: join(REPO_ROOT, "packages", "curator", "tsconfig.json"),
+          output: "api/curator",
+          typeDoc: {
+            outputFileStrategy: "modules",
+            useCodeBlocks: true,
+            parametersFormat: "list",
+            excludeExternals: true,
+            readme: join(REPO_ROOT, "packages", "curator", "README.md"),
+            mergeReadme: true,
+            entryFileName: "index",
+            disableSources: true
+          }
         })
       ],
       /*
@@ -662,6 +706,16 @@ export default defineConfig({
               label: "@memhtml/snapshot",
               collapsed: true,
               items: [{ autogenerate: { directory: "api/snapshot" } }]
+            },
+            {
+              label: "@memhtml/store",
+              collapsed: true,
+              items: [{ autogenerate: { directory: "api/store" } }]
+            },
+            {
+              label: "@memhtml/curator",
+              collapsed: true,
+              items: [{ autogenerate: { directory: "api/curator" } }]
             }
           ]
         },

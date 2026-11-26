@@ -21,8 +21,10 @@ Every page below this one is generated from the TSDoc on a package's exported su
 | `@memhtml/session`      | [One page](/api/session/): the session overlay log and its lock, the checkout lock, the validator, and the commit path that lands a session's operations on a ref as one commit, one import path.                         |
 | `@memhtml/integrations` | [One page](/api/integrations/): what wires a coding agent to a store (its MCP entry, hooks, instruction block, skill and install receipt), the doctor that checks the wiring, and uninstall, one import path.             |
 | `@memhtml/snapshot`     | [One page](/api/snapshot/): the Arrow snapshot of one commit's records, the vector cache of one embedding space, their atomic writes and staging sweep, snapshot prune, one import path.                                  |
+| `@memhtml/store`        | [One page](/api/store/): the v1 write path over a git working tree (write, correct, archive, link, each one commit), the layout and `initRepo`, the git runner and its parsers, the one-writer lock, main import path.    |
+| `@memhtml/curator`      | [One page](/api/curator/): the curator's bounded model tool loop, its briefings, charters and budget, the model factory behind `--model`, the scripted `fake` model, and the collapse planner, one import path.           |
 
-Each package's overview page is its `README.md` from the repository, with the module list appended by the generator. The remaining workspace packages are added one per maintenance run, once their generated pages pass the same gates as the authored ones.
+Each package's overview page is its `README.md` from the repository, with the module list appended by the generator. All fourteen packages under `packages/` are covered. A new package is added once its generated pages pass the same gates as the authored ones.
 
 ## How to read a page
 
