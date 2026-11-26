@@ -8,9 +8,9 @@ direction: down
 
 ops: N ops, in order {class: terminal}
 validate: "phase 1: validate all" {class: step}
-abort: "abort: all skipped" {class: step}
+abort: "abort: rest skipped" {class: step}
 write: "phase 2: ONE commit" {class: step}
-rollback: "git reset -- paths" {class: step}
+rollback: "undo and fail" {class: step}
 reindex: ONE index pass {class: step}
 done: per-op results {class: terminal}
 
@@ -21,4 +21,4 @@ write -> rollback: commit fails
 write -> reindex: committed
 reindex -> done
 abort -> done
-rollback -> done
+# a failed commit ends in an error envelope, not in per-op results
