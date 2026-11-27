@@ -64,13 +64,18 @@ export interface TelemetryOptions {
  * error status from the collector logs nothing.
  *
  * The exporter itself already never fails the program: after its retries it catches the cause,
- * disables itself for sixty seconds, and emits only a DEBUG log — invisible at the default level. A
- * command pointed at a down collector would silently export nothing, and "opt-in that silently does
- * nothing" is indistinguishable from "opt-in that was never read". One warning names the failure;
- * one rather than one-per-batch because a long batched command against a dead collector would
- * otherwise write hundreds of identical lines into a log someone has to read. It goes through
- * `Effect.logWarning`, so it lands wherever the assembly's logger writes — stderr in both, because
- * both set `Logger.LogToStderr` (stdout is the envelope / the RPC stream).
+ * disables itself for sixty seconds, and logs the cause. Since effect 4.1.5 that log is a WARN, a
+ * multi-line entry carrying the error and its stack, written for an error status as well as for a
+ * refused connection; before 4.1.5 it was a DEBUG log, invisible at the default level. It is
+ * written only once the retries are spent, and a short command can finish without it: `memhtml
+ * status` against a refused port prints only this wrapper's line, and the MCP server prints both.
+ * Without this wrapper, such a command pointed at a down collector would silently export nothing,
+ * and "opt-in that silently does nothing" is indistinguishable from "opt-in that was never read".
+ * One warning names the failure; one rather than one-per-batch because a long batched command
+ * against a dead collector would otherwise write hundreds of identical lines into a log someone
+ * has to read. It goes through `Effect.logWarning`, so it lands wherever the assembly's logger
+ * writes — stderr in both, because both set `Logger.LogToStderr` (stdout is the envelope / the RPC
+ * stream).
  */
 const warnOnce = (
   client: HttpClient.HttpClient,

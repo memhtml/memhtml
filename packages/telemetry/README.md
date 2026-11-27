@@ -8,7 +8,7 @@ With the variable set, the layer replaces Effect's tracer with Effect's own `Otl
 
 `layerTelemetry` reads `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_SERVICE_NAME` when it is called, from `options.env` when given and `process.env` otherwise. `TelemetryModules` names the two Effect modules the exporter needs, `effect/http` and `effect/observability`. This package imports them only when the endpoint is set, through a loader that `options.load` replaces so a test can check that the disabled path never calls it.
 
-A failed export does not fail the command or change the envelope on stdout, the exit code or the MCP stream. The exporter retries transient failures, then stops exporting for a while. The first failed connection to the collector logs one warning on stderr, and an error status from the collector logs none.
+A failed export does not fail the command or change the envelope on stdout, the exit code or the MCP stream. The exporter retries transient failures, then stops exporting for a while. The first failed connection to the collector logs one one-line warning from this package on stderr. When the retries are spent, Effect's exporter logs its own warning on stderr, `Disabling exporter for 60 seconds` followed by the error and its stack over several lines; a long-running process such as the MCP server prints both, and a short command such as `memhtml status` can finish with only the first. An error status from the collector logs nothing from this package, and the exporter's warning is the only one.
 
 ## Modules
 
