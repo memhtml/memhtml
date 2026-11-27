@@ -66,7 +66,7 @@ The memory types are the one worth quoting, because the reason is a lesson rathe
 
 PARA is fixed at four buckets, and the two things that look like exceptions are not. Behavioral arcs live at `areas/arcs`. Tasks live under a `tasks` segment inside their workspace's project directory, or inside `areas/inbox` when they name no workspace. Both are named directories inside the four, chosen so that a task belongs to whatever the memory beside it belongs to. `archive` is a bucket rather than a status value because eviction is a `git mv`: the path itself records the state, which is what makes `git log --follow` read through a memory's whole life.
 
-The envelope vocabularies are closed in a specific and weaker sense: they are APPEND-ONLY. A shipped `type` or `code` never changes meaning and is never removed, and a new condition gets a new value. So a caller branching on `code` keeps working across versions, while a caller that treated the list as exhaustive — refusing anything it did not recognize — will meet a value it has not seen. Branch on the codes you handle and treat the rest as unknown.
+The envelope vocabularies are closed in a specific and weaker sense: they are APPEND-ONLY, by the project's rule rather than by a test. A shipped `type` or `code` never changes meaning and is never removed, and a new condition gets a new value. So a caller branching on `code` keeps working across versions, while a caller that treated the list as exhaustive, refusing anything it did not recognize, will meet a value it has not seen. Branch on the codes you handle and treat the rest as unknown.
 
 ## 3. What a version bump may change
 
