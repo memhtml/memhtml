@@ -21,7 +21,7 @@ For one command, `memhtml help <command>` (or `memhtml <command> --help`, or `-h
 
 Each item below is a place where memhtml behaves unlike the system you are pattern-matching it to.
 
-Branch on `code` and never on `error`. A failure envelope carries four fields: `{apiVersion, error, code, suggestions}`. The `code` values are append-only, so a shipped code keeps its meaning for good and is never removed. The `error` string is prose for a human, and whoever improves the wording rewrites it freely, so a matcher over that string gives you a test that passes until someone edits a sentence. See [error codes](/reference/error-codes/) and [the envelope](/reference/envelope/).
+Branch on `code` and never on `error`. A failure envelope carries four fields: `{apiVersion, error, code, suggestions}`. By the project's rule the `code` values are append-only: a shipped code keeps its meaning for good and is never removed. The `error` string is prose for a human, and whoever improves the wording rewrites it freely, so a matcher over that string gives you a test that passes until someone edits a sentence. See [error codes](/reference/error-codes/) and [the envelope](/reference/envelope/).
 
 An absent path was archived or moved. memhtml deletes no memory file. Archiving moves a file to `archive/<YYYY>/`, or `archive/<YYYY>.<n>/` when an earlier archiving holds that slot, mirroring the original path, so `git log --follow` reads through a memory's whole life. When a path you were holding stops appearing in results, retry with `--include-archived` before you conclude the fact is gone. See [store layout and path algebra](/internals/store-layout-and-path-algebra/).
 
